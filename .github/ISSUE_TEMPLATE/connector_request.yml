@@ -1,0 +1,32 @@
+name: Connector proposal
+description: Propose a new data source connector.
+labels: ["connector", "triage"]
+body:
+  - type: input
+    id: source
+    attributes:
+      label: Data source
+      placeholder: e.g. Example Realty REST API
+    validations:
+      required: true
+  - type: dropdown
+    id: type
+    attributes:
+      label: Connector type
+      options: [relational-db, external-api, web-crawler]
+    validations:
+      required: true
+  - type: textarea
+    id: legal-basis
+    attributes:
+      label: Legal basis
+      description: Official API, open data license, written permission, terms of service allowing automated access, ... Link to the relevant terms.
+    validations:
+      required: true
+  - type: checkboxes
+    id: confirm
+    attributes:
+      label: Confirmation
+      options:
+        - label: I have checked that using this source for automated collection and republishing is permitted.
+          required: true
