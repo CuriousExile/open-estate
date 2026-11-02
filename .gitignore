@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+out-tsc/
+.angular/
+cdk.out/
+
+# Test output
+coverage/
+*.lcov
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.pem
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
