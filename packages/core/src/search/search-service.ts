@@ -1,0 +1,128 @@
+import {
+  decodeCursor,
+  encodeCursor,
+  err,
+  ok,
+  queryHash,
+  typesOfGroup,
+  type ApiError,
+  type LocalePreference,
+  type LocalizedListing,
+  type Result,
+  type SearchQuery,
+  type Taxonomy,
+  type TourProvidersConfig,
+} from '@open-estate/shared';
+import { localize } from './localize';
+import { normalizeCity } from './search-document';
+import type { IntRange, OfferCondition, ResolvedQuery, SearchProvider } from './search-provider';
+
+// SearchService (design: "Domänenkern", "Indexierungs-Strategie und Ordnung"). Expected request
+// errors (`INVALID_PAGE_TOKEN`) are returned as `Result`, like `parseSearchQuery` and the
+// AccessGuard; provider failures stay exceptions and are mapped to 503 by the adapters.
+
+export interface Page<T> {
+  items: T[];
+  /** Opaque cursor of the next page; set iff more matching listings follow (Req 1.7). */
+  nextPageToken?: string;
+}
+
+export interface SearchService {
+  search(
+    query: SearchQuery,
+    prefs: readonly LocalePreference[],
+  ): Promise<Result<Page<LocalizedListing>, ApiError[]>>;
+}
+
+export interface SearchServiceDeps {
+  provider: SearchProvider;
+  /** Validated taxonomy loaded at init; groups are resolved against it per request (Req 15.5). */
+  taxonomy: Taxonomy;
+  /** Current tour allow-list; `hasTour` is resolved against it per request (Req 16.9). */
+  tourProviders: TourProvidersConfig;
+  /** ISO 4217 code used when a price filter has no `currency` (Req 12.9). */
+  defaultCurrency: string;
+}
+
+/**
+ * Hash binding a cursor to its query. `lang` and `pageToken` are excluded: neither changes the
+ * result set or its order (language only selects title/description per listing), so switching the
+ * language while paging must keep the cursor valid.
+ */
+export function searchQueryHash(query: SearchQuery): string {
+  const filters: Record<string, unknown> = { ...query };
+  delete filters['lang'];
+  return queryHash({ ...filters, pageSize: query.pageSize });
+}
+
+function range(min: number | undefined, max: number | undefined): IntRange | undefined {
+  if (min === undefined && max === undefined) return undefined;
+  return { ...(min !== undefined && { min }), ...(max !== undefined && { max }) };
+}
+
+const toHalf = (rooms: number | undefined): number | undefined =>
+  rooms === undefined ? undefined : Math.round(rooms * 2);
+
+export function createSearchService(deps: SearchServiceDeps): SearchService {
+  const { provider, taxonomy, defaultCurrency } = deps;
+  const allowedTourHosts = [
+    ...new Set(
+      deps.tourProviders.providers.flatMap((p) => p.hostnames.map((h) => h.toLowerCase())),
+    ),
+  ].sort();
+
+  function offerCondition(q: SearchQuery): OfferCondition {
+    if (q.offerType === undefined) return {};
+    const price = range(q.priceMin, q.priceMax);
+    return {
+      offerType: q.offerType,
+      ...(price && { price: { ...price, currency: q.currency ?? defaultCurrency } }),
+    };
+  }
+
+  function listingTypes(q: SearchQuery): readonly string[] | undefined {
+    // Unknown groups are rejected by `parseSearchQuery`; `?? []` keeps an unknown code matchless.
+    if (q.group !== undefined) return typesOfGroup(taxonomy, q.group) ?? [];
+    return q.types;
+  }
+
+  function resolve(q: SearchQuery, after: string | undefined): ResolvedQuery {
+    const roomsHalf = range(toHalf(q.roomsMin), toHalf(q.roomsMax));
+    const areaMinor = range(q.areaMin, q.areaMax);
+    const types = listingTypes(q);
+    return {
+      ...offerCondition(q),
+      ...(roomsHalf && { roomsHalf }),
+      ...(areaMinor && { areaMinor }),
+      ...(q.city !== undefined && { cityNorm: normalizeCity(q.city) }),
+      ...(q.postalCode !== undefined && { postalCode: q.postalCode }),
+      ...(types !== undefined && { listingTypes: types }),
+      // Only `hasTour=true` filters (Req 16.9); `false` means "no tour filter", not "without
+      // tour". An empty allow-list yields no matches.
+      ...(q.hasTour === true && { tourHosts: allowedTourHosts }),
+      pageSize: q.pageSize,
+      ...(after !== undefined && { after }),
+    };
+  }
+
+  return {
+    async search(query, prefs) {
+      const hash = searchQueryHash(query);
+      let after: string | undefined;
+      if (query.pageToken !== undefined) {
+        const cursor = decodeCursor(query.pageToken, hash);
+        if (!cursor.ok) return err([cursor.error]);
+        after = cursor.value.lastId;
+      }
+
+      const result = await provider.search(resolve(query, after));
+      const items = result.items.map((listing) => localize(listing, prefs, taxonomy));
+      return ok({
+        items,
+        ...(result.next && {
+          nextPageToken: encodeCursor({ v: 1, lastId: result.next.lastId, queryHash: hash }),
+        }),
+      });
+    },
+  };
+}
