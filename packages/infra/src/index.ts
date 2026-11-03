@@ -5,6 +5,7 @@ export * from './config';
 export * from './config-files';
 export * from './data-stack';
 export * from './frontend-stack';
+export * from './identity-stack';
 export * from './ingestion-stack';
 export * from './monitoring-stack';
 export * from './opensearch-access';

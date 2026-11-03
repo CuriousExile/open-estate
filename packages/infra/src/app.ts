@@ -11,6 +11,7 @@ import {
   frontendRuntimeSources,
   tourProvidersFromConfigFiles,
 } from './frontend-stack';
+import { IdentityStack, resolveIdentitySettings } from './identity-stack';
 import { connectorsFromConfigFiles, IngestionStack } from './ingestion-stack';
 import { MonitoringStack } from './monitoring-stack';
 import { SearchStack } from './search-stack';
@@ -97,7 +98,7 @@ new AdminStack(app, `${config.stackPrefix}-Admin`, {
 });
 
 // Needs the build output (`npm run build`); fails synth with a hint otherwise.
-new FrontendStack(app, `${config.stackPrefix}-Frontend`, {
+const frontend = new FrontendStack(app, `${config.stackPrefix}-Frontend`, {
   ...(env && { env }),
   assetDir: settings.frontendAssetDir,
   // The same `i18n-config.json` the DataStack mirrors into the config bucket.
@@ -107,4 +108,16 @@ new FrontendStack(app, `${config.stackPrefix}-Frontend`, {
   frontendOriginParameter,
   removalPolicy: config.removalPolicy,
   priceClass: settings.frontendPriceClass,
+});
+
+// After the FrontendStack: the portal client's callback URLs use its CloudFront origin.
+const identitySettings = resolveIdentitySettings((key) => app.node.tryGetContext(key));
+new IdentityStack(app, `${config.stackPrefix}-Identity`, {
+  ...(env && { env }),
+  envName: config.envName,
+  portalOrigins: [frontend.origin, ...settings.corsAllowedOrigins],
+  ...(identitySettings.cognitoDomainPrefix && {
+    cognitoDomainPrefix: identitySettings.cognitoDomainPrefix,
+  }),
+  removalPolicy: config.removalPolicy,
 });
