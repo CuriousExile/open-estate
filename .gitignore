@@ -28,3 +28,6 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# Kiro task execution state (local)
+.kiro/specs/*/tasks.meta.json

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+cdk.out/
+package-lock.json
+# Documentation and spec files are maintained by hand.
+*.md
+.kiro/

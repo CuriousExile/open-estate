@@ -1,0 +1,55 @@
+{
+  "name": "open-estate",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Open-source, serverless real estate search platform for humans and AI agents",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CuriousExile/open-estate.git"
+  },
+  "engines": {
+    "node": ">=20.19.0",
+    "npm": ">=10"
+  },
+  "workspaces": [
+    "packages/shared",
+    "packages/core",
+    "packages/api",
+    "packages/mcp",
+    "packages/admin",
+    "packages/ingestion",
+    "packages/frontend",
+    "packages/infra",
+    "packages/loadtest"
+  ],
+  "scripts": {
+    "build": "tsc -b && npm run build --workspace @open-estate/frontend",
+    "clean": "tsc -b --clean",
+    "lint": "eslint . && prettier --check . && npm run check:config",
+    "check:config": "node scripts/check-hardcoded-config.mjs",
+    "format": "prettier --write .",
+    "test": "jest",
+    "typecheck:tests": "tsc -p tsconfig.test.json && tsc -p packages/infra/tsconfig.test.json && tsc -p packages/frontend/tsconfig.test.json",
+    "test:integration": "DYNAMODB_ENDPOINT=${DYNAMODB_ENDPOINT:-http://localhost:8000} OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT:-http://localhost:9200} jest --forceExit --testPathPatterns '\\.integration\\.test\\.ts$'",
+    "test:e2e": "jest --forceExit --runInBand --testPathPatterns '\\.e2e\\.test\\.ts$'",
+    "synth": "npm run synth --workspace @open-estate/infra"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@seriousme/openapi-schema-validator": "2.11.0",
+    "@types/jest": "30.0.0",
+    "@types/node": "20.19.43",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "eslint": "10.14.0",
+    "eslint-config-prettier": "10.1.8",
+    "fast-check": "4.10.2",
+    "globals": "17.14.0",
+    "jest": "30.5.2",
+    "prettier": "3.9.10",
+    "ts-jest": "29.4.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1"
+  }
+}

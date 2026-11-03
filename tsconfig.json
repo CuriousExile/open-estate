@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/shared" },
+    { "path": "packages/core" },
+    { "path": "packages/api" },
+    { "path": "packages/mcp" },
+    { "path": "packages/admin" },
+    { "path": "packages/ingestion" },
+    { "path": "packages/infra" },
+    { "path": "packages/loadtest" }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "resolveJsonModule": true,
+    "types": ["node", "jest"],
+    "paths": {
+      "@open-estate/*": ["./packages/*/src"]
+    }
+  },
+  "include": ["packages/*/src/**/*.ts", "packages/*/test/**/*.ts", "jest.setup.ts"],
+  // Type-checked with their own compiler options (packages/*/tsconfig.test.json): infra needs
+  // `exactOptionalPropertyTypes: false` for aws-cdk-lib, frontend the DOM lib and ESM resolution.
+  "exclude": ["packages/infra/**", "packages/frontend/**"]
+}
