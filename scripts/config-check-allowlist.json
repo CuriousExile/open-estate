@@ -1,0 +1,14 @@
+[
+  {
+    "file": "packages/ingestion/src/compliance/compliance-checker.ts",
+    "rule": "hardcoded-url",
+    "match": "https://github.com/CuriousExile/open-estate",
+    "reason": "Project contact URL in the fallback crawler User-Agent; operators override the User-Agent via configuration."
+  },
+  {
+    "file": "packages/loadtest/src/generator.ts",
+    "rule": "hardcoded-url",
+    "match": "https://my.matterport.com/show/",
+    "reason": "Synthetic load-test tour URLs must use a host of the default tour allowlist; no runtime endpoint."
+  }
+]
