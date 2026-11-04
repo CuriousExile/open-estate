@@ -1,0 +1,18 @@
+{
+  // Type-check of the infra tests (`npm run typecheck:tests`); jest itself transpiles only.
+  // Keeps the infra compiler options, notably `exactOptionalPropertyTypes: false` (aws-cdk-lib).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "rootDir": "../..",
+    "resolveJsonModule": true,
+    "types": ["node", "jest"],
+    "paths": {
+      "@open-estate/*": ["../*/src"]
+    }
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+}
