@@ -6,24 +6,30 @@ import {
   InMemoryApiKeyStore,
   InMemorySearchProvider,
   StaticAccessConfigSource,
+  type ManagedListing,
   type SearchProvider,
+  type StateChange,
+  type WriteResult,
 } from '@open-estate/core';
 import {
   createRunLogger,
   DELETION_BLOCK_REASON,
-  DeletionBlockedError,
   ImportPipeline,
   InMemoryDeletionBlocklist,
-  type ListingWriter,
-  type WriteOutcome,
+  type ImportListingWriter,
 } from '@open-estate/ingestion';
 import {
   assertValidTaxonomy,
   buildSchemas,
+  CONTENT_FIELDS,
+  contentHash,
   DEFAULT_TAXONOMY_CONFIG,
+  err,
+  ok,
   parseSearchQuery,
   TourProvidersConfig,
   type Listing,
+  type ListingContent,
 } from '@open-estate/shared';
 import fc from 'fast-check';
 import { expectedStored, NOW, SOURCE, toInput } from '../../ingestion/test/support/import-harness';
@@ -42,17 +48,19 @@ import { createDeletionHarness } from './support/deletion-harness';
  *   the map per call (the index follows the store).
  * - The pipeline's `InMemoryDeletionBlocklist` is the mirror of the admin blocklist store, so
  *   blocks and explicit lifts via the admin API are visible to the import pipeline.
- * - `InMemoryListingWriter` keeps its own map, so a small writer on the shared map stands in for
- *   it. Like `DynamoDbListingWriter` (one `TransactWriteItems` with a blocklist `ConditionCheck`)
- *   it checks the blocklist and puts in one step.
+ * - The pipeline reads and writes the shared map through a small stand-in for the
+ *   `VersionedListingWriter` (`SharedMapListingWriter`); like the real writer (one
+ *   `TransactWriteItems` with a blocklist `ConditionCheck` and a version condition) it checks the
+ *   blocklist and the version and puts in one step.
  *
  * After an initial deletion via `POST /admin/deletions` a random sequence of imports, deletions
  * (by id or source), explicit lifts (`DELETE /admin/deletion-blocklist/{id}`), detail lookups and
  * searches runs against a model (present listings, blocked ids). After a lift, a re-import must
  * succeed. A `race` step runs `POST /admin/deletions` and an import of the same id with
  * `Promise.all`; `fc.scheduler` orders the effect points (pipeline pre-check, write, block,
- * removal). Afterwards the listing is gone, the id is blocked, the import was either an `updated`
- * before the block or rejected with „Löschsperre“, and a further import is rejected.
+ * removal). Afterwards the listing is gone, the id is blocked, the import was either a write
+ * (`updated`/`unchanged`) before the block or rejected with „Löschsperre“, and a further import
+ * is rejected.
  *
  * **Validates: Requirements 18.5, 18.6, 18.7**
  */
@@ -91,20 +99,74 @@ class WorldBlocklist extends InMemoryDeletionBlocklist {
   }
 }
 
-/** `InMemoryListingWriter` semantics on the shared map; check + put without an await between. */
-class SharedMapListingWriter implements ListingWriter {
+/**
+ * `VersionedListingWriter` semantics on the shared map: blocklist check, version check (a
+ * listing removed after the pipeline's read is `NOT_FOUND`, so the pipeline retries), no version
+ * for an unchanged Inhalts_Hash (only the run provenance is refreshed), and the provenance
+ * `source` stays the creating connector. Check + put without an await between, like the
+ * writer's single transaction.
+ */
+class SharedMapListingWriter implements ImportListingWriter {
+  private readonly versions = new Map<string, number>();
+
   constructor(
     private readonly listings: Map<string, Listing>,
     private readonly blocklist: WorldBlocklist,
   ) {}
 
-  async write(listing: Listing): Promise<WriteOutcome> {
-    if (this.blocklist.isBlocked(listing.id)) throw new DeletionBlockedError(listing.id);
-    const outcome = this.listings.has(listing.id) ? 'updated' : 'imported';
-    this.listings.set(listing.id, structuredClone(listing));
-    return outcome;
+  /** Read side for the identity resolution (stored listings start at version 1). */
+  read(id: string): ManagedListing | null {
+    const listing = this.listings.get(id);
+    if (listing === undefined) return null;
+    const management = {
+      status: 'ACTIVE',
+      origin: 'IMPORT',
+      version: this.versions.get(id) ?? 1,
+      contentHash: hashOf(listing),
+      fieldSources: {},
+      updatedAt: NOW.toISOString(),
+    };
+    return { listing: structuredClone(listing), management } as ManagedListing;
+  }
+
+  async write(change: StateChange): Promise<WriteResult> {
+    const id = change.listingId;
+    if (this.blocklist.isBlocked(id)) return err({ code: 'DELETION_BLOCKED' });
+    const current = this.read(id);
+    if (current === null && change.expectedVersion !== null) return err({ code: 'NOT_FOUND' });
+    const version = current?.management.version ?? 0;
+    if (current !== null && change.expectedVersion !== version) {
+      return err({ code: 'VERSION_CONFLICT', currentVersion: version });
+    }
+    const runId = change.actor.kind === 'connector' ? change.actor.runId : '';
+    const connectorId = change.actor.kind === 'connector' ? change.actor.connectorId : '';
+    const provenance = { lastImportedAt: NOW.toISOString(), lastRunId: runId };
+    const content = contentOf(change.next.content as Listing);
+    if (current !== null && current.management.contentHash === contentHash(content)) {
+      this.listings.set(id, { ...current.listing, ...provenance });
+      return ok({ outcome: 'unchanged', listing: this.read(id) as ManagedListing });
+    }
+    const source = current?.listing.source ?? connectorId;
+    this.listings.set(id, structuredClone({ ...content, id, source, ...provenance } as Listing));
+    this.versions.set(id, version + 1);
+    return ok({
+      outcome: current === null ? 'created' : 'updated',
+      listing: this.read(id) as ManagedListing,
+    });
   }
 }
+
+/** Listing_Inhalt of a listing: content fields only, absent ones dropped (as the writer does). */
+function contentOf(listing: Listing): ListingContent {
+  const record = listing as unknown as Record<string, unknown>;
+  return Object.fromEntries(
+    CONTENT_FIELDS.flatMap((field) =>
+      record[field] === undefined ? [] : [[field, record[field]]],
+    ),
+  ) as ListingContent;
+}
+
+const hashOf = (listing: Listing): string => contentHash(contentOf(listing));
 
 /** Search provider over the current content of the map. */
 function liveProvider(listings: Map<string, Listing>): SearchProvider {
@@ -170,21 +232,29 @@ function createWorld(initial: readonly Listing[], s: fc.Scheduler) {
   let writes = 0;
   const pipeline = new ImportPipeline({
     listingSchema: schemas.listing,
-    blocklist: {
-      has: async (id) => {
-        await gate('import: pre-check');
-        return blocklist.has(id);
+    reader: {
+      listings: {
+        get: async (id) => {
+          await gate('import: read');
+          return writer.read(id);
+        },
+      },
+      keys: { get: async () => null },
+      blocklist: {
+        has: async (id) => {
+          await gate('import: pre-check');
+          return blocklist.has(id);
+        },
       },
     },
     writer: {
-      write: async (listing) => {
+      write: async (change) => {
         await gate('import: write');
         writes += 1;
-        return writer.write(listing);
+        return writer.write(change);
       },
     },
     tourProviders,
-    now: () => NOW,
   });
 
   let runs = 0;
@@ -197,7 +267,13 @@ function createWorld(initial: readonly Listing[], s: fc.Scheduler) {
       sink: (line) => lines.push(line),
       now: () => NOW,
     });
-    const outcome = await pipeline.process(toInput(content), { runId, source: SOURCE, logger });
+    // Full records as from the bundled full-feed modules (`REPLACE`): the model replaces content.
+    const outcome = await pipeline.process(toInput(content), {
+      runId,
+      source: SOURCE,
+      logger,
+      importMode: 'REPLACE',
+    });
     const rejections = lines
       .map((line) => JSON.parse(line) as Logged)
       .filter((e) => e.event === 'record.rejected');
@@ -386,8 +462,16 @@ async function importStep(world: World, model: Model, content: Listing) {
     return;
   }
   expect(rejections).toEqual([]);
-  expect(outcome).toBe(model.present.has(content.id) ? 'updated' : 'imported');
-  const stored = expectedStored(content, runId);
+  const previous = model.present.get(content.id);
+  // The provenance `source` stays the connector that created the listing.
+  const stored = { ...expectedStored(content, runId), source: previous?.source ?? SOURCE };
+  const expectedOutcome =
+    previous === undefined
+      ? 'imported'
+      : hashOf(previous) === hashOf(stored)
+        ? 'unchanged'
+        : 'updated';
+  expect(outcome).toBe(expectedOutcome);
   model.present.set(content.id, stored);
   model.lastContent.set(content.id, stored);
 }
@@ -407,14 +491,16 @@ async function raceStep(world: World, model: Model, s: fc.Scheduler, content: Li
   const [res, imported] = await s.waitFor(both);
   world.setRacing(false);
 
-  // Whatever the order: rejected with „Löschsperre“, or an update that was then removed.
+  // Whatever the order: rejected with „Löschsperre“, or a write (new version or unchanged
+  // content) that was then removed.
+  const written = imported.outcome === 'updated' || imported.outcome === 'unchanged';
   if (imported.outcome === 'rejected') {
     expect(imported.rejections).toEqual([
       expect.objectContaining({ listingId: id, source: SOURCE, issues: DELETION_BLOCK_ISSUES }),
     ]);
   } else {
     expect(wasBlocked).toBe(false);
-    expect(imported.outcome).toBe('updated');
+    expect(written).toBe(true);
   }
 
   if (wasBlocked) {
@@ -429,8 +515,7 @@ async function raceStep(world: World, model: Model, s: fc.Scheduler, content: Li
     });
     model.present.delete(id);
     model.blocked.add(id);
-    if (imported.outcome === 'updated')
-      model.lastContent.set(id, expectedStored(content, imported.runId));
+    if (written) model.lastContent.set(id, expectedStored(content, imported.runId));
   }
   expect(world.listings.has(id)).toBe(false);
 

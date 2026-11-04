@@ -244,7 +244,10 @@ describe('Property 11: Import-Validierung akzeptiert genau gültige Listings', (
     await fc.assert(
       fc.asyncProperty(arbListing(), arbMutations, async (listing, mutations) => {
         const input = structuredClone(toInput(listing));
-        const expected = mutations.map((m) => m.apply(input));
+        const named = mutations.map((m) => m.apply(input));
+        // Without a valid `id` (and no `customId`) the record is rejected at the identity step,
+        // before validation; only `id` is named (Req 12.4).
+        const expected = named.includes('id') ? ['id'] : named;
         const t = setupImport(RUN_ID);
 
         const outcome = await t.process(input);

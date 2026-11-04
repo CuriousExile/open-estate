@@ -6,11 +6,11 @@ import {
   DELETION_BLOCK_REASON,
   ImportPipeline,
   InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
   type Connector,
   type ConnectorModule,
   type DeletionBlocklist,
-  type ListingWriter,
+  type ImportListingWriter,
 } from '@open-estate/ingestion';
 import {
   assertValidTaxonomy,
@@ -32,8 +32,9 @@ import { NOW, SOURCE, toInput, toInputOffer, type Input, type Obj } from './supp
  * blocklist) the store equals S after processing; in particular an existing version with the same
  * `id` is kept.
  *
- * Strategy: S is a set of valid listings with unique ids, written directly into an
- * `InMemoryListingWriter`. One connector run emits 1–5 candidates, each rejected for one reason:
+ * Strategy: S is a set of valid listings with unique ids, seeded into an `InMemoryImportStore`
+ * (`VersionedListingWriter`). One connector run (Importmodus `REPLACE`, so a removed field is not
+ * filled from S) emits 1–5 candidates, each rejected for one reason:
  * - `validation`: a valid listing in the input format with one schema violation (Req 4.9, 5.6),
  * - `offer-rule`: a valid listing whose offers violate an offer rule (Req 12.4, 12.5, 12.11),
  * - `blocked-before`: a valid listing whose id is on the blocklist before the run (pre-check),
@@ -196,7 +197,7 @@ const arbScenario = fc
 // ---------------------------------------------------------------------------------------------
 
 /** Every id the store could hold: S plus all candidate ids (a stray insert would show up here). */
-function snapshot(store: InMemoryListingWriter, ids: readonly string[]) {
+function snapshot(store: InMemoryImportStore, ids: readonly string[]) {
   return {
     size: store.size,
     listings: Object.fromEntries(ids.map((id) => [id, store.get(id)])),
@@ -215,8 +216,9 @@ const idsOf = (cases: readonly RejectedCase[], kind: Kind): string[] =>
 async function runScenario(initial: readonly Listing[], cases: readonly RejectedCase[]) {
   // S is written before any id is blocked; the deletions behind the blocklist are not modelled.
   const blocklist = new InMemoryDeletionBlocklist();
-  const store = new InMemoryListingWriter(blocklist);
-  for (const listing of initial) await store.write(listing);
+  const store = new InMemoryImportStore({ blocklist, clock: () => NOW.getTime() });
+  const seeded: Listing[] = [];
+  for (const listing of initial) seeded.push((await store.seed(listing)).listing);
   idsOf(cases, 'blocked-before').forEach((id) => blocklist.add(id));
   // Candidate being processed; connectors emit sequentially.
   let current: RejectedCase | undefined;
@@ -231,19 +233,18 @@ async function runScenario(initial: readonly Listing[], cases: readonly Rejected
   };
 
   const writeAttempts: string[] = [];
-  const writer: ListingWriter = {
-    write: (listing) => {
-      writeAttempts.push(listing.id);
-      return store.write(listing);
+  const writer: ImportListingWriter = {
+    write: (change) => {
+      writeAttempts.push(change.listingId);
+      return store.writer.write(change);
     },
   };
 
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist: pipelineBlocklist,
+    reader: { ...store.reader, blocklist: pipelineBlocklist },
     writer,
     tourProviders,
-    now: () => NOW,
   });
   const module: ConnectorModule = {
     name: MODULE_NAME,
@@ -274,6 +275,7 @@ async function runScenario(initial: readonly Listing[], cases: readonly Rejected
     module: MODULE_NAME,
     enabled: true,
     schedule: 'rate(1 hour)',
+    importMode: 'REPLACE',
   });
 
   const ids = [
@@ -292,7 +294,7 @@ async function runScenario(initial: readonly Listing[], cases: readonly Rejected
       listingId: e['listingId'] as string | undefined,
       issues: e['issues'] as { field: string; reason: string }[],
     }));
-  return { summary, before, after, rejections, writeAttempts };
+  return { summary, before, after, rejections, writeAttempts, seeded };
 }
 
 /** Model: expected log entry per candidate and the ids that must reach the writer. */
@@ -318,21 +320,22 @@ describe('Property 13: Abweisung lässt den Bestand unverändert', () => {
   it('leaves the store unchanged and counts every candidate as rejected', async () => {
     await fc.assert(
       fc.asyncProperty(arbScenario, async ([initial, cases]) => {
-        const { summary, before, after, rejections, writeAttempts } = await runScenario(
+        const { summary, before, after, rejections, writeAttempts, seeded } = await runScenario(
           initial,
           cases,
         );
 
         // The store equals S, existing versions with the same id included.
         expect(after).toEqual(before);
-        initial.forEach((listing) => expect(after.listings[listing.id]).toEqual(listing));
+        seeded.forEach((listing) => expect(after.listings[listing.id]).toEqual(listing));
 
-        // Run counters (Req 5.8).
+        // Run counters (Req 5.8, 13.2).
         expect(summary.status).toBe('SUCCESS');
-        expect({ imported: summary.imported, updated: summary.updated }).toEqual({
-          imported: 0,
-          updated: 0,
-        });
+        expect({
+          imported: summary.imported,
+          updated: summary.updated,
+          unchanged: summary.unchanged,
+        }).toEqual({ imported: 0, updated: 0, unchanged: 0 });
         expect(summary.rejected).toBe(cases.length);
 
         // One rejection per candidate, with the expected reason; only race candidates are written.

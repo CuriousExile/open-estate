@@ -15,6 +15,10 @@ const REGION = 'eu-central-1';
 const ENV = {
   [CONNECTOR_LAMBDA_ENV.listingsTable]: 'Listings',
   [CONNECTOR_LAMBDA_ENV.deletionBlocklistTable]: 'DeletionBlocklist',
+  [CONNECTOR_LAMBDA_ENV.listingVersionsTable]: 'ListingVersions',
+  [CONNECTOR_LAMBDA_ENV.listingKeysTable]: 'ListingKeys',
+  [CONNECTOR_LAMBDA_ENV.metricCountersTable]: 'MetricCounters',
+  [CONNECTOR_LAMBDA_ENV.snapshotBucket]: 'version-snapshots',
   [CONNECTOR_LAMBDA_ENV.configBucket]: 'config-bucket',
 };
 
@@ -101,7 +105,14 @@ describe('connector Lambda', () => {
   it('fails the init on missing or invalid configuration', async () => {
     await expect(initConnectorHandler({}, setup().sources)).rejects.toMatchObject({
       code: 'CONFIG_MISSING',
-      names: [CONNECTOR_LAMBDA_ENV.listingsTable, CONNECTOR_LAMBDA_ENV.deletionBlocklistTable],
+      names: [
+        CONNECTOR_LAMBDA_ENV.listingsTable,
+        CONNECTOR_LAMBDA_ENV.deletionBlocklistTable,
+        CONNECTOR_LAMBDA_ENV.listingVersionsTable,
+        CONNECTOR_LAMBDA_ENV.listingKeysTable,
+        CONNECTOR_LAMBDA_ENV.metricCountersTable,
+        CONNECTOR_LAMBDA_ENV.snapshotBucket,
+      ],
     });
     const invalidPii = { ...BASE_FILES, 'pii-allowlist.json': '{"allowedFields":["nope"]}' };
     await expect(initConnectorHandler(ENV, setup(invalidPii).sources)).rejects.toMatchObject({

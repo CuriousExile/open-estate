@@ -1,3 +1,4 @@
+import { resolveImportMode } from '@open-estate/shared';
 import type { z } from 'zod';
 import type { ConnectorContext, RawRecord } from './connector';
 import type { ConnectorConfig } from './connector-config';
@@ -67,7 +68,7 @@ export class ConnectorFramework {
       ...(this.sink ? { sink: this.sink } : {}),
     });
     const startedAt = this.now();
-    const counters = { imported: 0, updated: 0, rejected: 0 };
+    const counters = { imported: 0, updated: 0, unchanged: 0, rejected: 0 };
     const finish = (outcome: RunOutcome, status: RunStatus): ConnectorRunSummary => {
       const summary = { status, startedAt, endedAt: this.now(), ...counters };
       if (outcome !== 'DISABLED') logger.runFinished(summary);
@@ -93,7 +94,13 @@ export class ConnectorFramework {
       return finish('CONFIG_REJECTED', 'FAILURE');
     }
 
-    const processingContext: RecordProcessingContext = { runId, source, logger };
+    const processingContext: RecordProcessingContext = {
+      runId,
+      source,
+      logger,
+      importMode: resolveImportMode(config, module),
+      ...(config.agencyId !== undefined && { agencyId: config.agencyId }),
+    };
     const ctx: ConnectorContext = {
       config: settings.data,
       ...(config.secretRef !== undefined ? { secretRef: config.secretRef } : {}),

@@ -5,14 +5,13 @@ import {
   ConnectorRegistry,
   createWebCrawlerModule,
   ImportPipeline,
-  InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
   WEB_CRAWLER_MODULE_NAME,
   type Clock,
   type Connector,
   type ConnectorModule,
   type CrawlerFetch,
-  type ListingWriter,
+  type ImportListingWriter,
 } from '@open-estate/ingestion';
 import {
   assertValidTaxonomy,
@@ -31,7 +30,7 @@ import { toInput, type Input } from './support/import-harness';
  * (start ≤ end), source and status, and every listing stored in that run carries `source`,
  * `lastImportedAt` ∈ [start, end] and `lastRunId` of that run.
  *
- * Strategy: 1–4 sequential runs with distinct run ids on one `InMemoryListingWriter`. A run is
+ * Strategy: 1–4 sequential runs with distinct run ids on one `InMemoryImportStore`. A run is
  * either an `external-api` style dummy connector or the real `web-crawler` module with a fake web.
  * Records are drawn from a small pool of listings (ids recur across runs) and are valid or made
  * invalid (`title = ''`). The dummy connector may throw in `initialize` or after k records; crawl
@@ -276,20 +275,19 @@ type LogEntry = Record<string, unknown>;
 
 async function runScenario({ pool, runs, steps }: Scenario) {
   const now = steppingClock(steps);
-  const store = new InMemoryListingWriter();
+  const store = new InMemoryImportStore({ clock: () => now().getTime() });
   let writes: string[] = [];
-  const writer: ListingWriter = {
-    write: (listing) => {
-      writes.push(listing.id);
-      return store.write(listing);
+  const writer: ImportListingWriter = {
+    write: (change) => {
+      writes.push(change.listingId);
+      return store.writer.write(change);
     },
   };
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist: new InMemoryDeletionBlocklist(),
+    reader: store.reader,
     writer,
     tourProviders,
-    now,
   });
   const ids = pool.map((l) => l.id);
   const snapshot = () => Object.fromEntries(ids.map((id) => [id, store.get(id)]));
@@ -374,7 +372,8 @@ describe('Property 15: Herkunft, Lauf-Zuordnung und Lauf-Protokoll', () => {
           expect(runLog['status']).toBe(expected.fails ? 'FAILURE' : 'SUCCESS');
           expect(writes).toEqual(expected.written.map((i) => pool[i]?.id));
 
-          // Stored in this run → provenance of this run (Req 4.12); otherwise unchanged.
+          // Stored in this run → run provenance of this run (Req 4.12, 4.16), also without a new
+          // version; `source` stays the connector that created the listing; otherwise unchanged.
           const written = new Set(writes);
           for (const listing of pool) {
             const stored = after[listing.id];
@@ -383,7 +382,7 @@ describe('Property 15: Herkunft, Lauf-Zuordnung und Lauf-Protokoll', () => {
               continue;
             }
             expect(stored).toBeDefined();
-            expect(stored?.source).toBe(run.source);
+            expect(stored?.source).toBe(before[listing.id]?.source ?? run.source);
             expect(stored?.lastRunId).toBe(runId);
             expect(stored?.lastImportedAt).toMatch(ISO_WITH_OFFSET);
             const importedAt = Date.parse(stored?.lastImportedAt ?? '');

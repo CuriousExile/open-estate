@@ -4,8 +4,7 @@ import {
   connectorsFileSchema,
   createDefaultRegistry,
   ImportPipeline,
-  InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
   type Connector,
   type ConnectorModule,
   type ConnectorRegistry,
@@ -61,13 +60,12 @@ function saleAndRentRecord(id: string): RawRecord {
 
 /** Framework wired to the real import pipeline and the in-memory listing store. */
 function setup(registry: ConnectorRegistry) {
-  const store = new InMemoryListingWriter();
+  const store = new InMemoryImportStore({ clock: () => NOW.getTime() });
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist: new InMemoryDeletionBlocklist(),
-    writer: store,
+    reader: store.reader,
+    writer: store.writer,
     tourProviders: TourProvidersConfig.parse({ providers: [] }),
-    now: () => NOW,
   });
   const framework = new ConnectorFramework({
     registry,
@@ -234,7 +232,7 @@ describe('reference connectors end-to-end into the listing store', () => {
     expect(stored).toMatchObject({ source: 'partner-db', lastRunId: 'run-7', area: 8850 });
   });
 
-  it('external-api imports a listing with SALE and RENT offers and updates it on re-run', async () => {
+  it('external-api imports a listing with SALE and RENT offers; an identical re-run is unchanged', async () => {
     const fetch: FetchLike = async () => ({
       ok: true,
       status: 200,
@@ -249,7 +247,13 @@ describe('reference connectors end-to-end into the listing store', () => {
     };
 
     expect(await t.run(entry)).toMatchObject({ status: 'SUCCESS', imported: 1 });
-    expect(await t.run(entry)).toMatchObject({ status: 'SUCCESS', imported: 0, updated: 1 });
+    // Same source data ⇒ same Inhalts_Hash ⇒ no version, counted as unchanged (Req 7.3, 13.2).
+    expect(await t.run(entry)).toMatchObject({
+      status: 'SUCCESS',
+      imported: 0,
+      updated: 0,
+      unchanged: 1,
+    });
     expect(t.store.size).toBe(1);
     expect(t.store.get('S-1')?.offers).toEqual(expectedOffers);
   });

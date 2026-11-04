@@ -1,30 +1,29 @@
 import { GetCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { DELETION_BLOCKLIST_KEY_ATTRIBUTE } from '@open-estate/core';
+import {
+  DELETION_BLOCKLIST_KEY_ATTRIBUTE,
+  type DeletionBlocklistCheck,
+  type InMemoryOp,
+} from '@open-estate/core';
 
 /** Partition key attribute of the `DeletionBlocklist` table; defined in core, re-exported here. */
 export { DELETION_BLOCKLIST_KEY_ATTRIBUTE };
 
 /**
- * Listing ids removed by a deletion request (Req 18.6). The import pipeline refuses every record
- * whose id is listed (Req 18.7); the atomic upsert re-checks the list in the same transaction.
+ * Listing ids and Custom_Id keys removed by a deletion request (Req 18.6). The import pipeline
+ * refuses every record whose id or Custom_Id is listed (Req 18.7, 12.14); the
+ * `VersionedListingWriter` re-checks the list in the same transaction.
  */
 export interface DeletionBlocklist {
   has(listingId: string): Promise<boolean>;
 }
 
 /**
- * Thrown by a `ListingWriter` when the id is on the deletion blocklist at write time, i.e. it was
- * blocked after the pipeline's pre-check. The pipeline records it as rejected („Löschsperre“).
+ * In-memory blocklist for tests and local runs. Also the writer's transactional check
+ * (`DeletionBlocklistCheck`), so pre-check and write see the same entries.
  */
-export class DeletionBlockedError extends Error {
-  constructor(readonly listingId: string) {
-    super(`Listing ${listingId} is on the deletion blocklist`);
-    this.name = 'DeletionBlockedError';
-  }
-}
-
-/** In-memory blocklist for tests and local runs. */
-export class InMemoryDeletionBlocklist implements DeletionBlocklist {
+export class InMemoryDeletionBlocklist
+  implements DeletionBlocklist, DeletionBlocklistCheck<InMemoryOp>
+{
   private readonly ids: Set<string>;
 
   constructor(ids: Iterable<string> = []) {
@@ -41,6 +40,16 @@ export class InMemoryDeletionBlocklist implements DeletionBlocklist {
 
   has(listingId: string): Promise<boolean> {
     return Promise.resolve(this.ids.has(listingId));
+  }
+
+  /** Same label and target as core's `InMemoryDeletionBlocklistCheck`. */
+  notBlockedOp(key: string): InMemoryOp {
+    return {
+      label: 'deletionBlocklist.check',
+      target: `DeletionBlocklist#${key}`,
+      check: () => !this.ids.has(key),
+      apply: () => undefined,
+    };
   }
 }
 

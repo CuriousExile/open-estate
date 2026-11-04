@@ -1,15 +1,9 @@
 // Feature: real-estate-platform, Property 14: Upsert ersetzt vollständig und ist idempotent
-import { DynamoDBClient, TransactionCanceledException } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
-import { toListingItem } from '@open-estate/core';
+import { toManagedListingItem } from '@open-estate/core';
 import {
   createRunLogger,
-  DELETION_BLOCKLIST_KEY_ATTRIBUTE,
-  DynamoDbListingWriter,
   ImportPipeline,
-  InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
-  type ListingWriter,
+  InMemoryImportStore,
   type RecordProcessingContext,
 } from '@open-estate/ingestion';
 import {
@@ -34,22 +28,21 @@ import { NOW, SOURCE, toInput, type Input } from './support/import-harness';
  *
  * Strategy: the store holds 0–3 unrelated listings and, most of the time, a "rich" previous
  * version of l's id (geo, street, full contact, translations, SALE + RENT with optional amounts,
- * several media and tours) written directly to the store. l is either an arbitrary listing or a
- * sparse one (SALE only, no geo/street/contact/translations/tours, at most two media), so the
- * replacement has to drop fields, flat search fields (`rentAmountMinor`, `tourHosts`) and list
- * elements. l goes through the full `ImportPipeline` twice (same run, fixed clock), against
- * - `InMemoryListingWriter`: stored listing equals the enriched l,
- * - `DynamoDbListingWriter` on an in-process fake that executes `TransactWriteItems` with
- *   condition semantics: stored item equals `toListingItem(enriched l)`.
- * The pipeline keeps contact (all PII paths allow-listed) and tours (their hosts are on the tour
- * allow-list), so every field of l can reach the store.
+ * several media and tours) imported earlier by the same connector. l is either an arbitrary
+ * listing or a sparse one (SALE only, no geo/street/contact/translations/tours, at most two
+ * media), so the replacement has to drop fields, flat search fields (`rentAmountMinor`,
+ * `tourHosts`) and list elements. l goes through the full `ImportPipeline` twice (same run, fixed
+ * clock, Importmodus `REPLACE` as for the bundled full-feed modules) against an
+ * `InMemoryImportStore` (`VersionedListingWriter`): the stored listing equals the enriched l and
+ * the stored item equals `toManagedListingItem(enriched l, management)`. The second import yields
+ * `unchanged` (same Inhalts_Hash, no version, Req 7.3). The pipeline keeps contact (all PII paths
+ * allow-listed) and tours (their hosts are on the tour allow-list), so every field of l can reach
+ * the store.
  *
  * **Validates: Requirements 4.11, 16.3**
  */
 
 const RUN_ID = 'run-14';
-const LISTINGS = 'Listings';
-const BLOCKLIST = 'DeletionBlocklist';
 
 const listingSchema = buildSchemas(assertValidTaxonomy(DEFAULT_TAXONOMY_CONFIG), {
   defaultLocale: 'de',
@@ -186,18 +179,19 @@ const enriched = (listing: Listing): Listing => ({
   lastRunId: RUN_ID,
 });
 
-function pipelineFor(writer: ListingWriter) {
+function setup() {
+  const store = new InMemoryImportStore({ clock: () => NOW.getTime() });
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist: new InMemoryDeletionBlocklist(),
-    writer,
+    reader: store.reader,
+    writer: store.writer,
     tourProviders,
     piiAllowlist: { allowedFields: [...PII_FIELD_PATHS] },
-    now: () => NOW,
   });
   const ctx: RecordProcessingContext = {
     runId: RUN_ID,
     source: SOURCE,
+    importMode: 'REPLACE',
     logger: createRunLogger({
       runId: RUN_ID,
       source: SOURCE,
@@ -205,182 +199,52 @@ function pipelineFor(writer: ListingWriter) {
       now: () => NOW,
     }),
   };
-  return (raw: Input) => pipeline.process(raw, ctx);
+  /** Raw stored item (listing, flat search fields, management attributes). */
+  const item = (id: string) => store.listings.all().find((stored) => stored.id === id);
+  return { store, item, process: (raw: Input) => pipeline.process(raw, ctx) };
 }
 
-type Item = Record<string, unknown>;
-
-/**
- * In-process `TransactWriteItems`: all conditions are evaluated first, any failure cancels the
- * whole transaction with per-item codes; otherwise every `Put` replaces the item by its key.
- * Only `attribute_not_exists(#name)` on the key is supported, anything else fails the test.
- */
-function fakeDynamoDb() {
-  const keyOf: Record<string, string> = {
-    [LISTINGS]: 'id',
-    [BLOCKLIST]: DELETION_BLOCKLIST_KEY_ATTRIBUTE,
-  };
-  const tables = new Map<string, Map<string, Item>>([
-    [LISTINGS, new Map()],
-    [BLOCKLIST, new Map()],
-  ]);
-  const table = (name: string | undefined) => {
-    const t = name === undefined ? undefined : tables.get(name);
-    if (t === undefined) throw new Error(`unknown table ${String(name)}`);
-    return t;
-  };
-  const conditionHolds = (
-    tableName: string,
-    key: string,
-    expression: string | undefined,
-    names: Record<string, string> | undefined,
-  ): boolean => {
-    if (expression === undefined) return true;
-    const match = /^attribute_not_exists\((#\w+)\)$/.exec(expression);
-    const attribute = match?.[1] === undefined ? undefined : names?.[match[1]];
-    if (attribute !== keyOf[tableName]) throw new Error(`unsupported condition ${expression}`);
-    return !table(tableName).has(key);
-  };
-
-  const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region: 'eu-central-1' }));
-  jest.spyOn(client, 'send').mockImplementation(async (command: unknown) => {
-    if (!(command instanceof TransactWriteCommand)) throw new Error('unexpected command');
-    const items = command.input.TransactItems ?? [];
-    const codes = items.map((entry) => {
-      if (entry.Put !== undefined) {
-        const {
-          TableName = '',
-          Item = {},
-          ConditionExpression,
-          ExpressionAttributeNames,
-        } = entry.Put;
-        const key = String(Item[keyOf[TableName] ?? '']);
-        return conditionHolds(TableName, key, ConditionExpression, ExpressionAttributeNames);
-      }
-      if (entry.ConditionCheck !== undefined) {
-        const {
-          TableName = '',
-          Key = {},
-          ConditionExpression,
-          ExpressionAttributeNames,
-        } = entry.ConditionCheck;
-        const key = String(Key[keyOf[TableName] ?? '']);
-        return conditionHolds(TableName, key, ConditionExpression, ExpressionAttributeNames);
-      }
-      throw new Error('unsupported transaction item');
-    });
-    if (codes.some((ok) => !ok)) {
-      throw new TransactionCanceledException({
-        message: 'Transaction cancelled',
-        $metadata: {},
-        CancellationReasons: codes.map((ok) => ({ Code: ok ? 'None' : 'ConditionalCheckFailed' })),
-      });
-    }
-    for (const entry of items) {
-      if (entry.Put === undefined) continue;
-      const { TableName = '', Item = {} } = entry.Put;
-      table(TableName).set(String(Item[keyOf[TableName] ?? '']), structuredClone(Item));
-    }
-    return {};
-  });
-
-  const listings = table(LISTINGS);
-  return {
-    client,
-    seed: (item: object): void => {
-      listings.set(String((item as Item)['id']), structuredClone(item) as Item);
-    },
-    get: (id: string) => {
-      const item = listings.get(id);
-      return item === undefined ? undefined : structuredClone(item);
-    },
-    size: () => listings.size,
-  };
-}
-
-/** Store backend under test; `expected` is the stored form of a listing. */
-interface Backend {
-  readonly seed: (listing: Listing) => Promise<void> | void;
-  readonly get: (id: string) => unknown;
-  readonly size: () => number;
-  readonly expected: (listing: Listing) => unknown;
-  readonly process: (raw: Input) => Promise<unknown>;
-}
-
-function inMemoryBackend(): Backend {
-  const store = new InMemoryListingWriter();
-  return {
-    seed: async (listing) => {
-      await store.write(listing);
-    },
-    get: (id) => store.get(id),
-    size: () => store.size,
-    expected: (listing) => listing,
-    process: pipelineFor(store),
-  };
-}
-
-function dynamoDbBackend(): Backend {
-  const db = fakeDynamoDb();
-  const writer = new DynamoDbListingWriter({
-    client: db.client,
-    listingsTable: LISTINGS,
-    blocklistTable: BLOCKLIST,
-  });
-  return {
-    seed: (listing) => db.seed(toListingItem(listing)),
-    get: db.get,
-    size: db.size,
-    expected: (listing) => toListingItem(listing),
-    process: pipelineFor(writer),
-  };
-}
-
-async function checkUpsert(backend: Backend, { others, previous, next }: Scenario) {
-  for (const listing of [...others, ...(previous === undefined ? [] : [previous])]) {
-    await backend.seed(listing);
-  }
-  const sizeBefore = backend.size();
+async function checkUpsert({ others, previous, next }: Scenario) {
+  const t = setup();
+  for (const listing of others) await t.store.seed(listing);
+  // The previous version was imported by the same connector (provenance `source` is kept).
+  if (previous !== undefined) await t.store.seed({ ...previous, source: SOURCE });
+  const othersBefore = others.map((listing) => t.store.get(listing.id));
+  const sizeBefore = t.store.size;
   // structuredClone: generated objects have a null prototype, stored ones a plain one.
-  const expected = structuredClone(backend.expected(enriched(next)));
+  const expected = structuredClone(enriched(next));
   const input = toFullInput(next);
 
   // First import: new id ⇒ imported, existing id ⇒ updated; stored record is exactly l.
-  expect(await backend.process(structuredClone(input))).toBe(
+  expect(await t.process(structuredClone(input))).toBe(
     previous === undefined ? 'imported' : 'updated',
   );
   // `toStrictEqual` also fails on extra keys, i.e. leftovers of the previous version.
-  expect(backend.get(next.id)).toStrictEqual(expected);
-  expect(backend.size()).toBe(previous === undefined ? sizeBefore + 1 : sizeBefore);
-  const sizeAfterFirst = backend.size();
+  expect(t.store.get(next.id)).toStrictEqual(expected);
+  const management = t.store.managed(next.id)?.management;
+  expect(management).toBeDefined();
+  if (management !== undefined) {
+    expect(t.item(next.id)).toStrictEqual(toManagedListingItem(expected, management));
+  }
+  expect(t.store.size).toBe(previous === undefined ? sizeBefore + 1 : sizeBefore);
+  const sizeAfterFirst = t.store.size;
+  const itemAfterFirst = t.item(next.id);
 
-  // Second import of l: record and record count unchanged, counted as updated.
-  expect(await backend.process(structuredClone(input))).toBe('updated');
-  expect(backend.get(next.id)).toStrictEqual(expected);
-  expect(backend.size()).toBe(sizeAfterFirst);
+  // Second import of l: record and record count unchanged, no version (Req 7.3).
+  expect(await t.process(structuredClone(input))).toBe('unchanged');
+  expect(t.store.get(next.id)).toStrictEqual(expected);
+  expect(t.item(next.id)).toStrictEqual(itemAfterFirst);
+  expect(t.store.size).toBe(sizeAfterFirst);
 
   // Unrelated listings are untouched.
-  others.forEach((listing) =>
-    expect(backend.get(listing.id)).toStrictEqual(structuredClone(backend.expected(listing))),
-  );
+  expect(others.map((listing) => t.store.get(listing.id))).toStrictEqual(othersBefore);
 }
 
 describe('Property 14: Upsert ersetzt vollständig und ist idempotent', () => {
-  afterEach(() => jest.restoreAllMocks());
-
-  it('pipeline + InMemoryListingWriter stores exactly l and is idempotent', async () => {
+  it('pipeline + VersionedListingWriter stores exactly l and is idempotent', async () => {
     await fc.assert(
       fc.asyncProperty(arbScenario, async (scenario) => {
-        await checkUpsert(inMemoryBackend(), scenario);
-      }),
-      { numRuns: 100 },
-    );
-  });
-
-  it('pipeline + DynamoDbListingWriter stores exactly toListingItem(l) and is idempotent', async () => {
-    await fc.assert(
-      fc.asyncProperty(arbScenario, async (scenario) => {
-        await checkUpsert(dynamoDbBackend(), scenario);
+        await checkUpsert(scenario);
       }),
       { numRuns: 100 },
     );

@@ -12,11 +12,7 @@ import {
   type StoredListingKey,
 } from '@open-estate/admin';
 import { InMemoryApiKeyStore, StaticAccessConfigSource } from '@open-estate/core';
-import {
-  DeletionBlockedError,
-  InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
-} from '@open-estate/ingestion';
+import { InMemoryDeletionBlocklist, InMemoryImportStore } from '@open-estate/ingestion';
 import type { Listing } from '@open-estate/shared';
 import { createDeletionHarness, type DeletionHarnessOptions } from './support/deletion-harness';
 
@@ -292,11 +288,35 @@ describe('Deletion process', () => {
       });
       await handler(request('POST', '/admin/deletions', { listingId: 'L-1' }));
 
-      const writer = new InMemoryListingWriter(pipelineBlocklist);
-      await expect(writer.write({ id: 'L-1' } as Listing)).rejects.toBeInstanceOf(
-        DeletionBlockedError,
-      );
-      expect(writer.size).toBe(0);
+      const store = new InMemoryImportStore({ blocklist: pipelineBlocklist });
+      const content: Listing = {
+        id: 'L-1',
+        originalLocale: 'de',
+        title: 'Wohnung L-1',
+        description: '',
+        translations: [],
+        offers: [{ offerType: 'SALE', price: 100_000_00, currency: 'EUR' }],
+        listingType: 'loft',
+        rooms: 2,
+        area: 50_00,
+        address: { city: 'Berlin', postalCode: '10115', country: 'DE' },
+        sourceUrl: 'https://partner-a.example/listings/L-1',
+        media: [],
+        tours: [],
+        source: 'partner-a',
+        lastImportedAt: T0_ISO,
+        lastRunId: 'run-1',
+      };
+      const result = await store.writer.write({
+        listingId: 'L-1',
+        expectedVersion: null,
+        next: { content, status: 'ACTIVE' },
+        changeType: 'IMPORT',
+        channel: 'IMPORT',
+        actor: { kind: 'connector', connectorId: 'partner-a', runId: 'run-1' },
+      });
+      expect(result).toMatchObject({ ok: false, error: { code: 'DELETION_BLOCKED' } });
+      expect(store.size).toBe(0);
     });
 
     it('writes one audit entry with exactly the required fields and no PII', async () => {

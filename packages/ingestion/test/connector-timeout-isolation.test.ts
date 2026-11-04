@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { DynamoDBDocumentClient, TransactWriteCommand } from '@aws-sdk/lib-dynamodb';
 import {
   CONNECTOR_LAMBDA_ENV,
@@ -84,7 +84,7 @@ const CONFIG_FILES: Record<string, string> = {
   'connectors.json': JSON.stringify([HANGING, HEALTHY]),
 };
 
-/** Shared in-memory "tables": every TransactWrite put, from any connector function. */
+/** Shared in-memory "tables": every `Listings` put of a TransactWrite, from any connector function. */
 const putItems: Record<string, unknown>[] = [];
 
 /** Sources of one connector Lambda: own SDK clients, shared fake tables and bucket. */
@@ -92,16 +92,19 @@ function lambdaSources(lines: string[]) {
   const s3 = new S3Client({ region: REGION });
   const dynamo = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
   jest.spyOn(s3, 'send').mockImplementation(async (command: unknown) => {
+    // Version snapshots of the `VersionedListingWriter`: accepted, not inspected.
+    if (command instanceof PutObjectCommand) return {};
     if (!(command instanceof GetObjectCommand)) throw new Error('unexpected command');
     const body = CONFIG_FILES[command.input.Key ?? ''];
     if (body === undefined) throw Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
     return { Body: { transformToString: async () => body } };
   });
   jest.spyOn(dynamo, 'send').mockImplementation(async (command: unknown) => {
-    // Blocklist GetItem: nothing blocked. TransactWrite: record the listing put.
+    // GetItem (listing, Custom_Id key, blocklist): nothing stored or blocked. TransactWrite:
+    // record the listing put.
     if (command instanceof TransactWriteCommand) {
       for (const item of command.input.TransactItems ?? []) {
-        if (item.Put?.Item) putItems.push(item.Put.Item);
+        if (item.Put?.TableName === 'Listings' && item.Put.Item) putItems.push(item.Put.Item);
       }
     }
     return {};
@@ -115,6 +118,10 @@ async function connectorLambda(connectorId: string, lines: string[]): Promise<Co
     {
       [CONNECTOR_LAMBDA_ENV.listingsTable]: 'Listings',
       [CONNECTOR_LAMBDA_ENV.deletionBlocklistTable]: 'DeletionBlocklist',
+      [CONNECTOR_LAMBDA_ENV.listingVersionsTable]: 'ListingVersions',
+      [CONNECTOR_LAMBDA_ENV.listingKeysTable]: 'ListingKeys',
+      [CONNECTOR_LAMBDA_ENV.metricCountersTable]: 'MetricCounters',
+      [CONNECTOR_LAMBDA_ENV.snapshotBucket]: 'version-snapshots',
       [CONNECTOR_LAMBDA_ENV.configBucket]: 'config-bucket',
       [CONNECTOR_LAMBDA_ENV.connectorId]: connectorId,
     },

@@ -24,6 +24,7 @@ describe('RunLogger', () => {
       endedAt: new Date('2026-11-05T10:01:00.000Z'),
       imported: 3,
       updated: 1,
+      unchanged: 4,
       rejected: 2,
     });
     expect(lines.every((l) => !l.includes('\n'))).toBe(true);
@@ -47,6 +48,7 @@ describe('RunLogger', () => {
         endedAt: '2026-11-05T10:01:00.000Z',
         imported: 3,
         updated: 1,
+        unchanged: 4,
         rejected: 2,
       },
     ]);
@@ -115,6 +117,7 @@ describe('RunLogger', () => {
       endedAt: NOW,
       imported: 0,
       updated: 0,
+      unchanged: 0,
       rejected: 1,
       ...{ record: { contact: { email: secret } } },
     });

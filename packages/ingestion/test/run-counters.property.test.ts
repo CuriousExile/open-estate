@@ -5,11 +5,11 @@ import {
   ConnectorRegistry,
   ImportPipeline,
   InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
   type Connector,
   type ConnectorModule,
   type ConnectorRunSummary,
-  type ListingWriter,
+  type ImportListingWriter,
 } from '@open-estate/ingestion';
 import {
   assertValidTaxonomy,
@@ -25,9 +25,10 @@ import { arbListing } from '../../shared/test/arbitraries';
 import { NOW, SOURCE, toInput, type Input } from './support/import-harness';
 
 /**
- * Property 16: for any sequence of raw records of a run, `imported + updated + rejected` equals
- * the number of processed records, and `updated` equals the number of stored records whose `id`
- * already existed before the run.
+ * Property 16: for any sequence of raw records of a run, `imported + updated + unchanged +
+ * rejected` equals the number of processed records, and `updated + unchanged` equals the number of
+ * stored records whose `id` already existed before the run (`unchanged`: same Inhalts_Hash, no
+ * version, Req 7.3, 13.2).
  *
  * Strategy: a pool of listings with unique ids; a random subset is stored before the run, another
  * (overlapping) subset is on the deletion blocklist. One connector run emits records drawn from
@@ -198,29 +199,28 @@ interface Observed {
 
 async function runScenario(scenario: Scenario): Promise<Observed> {
   const { pool, existing, blocked } = scenario;
-  const store = new InMemoryListingWriter();
+  const blocklist = new InMemoryDeletionBlocklist();
+  const store = new InMemoryImportStore({ blocklist, clock: () => NOW.getTime() });
   for (const i of existing) {
     const listing = pool[i];
-    if (listing !== undefined) await store.write(listing);
+    if (listing !== undefined) await store.seed(listing);
   }
+  pool.filter((_, i) => blocked.has(i)).forEach((l) => blocklist.add(l.id));
   const existedBefore = new Set(pool.filter((_, i) => existing.has(i)).map((l) => l.id));
 
   const stored: string[] = [];
-  const writer: ListingWriter = {
-    write: async (listing) => {
-      const outcome = await store.write(listing);
-      stored.push(listing.id);
-      return outcome;
+  const writer: ImportListingWriter = {
+    write: async (change) => {
+      const result = await store.writer.write(change);
+      if (result.ok) stored.push(change.listingId);
+      return result;
     },
   };
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist: new InMemoryDeletionBlocklist(
-      pool.filter((_, i) => blocked.has(i)).map((l) => l.id),
-    ),
+    reader: store.reader,
     writer,
     tourProviders,
-    now: () => NOW,
   });
   let processed = 0;
   const lines: string[] = [];
@@ -257,18 +257,21 @@ function emittedRecords({ records, failure }: Scenario): readonly EmittedRecord[
   return records;
 }
 
-const counters = ({ imported, updated, rejected }: ConnectorRunSummary) => ({
+const counters = ({ imported, updated, unchanged, rejected }: ConnectorRunSummary) => ({
   imported,
   updated,
+  unchanged,
   rejected,
 });
+
+const total = (s: ConnectorRunSummary) => s.imported + s.updated + s.unchanged + s.rejected;
 
 // ---------------------------------------------------------------------------------------------
 // Properties
 // ---------------------------------------------------------------------------------------------
 
 describe('Property 16: Lauf-Zähler', () => {
-  it('imported + updated + rejected = processed records, updated = stored ids that existed before the run', async () => {
+  it('imported + updated + unchanged + rejected = processed records, updated + unchanged = stored ids that existed before the run', async () => {
     await fc.assert(
       fc.asyncProperty(
         arbScenario((n) => arbRecords(n).map(uniqueValidIds)),
@@ -279,11 +282,11 @@ describe('Property 16: Lauf-Zähler', () => {
           // Processed = exactly the records emitted before the connector failed.
           const emitted = emittedRecords(scenario);
           expect(processed).toBe(emitted.length);
-          expect(summary.imported + summary.updated + summary.rejected).toBe(processed);
+          expect(total(summary)).toBe(processed);
 
-          // updated = stored records whose id existed before the run; the rest stored is new.
+          // updated + unchanged = stored records whose id existed before the run; the rest is new.
           const updatedIds = stored.filter((id) => existedBefore.has(id));
-          expect(summary.updated).toBe(updatedIds.length);
+          expect(summary.updated + summary.unchanged).toBe(updatedIds.length);
           expect(summary.imported).toBe(stored.length - updatedIds.length);
 
           // Model: stored = valid, attributable, not blocklisted.
@@ -301,13 +304,13 @@ describe('Property 16: Lauf-Zähler', () => {
     );
   });
 
-  it('imported + updated + rejected = processed records also with repeated ids in one run', async () => {
+  it('imported + updated + unchanged + rejected = processed records also with repeated ids in one run', async () => {
     await fc.assert(
       fc.asyncProperty(arbScenario(arbRecords), async (scenario) => {
         const { summary, runLog, processed, stored } = await runScenario(scenario);
         expect(processed).toBe(emittedRecords(scenario).length);
-        expect(summary.imported + summary.updated + summary.rejected).toBe(processed);
-        expect(summary.imported + summary.updated).toBe(stored.length);
+        expect(total(summary)).toBe(processed);
+        expect(summary.imported + summary.updated + summary.unchanged).toBe(stored.length);
         expect(runLog).toEqual(expect.objectContaining(counters(summary)));
       }),
       { numRuns: 100 },
@@ -316,13 +319,13 @@ describe('Property 16: Lauf-Zähler', () => {
 
   /**
    * Known discrepancy (reported, not resolved here): a listing that is new before the run and
-   * emitted twice is stored twice. The writer reports `imported`, then `updated` (it existed at
-   * write time). The property text counts `updated` only for ids that existed *before the run*,
-   * which would require `updated = 0` and thus `imported = 2` for a single new listing. Req 5.8
-   * ("Anzahl der importierten, aktualisierten und abgewiesenen Listings") does not decide it.
-   * This test pins the current behaviour so a change of either side is a conscious decision.
+   * emitted twice is written twice. The writer reports `created` (`imported`), then `unchanged`
+   * (it existed at write time, same Inhalts_Hash). The property text counts only ids that existed
+   * *before the run* as not new, which would require `imported = 2` for a single new listing.
+   * Req 5.8/13.2 do not decide it. This test pins the current behaviour so a change of either
+   * side is a conscious decision.
    */
-  it('counts a repeated new id in one run as imported once and updated once (write-time existence)', async () => {
+  it('counts a repeated new id in one run as imported once and unchanged once (write-time existence)', async () => {
     const [listing] = fc.sample(arbListing(), { numRuns: 1, seed: 16 });
     if (listing === undefined) throw new Error('no sample');
     const scenario: Scenario = {
@@ -339,10 +342,10 @@ describe('Property 16: Lauf-Zähler', () => {
 
     expect(stored).toEqual([listing.id, listing.id]);
     expect(existedBefore.has(listing.id)).toBe(false);
-    expect(counters(summary)).toEqual({ imported: 1, updated: 1, rejected: 0 });
+    expect(counters(summary)).toEqual({ imported: 1, updated: 0, unchanged: 1, rejected: 0 });
     // Literal property text: stored ids that existed before the run.
     const updatedBeforeRun = stored.filter((id) => existedBefore.has(id)).length;
     expect(updatedBeforeRun).toBe(0);
-    expect(summary.updated).not.toBe(updatedBeforeRun);
+    expect(summary.updated + summary.unchanged).not.toBe(updatedBeforeRun);
   });
 });

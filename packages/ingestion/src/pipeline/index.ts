@@ -1,7 +1,7 @@
 export * from './deletion-blocklist';
 export * from './import-pipeline';
 export * from './import-target';
-export * from './listing-writer';
+export * from './in-memory-import-store';
 // Moved to `@open-estate/core` (shared with the Management_API); re-exported for compatibility.
 export {
   cleanMedia,

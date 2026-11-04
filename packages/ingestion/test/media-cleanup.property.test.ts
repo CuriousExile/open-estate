@@ -2,8 +2,7 @@
 import {
   createRunLogger,
   ImportPipeline,
-  InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
   TOUR_HOST_NOT_ALLOWED,
   type RecordProcessingContext,
 } from '@open-estate/ingestion';
@@ -315,13 +314,12 @@ async function runImport(input: Obj, tourProviders: TourProvidersConfig) {
     sink: (line) => lines.push(line),
     now: () => NOW,
   });
-  const store = new InMemoryListingWriter();
+  const store = new InMemoryImportStore({ clock: () => NOW.getTime() });
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist: new InMemoryDeletionBlocklist(),
-    writer: store,
+    reader: store.reader,
+    writer: store.writer,
     tourProviders,
-    now: () => NOW,
   });
   const ctx: RecordProcessingContext = { runId: RUN_ID, source: SOURCE, logger };
   const outcome = await pipeline.process(input, ctx);

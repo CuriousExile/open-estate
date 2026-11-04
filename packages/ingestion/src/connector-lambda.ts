@@ -6,11 +6,20 @@ import {
   CONFIG_BUCKET_ENV,
   ConfigError,
   describeInitFailure,
+  DynamoDbDeletionBlocklistCheck,
+  DynamoDbListingKeyStore,
+  DynamoDbListingVersionStore,
+  DynamoDbManagedListingStore,
+  DynamoDbMetricCounterStore,
+  DynamoDbTransactor,
   I18nConfig,
   isConfigFailure,
   loadConfig,
   READ_MODEL_CONFIG_FILES,
   READ_MODEL_ENV,
+  S3SnapshotStore,
+  systemClock,
+  VersionedListingWriter,
   type ConfigSources,
 } from '@open-estate/core';
 import {
@@ -28,7 +37,6 @@ import { createDefaultRegistry } from './default-registry';
 import { ConnectorFramework, type ConnectorRunSummary } from './framework';
 import { DynamoDbDeletionBlocklist } from './pipeline/deletion-blocklist';
 import { ImportPipeline } from './pipeline/import-pipeline';
-import { DynamoDbListingWriter } from './pipeline/listing-writer';
 import type { LogSink } from './run-logger';
 
 // Lambda of one connector run (design: "Connector-Orchestrierung": Scheduler → Step Functions →
@@ -43,6 +51,11 @@ export const PII_ALLOWLIST_CONFIG_KEY = 'pii-allowlist.json';
 export const CONNECTOR_LAMBDA_ENV = {
   listingsTable: READ_MODEL_ENV.listingsTable,
   deletionBlocklistTable: 'DELETION_BLOCKLIST_TABLE_NAME',
+  listingVersionsTable: 'LISTING_VERSIONS_TABLE_NAME',
+  listingKeysTable: 'LISTING_KEYS_TABLE_NAME',
+  metricCountersTable: 'METRIC_COUNTERS_TABLE_NAME',
+  /** `VersionSnapshots` bucket of the `VersionedListingWriter`. */
+  snapshotBucket: 'SNAPSHOT_BUCKET_NAME',
   configBucket: CONFIG_BUCKET_ENV,
   /** Connector this function is provisioned for; other ids are refused. */
   connectorId: 'CONNECTOR_ID',
@@ -128,12 +141,18 @@ export async function initConnectorHandler(
   env: Readonly<Record<string, string | undefined>>,
   sources: ConnectorInitSources = {},
 ): Promise<ConnectorHandler> {
+  const names = CONNECTOR_LAMBDA_ENV;
   requireEnv(env, [
-    CONNECTOR_LAMBDA_ENV.listingsTable,
-    CONNECTOR_LAMBDA_ENV.deletionBlocklistTable,
+    names.listingsTable,
+    names.deletionBlocklistTable,
+    names.listingVersionsTable,
+    names.listingKeysTable,
+    names.metricCountersTable,
+    names.snapshotBucket,
   ]);
   const files = CONNECTOR_CONFIG_FILES;
-  const configSources: ConfigSources = { ...sources, env, s3: sources.s3 ?? new S3Client({}) };
+  const s3 = sources.s3 ?? new S3Client({});
+  const configSources: ConfigSources = { ...sources, env, s3 };
 
   const [config, tourProviders, piiAllowlist] = await Promise.all([
     loadConfig({ files: [files.taxonomy, files.i18n, files.connectors] }, configSources),
@@ -145,18 +164,31 @@ export async function initConnectorHandler(
   const connectors = config.loadJson(files.connectors, connectorsFileSchema);
 
   const dynamo = sources.dynamo ?? DynamoDBDocumentClient.from(new DynamoDBClient({}));
-  const blocklistTable = env[CONNECTOR_LAMBDA_ENV.deletionBlocklistTable] ?? '';
+  const table = (name: string) => ({ client: dynamo, tableName: env[name] ?? '' });
+  const listings = new DynamoDbManagedListingStore(table(names.listingsTable));
+  const keys = new DynamoDbListingKeyStore(table(names.listingKeysTable));
+  const blocklistTable = env[names.deletionBlocklistTable] ?? '';
+  const now = sources.now;
+  const writer = new VersionedListingWriter({
+    listings,
+    versions: new DynamoDbListingVersionStore(table(names.listingVersionsTable)),
+    keys,
+    blocklist: new DynamoDbDeletionBlocklistCheck({ tableName: blocklistTable }),
+    counters: new DynamoDbMetricCounterStore(table(names.metricCountersTable)),
+    snapshots: new S3SnapshotStore({ client: s3, bucketName: env[names.snapshotBucket] ?? '' }),
+    transactor: new DynamoDbTransactor({ client: dynamo }),
+    clock: now === undefined ? systemClock : () => now().getTime(),
+  });
   const pipeline = new ImportPipeline({
     listingSchema: buildSchemas(taxonomy, locales).listing,
-    blocklist: new DynamoDbDeletionBlocklist({ client: dynamo, tableName: blocklistTable }),
-    writer: new DynamoDbListingWriter({
-      client: dynamo,
-      listingsTable: env[CONNECTOR_LAMBDA_ENV.listingsTable] ?? '',
-      blocklistTable,
-    }),
+    reader: {
+      listings,
+      keys,
+      blocklist: new DynamoDbDeletionBlocklist({ client: dynamo, tableName: blocklistTable }),
+    },
+    writer,
     piiAllowlist,
     tourProviders,
-    ...(sources.now && { now: sources.now }),
   });
   const registry = createDefaultRegistry({
     // Read per run, so allowlist changes apply without a restart; validated by the crawler.

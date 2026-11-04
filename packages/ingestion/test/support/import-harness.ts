@@ -1,9 +1,8 @@
 import {
   createRunLogger,
   ImportPipeline,
-  InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
-  type ListingWriter,
+  InMemoryImportStore,
+  type ImportListingWriter,
   type RecordProcessingContext,
 } from '@open-estate/ingestion';
 import {
@@ -81,7 +80,7 @@ export function expectedStored(listing: Listing, runId: string): Listing {
   };
 }
 
-/** Pipeline with an in-memory writer that counts writes and a logger that captures lines. */
+/** Pipeline with in-memory stores, a writer that counts writes and a logger that captures lines. */
 export function setupImport(runId: string) {
   const lines: string[] = [];
   const logger = createRunLogger({
@@ -90,20 +89,19 @@ export function setupImport(runId: string) {
     sink: (line) => lines.push(line),
     now: () => NOW,
   });
-  const store = new InMemoryListingWriter();
+  const store = new InMemoryImportStore({ clock: () => NOW.getTime() });
   let writes = 0;
-  const writer: ListingWriter = {
-    write: (listing) => {
+  const writer: ImportListingWriter = {
+    write: (change) => {
       writes += 1;
-      return store.write(listing);
+      return store.writer.write(change);
     },
   };
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist: new InMemoryDeletionBlocklist(),
+    reader: store.reader,
     writer,
     tourProviders,
-    now: () => NOW,
   });
   const ctx: RecordProcessingContext = { runId, source: SOURCE, logger };
   const rejectedFields = (): string[] =>

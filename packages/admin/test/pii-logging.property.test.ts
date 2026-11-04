@@ -6,7 +6,7 @@ import {
   createRunLogger,
   ImportPipeline,
   InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
   type RecordProcessingContext,
 } from '@open-estate/ingestion';
 import {
@@ -134,7 +134,8 @@ function expectedRecord(listing: Listing, allowed: ReadonlySet<string>): Listing
   const contact = Object.fromEntries(
     Object.entries(listing.contact).filter(([key]) => !dropped.has(key as keyof Contact)),
   ) as Contact;
-  return { ...expected, contact };
+  // An object without any remaining field is omitted by the import merge (no Inhaltsfeld).
+  return Object.keys(contact).length === 0 ? expected : { ...expected, contact };
 }
 
 function toCandidate(listing: Listing): Input {
@@ -206,14 +207,13 @@ describe('Property 33: PII-Filter und wertfreies Logging', () => {
         const allowed = new Set<string>(allowlist?.allowedFields ?? []);
         const runLines: string[] = [];
         const blocklist = new InMemoryDeletionBlocklist();
-        const writer = new InMemoryListingWriter(blocklist);
+        const writer = new InMemoryImportStore({ blocklist, clock: () => NOW.getTime() });
         const pipeline = new ImportPipeline({
           listingSchema,
-          blocklist,
-          writer,
+          reader: writer.reader,
+          writer: writer.writer,
           tourProviders,
           ...(allowlist !== undefined && { piiAllowlist: allowlist }),
-          now: () => NOW,
         });
         const ctx: RecordProcessingContext = {
           runId: RUN_ID,

@@ -100,6 +100,6 @@ export function mergeImport(
  * `MERGE`.
  */
 export const resolveImportMode = (
-  config: { importMode?: ImportMode },
-  module: { defaultImportMode?: ImportMode },
+  config: { importMode?: ImportMode | undefined },
+  module: { defaultImportMode?: ImportMode | undefined },
 ): ImportMode => config.importMode ?? module.defaultImportMode ?? 'MERGE';

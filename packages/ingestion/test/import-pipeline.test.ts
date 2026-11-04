@@ -1,11 +1,13 @@
 import {
   createRunLogger,
+  CONCURRENT_CHANGE_REASON,
   DELETION_BLOCK_REASON,
   ImportPipeline,
   InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
+  MAX_WRITE_RETRIES,
+  type ImportListingWriter,
   type ImportPipelineOptions,
-  type ListingWriter,
   type RawRecord,
   type RecordProcessingContext,
 } from '@open-estate/ingestion';
@@ -57,7 +59,10 @@ function rawListing(overrides: Record<string, unknown> = {}): Record<string, unk
   };
 }
 
-function setup(options: Partial<ImportPipelineOptions> = {}) {
+function setup(
+  options: Partial<ImportPipelineOptions> = {},
+  blocklist = new InMemoryDeletionBlocklist(),
+) {
   const lines: string[] = [];
   const logger = createRunLogger({
     runId: RUN_ID,
@@ -65,14 +70,12 @@ function setup(options: Partial<ImportPipelineOptions> = {}) {
     sink: (line) => lines.push(line),
     now: () => NOW,
   });
-  const writer = new InMemoryListingWriter();
-  const blocklist = new InMemoryDeletionBlocklist();
+  const store = new InMemoryImportStore({ blocklist, clock: () => NOW.getTime() });
   const pipeline = new ImportPipeline({
     listingSchema,
-    blocklist,
-    writer,
+    reader: store.reader,
+    writer: store.writer,
     tourProviders,
-    now: () => NOW,
     ...options,
   });
   const ctx: RecordProcessingContext = { runId: RUN_ID, source: SOURCE, logger };
@@ -82,11 +85,14 @@ function setup(options: Partial<ImportPipelineOptions> = {}) {
       .filter((e) => e['event'] === 'record.rejected')
       .flatMap((e) => (e['issues'] as { field: string }[]).map((i) => i.field));
   return {
-    writer,
+    store,
     blocklist,
     lines,
     entries,
     rejectedFields,
+    /** Processes with a context override (other run, agency, Importmodus). */
+    processWith: (raw: RawRecord, override: Partial<RecordProcessingContext>) =>
+      pipeline.process(raw, { ...ctx, ...override }),
     process: (raw: RawRecord) => pipeline.process(raw, ctx),
   };
 }
@@ -106,7 +112,7 @@ describe('ImportPipeline', () => {
       );
 
       expect(outcome).toBe('imported');
-      const stored = t.writer.get('L-1');
+      const stored = t.store.get('L-1');
       expect(stored).toBeDefined();
       expect(stored).not.toHaveProperty('internalScore');
       expect(stored?.address).toEqual({ city: 'Berlin', postalCode: '10115', country: 'DE' });
@@ -119,8 +125,8 @@ describe('ImportPipeline', () => {
       const t = setup();
       expect(await t.process(rawListing())).toBe('imported');
       expect(await t.process(rawListing({ title: 'Neu' }))).toBe('updated');
-      expect(t.writer.size).toBe(1);
-      expect(t.writer.get('L-1')?.offers[0]).toEqual({
+      expect(t.store.size).toBe(1);
+      expect(t.store.get('L-1')?.offers[0]).toEqual({
         offerType: 'RENT',
         coldRent: 90000,
         warmRent: 110000,
@@ -135,14 +141,14 @@ describe('ImportPipeline', () => {
         { offerType: 'RENT', coldRent: '1200', currency: 'EUR' },
       ];
       expect(await t.process(rawListing({ offers }))).toBe('imported');
-      expect(t.writer.get('L-1')?.offers.map((o) => o.offerType)).toEqual(['SALE', 'RENT']);
+      expect(t.store.get('L-1')?.offers.map((o) => o.offerType)).toEqual(['SALE', 'RENT']);
     });
   });
 
   describe('deletion blocklist', () => {
     it('rejects a blocked id with reason „Löschsperre“ and does not write', async () => {
-      const writer: ListingWriter = { write: jest.fn() };
-      const t = setup({ writer, blocklist: new InMemoryDeletionBlocklist(['L-1']) });
+      const writer: ImportListingWriter = { write: jest.fn() };
+      const t = setup({ writer }, new InMemoryDeletionBlocklist(['L-1']));
 
       expect(await t.process(rawListing({ contact: { email: EMAIL } }))).toBe('rejected');
       expect(writer.write).not.toHaveBeenCalled();
@@ -165,7 +171,7 @@ describe('ImportPipeline', () => {
       const t = setup();
       expect(await t.process(rawListing({ contact }))).toBe('imported');
 
-      expect(t.writer.get('L-1')?.contact).toEqual({});
+      expect(t.store.get('L-1')?.contact ?? {}).toEqual({});
       const dropped = t.entries().filter((e) => e['event'] === 'pii.field_dropped');
       expect(dropped.map((e) => [e['listingId'], e['source'], e['field']])).toEqual([
         ['L-1', SOURCE, 'contact.name'],
@@ -179,7 +185,7 @@ describe('ImportPipeline', () => {
     it('treats an empty allow-list like a missing one', async () => {
       const t = setup({ piiAllowlist: PiiAllowlistConfig.parse({ allowedFields: [] }) });
       await t.process(rawListing({ contact }));
-      expect(t.writer.get('L-1')?.contact).toEqual({});
+      expect(t.store.get('L-1')?.contact ?? {}).toEqual({});
     });
 
     it('keeps allow-listed fields and drops the rest', async () => {
@@ -188,7 +194,7 @@ describe('ImportPipeline', () => {
       });
       await t.process(rawListing({ contact }));
 
-      expect(t.writer.get('L-1')?.contact).toEqual({ email: EMAIL });
+      expect(t.store.get('L-1')?.contact).toEqual({ email: EMAIL });
       const fields = t
         .entries()
         .flatMap((e) => (e['event'] === 'pii.field_dropped' ? [e['field']] : []));
@@ -263,7 +269,7 @@ describe('ImportPipeline', () => {
     ];
 
     it.each(cases)('rejects %s and names the field', async (_name, overrides, fields) => {
-      const writer: ListingWriter = { write: jest.fn() };
+      const writer: ImportListingWriter = { write: jest.fn() };
       const t = setup({ writer });
       expect(await t.process(rawListing(overrides))).toBe('rejected');
       expect(writer.write).not.toHaveBeenCalled();
@@ -289,6 +295,132 @@ describe('ImportPipeline', () => {
       expect(t.entries().map((e) => e['event'])).toEqual(['record.rejected']);
       expect(t.entries()[0]).not.toHaveProperty('listingId');
       expect(t.rejectedFields()).toEqual(['id']);
+    });
+  });
+
+  describe('versioned write (design: "Import-Pipeline")', () => {
+    it('MERGE keeps stored fields the record does not deliver; REPLACE removes them', async () => {
+      const t = setup();
+      const street = { city: 'Berlin', postalCode: '10115', country: 'DE', street: 'Hauptstr. 1' };
+      await t.process(rawListing({ address: street }));
+
+      const partial = { id: 'L-1', address: { city: 'Potsdam' }, title: 'Neu' };
+      expect(await t.processWith(partial, { importMode: 'MERGE' })).toBe('updated');
+      expect(t.store.get('L-1')).toMatchObject({
+        title: 'Neu',
+        description: 'Mit Balkon',
+        address: { ...street, city: 'Potsdam' },
+      });
+
+      expect(await t.processWith(rawListing(), { importMode: 'REPLACE' })).toBe('updated');
+      expect(t.store.get('L-1')?.address).toEqual({
+        city: 'Berlin',
+        postalCode: '10115',
+        country: 'DE',
+      });
+    });
+
+    it('rejects a merged result that lacks a required field (null under MERGE)', async () => {
+      const t = setup();
+      await t.process(rawListing());
+      expect(await t.processWith({ id: 'L-1', title: null }, { importMode: 'MERGE' })).toBe(
+        'rejected',
+      );
+      expect(t.rejectedFields()).toEqual(['title']);
+      expect(t.store.get('L-1')?.title).toBe('Helle Wohnung');
+    });
+
+    it('unchanged content creates no version and only refreshes the run provenance', async () => {
+      const t = setup();
+      await t.process(rawListing());
+      const before = t.store.managed('L-1');
+
+      expect(await t.processWith(rawListing(), { runId: 'run-43' })).toBe('unchanged');
+      const after = t.store.managed('L-1');
+      expect(after?.management).toEqual(before?.management);
+      expect(after?.listing).toEqual({ ...before?.listing, lastRunId: 'run-43' });
+      expect(await t.store.versions.get('L-1', 2)).toBeNull();
+    });
+
+    it('takes the delivered status on creation and keeps the stored status afterwards', async () => {
+      const t = setup();
+      expect(await t.process(rawListing({ status: 'INACTIVE' }))).toBe('imported');
+      expect(t.store.managed('L-1')?.management.status).toBe('INACTIVE');
+      expect(await t.process(rawListing({ status: 'ACTIVE', title: 'Neu' }))).toBe('updated');
+      expect(t.store.managed('L-1')?.management.status).toBe('INACTIVE');
+
+      expect(await t.process(rawListing({ id: 'L-2' }))).toBe('imported');
+      expect(t.store.managed('L-2')?.management.status).toBe('ACTIVE');
+    });
+
+    it('creates a listing from a Custom_Id with a new id and finds it again by Custom_Id', async () => {
+      const t = setup({ newId: () => 'generated-1' });
+      const record = rawListing({ id: undefined, customId: 'CRM-7' });
+      expect(await t.processWith(record, { agencyId: 'agency-a' })).toBe('imported');
+      expect(t.store.managed('generated-1')?.management).toMatchObject({
+        customId: 'CRM-7',
+        agencyId: 'agency-a',
+      });
+      expect(
+        await t.processWith(rawListing({ id: undefined, customId: 'CRM-7', title: 'Neu' }), {
+          agencyId: 'agency-a',
+        }),
+      ).toBe('updated');
+      expect(t.store.size).toBe(1);
+    });
+
+    it('writes with channel IMPORT and the connector run as actor', async () => {
+      const t = setup();
+      const changes: Parameters<ImportListingWriter['write']>[0][] = [];
+      const writer: ImportListingWriter = {
+        write: (change) => {
+          changes.push(change);
+          return t.store.writer.write(change);
+        },
+      };
+      await setup({ writer, reader: t.store.reader }).process(rawListing());
+      expect(changes).toEqual([
+        expect.objectContaining({
+          listingId: 'L-1',
+          expectedVersion: null,
+          changeType: 'IMPORT',
+          channel: 'IMPORT',
+          actor: { kind: 'connector', connectorId: SOURCE, runId: RUN_ID },
+          next: expect.objectContaining({ status: 'ACTIVE' }),
+        }),
+      ]);
+    });
+
+    it('retries a version conflict and gives up after 3 repetitions', async () => {
+      const t = setup();
+      await t.process(rawListing());
+      let conflicts = 2;
+      const flaky: ImportListingWriter = {
+        write: (change) =>
+          conflicts-- > 0
+            ? Promise.resolve({ ok: false, error: { code: 'VERSION_CONFLICT', currentVersion: 9 } })
+            : t.store.writer.write(change),
+      };
+      const retrying = setup({ writer: flaky, reader: t.store.reader });
+      expect(await retrying.process(rawListing({ title: 'Neu' }))).toBe('updated');
+
+      const write = jest.fn(() =>
+        Promise.resolve({
+          ok: false as const,
+          error: { code: 'VERSION_CONFLICT' as const, currentVersion: 9 },
+        }),
+      );
+      const failing = setup({ writer: { write }, reader: t.store.reader });
+      expect(await failing.process(rawListing({ title: 'Anders' }))).toBe('rejected');
+      expect(write).toHaveBeenCalledTimes(1 + MAX_WRITE_RETRIES);
+      expect(failing.entries()).toEqual([
+        expect.objectContaining({
+          event: 'record.rejected',
+          listingId: 'L-1',
+          issues: [{ field: 'id', reason: CONCURRENT_CHANGE_REASON }],
+        }),
+      ]);
+      expect(t.store.get('L-1')?.title).toBe('Neu');
     });
   });
 
@@ -319,7 +451,7 @@ describe('ImportPipeline', () => {
       );
 
       expect(outcome).toBe('imported');
-      const stored = t.writer.get('L-1');
+      const stored = t.store.get('L-1');
       expect(stored?.media).toEqual([{ url: 'https://img.example/ok.jpg' }]);
       expect(stored?.tours).toEqual([
         { url: MATTERPORT, providerCode: 'matterport' },
@@ -356,7 +488,7 @@ describe('ImportPipeline', () => {
         'imported',
       );
 
-      const stored = t.writer.get('L-1');
+      const stored = t.store.get('L-1');
       expect(stored?.media).toEqual(media.slice(0, 50));
       expect(stored?.tours.map((tour) => tour.url)).toEqual(tours.slice(0, 10).map((x) => x.url));
       const truncated = t.entries().filter((e) => e['event'] === 'media.truncated');
@@ -371,7 +503,7 @@ describe('ImportPipeline', () => {
     it('accepts a listing without media and tours', async () => {
       const t = setup();
       expect(await t.process(rawListing({ media: undefined, tours: undefined }))).toBe('imported');
-      expect(t.writer.get('L-1')).toMatchObject({ media: [], tours: [] });
+      expect(t.store.get('L-1')).toMatchObject({ media: [], tours: [] });
     });
 
     it('rejects duplicate host names in the tour provider config', () => {

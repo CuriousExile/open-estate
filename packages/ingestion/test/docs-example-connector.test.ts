@@ -7,8 +7,7 @@ import {
   createDefaultRegistry,
   crawlerAllowlistSchema,
   ImportPipeline,
-  InMemoryDeletionBlocklist,
-  InMemoryListingWriter,
+  InMemoryImportStore,
   type Connector,
   type ConnectorContext,
   type ConnectorModule,
@@ -194,16 +193,15 @@ function setup(fetchResult: { ok: boolean; status: number; body: unknown }) {
   }).register(
     partnerFeedModule({ secrets: createFakeSecrets({ [API_KEY_REF]: 'key-123' }), fetch }),
   );
-  const store = new InMemoryListingWriter();
+  const store = new InMemoryImportStore({ clock: () => NOW.getTime() });
   const lines: Record<string, unknown>[] = [];
   const framework = new ConnectorFramework({
     registry,
     processor: new ImportPipeline({
       listingSchema,
-      blocklist: new InMemoryDeletionBlocklist(),
-      writer: store,
+      reader: store.reader,
+      writer: store.writer,
       tourProviders: TourProvidersConfig.parse({ providers: [] }),
-      now: () => NOW,
     }),
     sink: (line) => lines.push(JSON.parse(line) as Record<string, unknown>),
     now: () => NOW,

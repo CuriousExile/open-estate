@@ -31,6 +31,8 @@ export interface RunSummary {
   readonly endedAt: Date;
   readonly imported: number;
   readonly updated: number;
+  /** Delivered with an unchanged Inhalts_Hash: no version (Req 7.3, 13.2). */
+  readonly unchanged: number;
   readonly rejected: number;
 }
 
@@ -107,13 +109,14 @@ export function createRunLogger({
     runId,
     source,
     runStarted: (connectorType) => write('info', 'run.started', { connectorType }),
-    runFinished: ({ status, startedAt, endedAt, imported, updated, rejected }) =>
+    runFinished: ({ status, startedAt, endedAt, imported, updated, unchanged, rejected }) =>
       write(status === 'SUCCESS' ? 'info' : 'error', 'run.finished', {
         status,
         startedAt: startedAt.toISOString(),
         endedAt: endedAt.toISOString(),
         imported,
         updated,
+        unchanged,
         rejected,
       }),
     runSkipped: (reason) => write('info', 'run.skipped', { reason: clip(reason) }),
