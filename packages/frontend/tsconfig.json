@@ -1,0 +1,22 @@
+{
+  // Angular app: built by `ng build`, not part of the root `tsc -b` project graph.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "preserve",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "declaration": false,
+    "declarationMap": false,
+    // Bundle shared from source: ESM, tree-shakeable, one zod copy (dist is CommonJS).
+    "paths": { "@open-estate/shared": ["../shared/src/index.ts"] }
+  },
+  "angularCompilerOptions": {
+    "strictTemplates": true,
+    "strictInjectionParameters": true,
+    "strictInputAccessModifiers": true,
+    "typeCheckHostBindings": true
+  },
+  "files": ["src/main.ts"]
+}

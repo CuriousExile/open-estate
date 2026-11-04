@@ -1,0 +1,133 @@
+// Global design tokens (style direction: docs/design/README.md).
+// --brand-* are white-label values; the ThemeService overrides them from theme-config.json.
+:root {
+  --brand-primary: #12352b; // deep forest green
+  --brand-secondary: #a7e3c4; // soft mint accent
+
+  --color-bg: #0b1f19;
+  --color-surface: rgb(255 255 255 / 8%);
+  --color-surface-border: rgb(255 255 255 / 16%);
+  --color-text: #f6f8f5;
+  --color-text-muted: rgb(246 248 245 / 72%);
+  --color-on-accent: #0b1f19;
+  --color-error: #ffb4ab; // on dark backgrounds
+  --color-error-strong: #b3261e; // on light surfaces (search bar)
+
+  --font-display: 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Times New Roman', serif;
+  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --label-letter-spacing: 0.16em;
+
+  --radius-card: 1.5rem;
+  --radius-pill: 999px;
+  --blur-glass: 16px;
+  --space-page: clamp(1.25rem, 4vw, 4rem);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 0%, var(--brand-primary) 0%, transparent 60%), var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+.display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  line-height: 1.05;
+  margin: 0 0 1rem;
+}
+
+.lead {
+  color: var(--color-text-muted);
+  font-size: 1.125rem;
+  max-width: 40rem;
+  margin: 0;
+}
+
+.label {
+  font-size: 0.75rem;
+  letter-spacing: var(--label-letter-spacing);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.glass {
+  background: var(--color-surface);
+  border: 1px solid var(--color-surface-border);
+  border-radius: var(--radius-card);
+  backdrop-filter: blur(var(--blur-glass));
+}
+
+:focus-visible {
+  outline: 2px solid var(--brand-secondary);
+  outline-offset: 2px;
+}
+
+.site-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1.5rem var(--space-page) 0;
+}
+
+.site-logo {
+  height: 2rem;
+  width: auto;
+}
+
+.site-name {
+  font-family: var(--font-display);
+  font-size: 1.25rem;
+}
+
+.site-language {
+  margin-left: auto;
+}
+
+.shell {
+  padding: var(--space-page);
+}
+
+// Startup error page (Req 13.9): plain and readable without theme or translations.
+.startup-error {
+  max-width: 40rem;
+  margin: 15vh auto 0;
+  padding: 2rem var(--space-page);
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 500;
+    font-size: 2rem;
+    margin: 0 0 1rem;
+  }
+
+  p {
+    margin: 0;
+    color: var(--color-text-muted);
+  }
+}
+
+.shell-search {
+  display: block;
+  margin-top: 2rem;
+}
+
+.shell-results {
+  margin-top: 2.5rem;
+}

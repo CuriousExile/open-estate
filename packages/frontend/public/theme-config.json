@@ -1,0 +1,5 @@
+{
+  "logoUrl": "logo.svg",
+  "colors": { "primary": "#12352B", "secondary": "#A7E3C4" },
+  "texts": { "appTitle": { "en": "Open Estate", "de": "Open Estate" } }
+}

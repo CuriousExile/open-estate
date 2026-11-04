@@ -1,0 +1,12 @@
+{
+  // Type-check of the frontend tests (`npm run typecheck:tests`); jest itself transpiles only.
+  // Keeps the browser setup of the app (DOM lib, ESM/bundler resolution for Angular).
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "types": ["node", "jest"]
+  },
+  "files": [],
+  "include": ["src/**/*.ts", "test/**/*.ts"]
+}
