@@ -1,4 +1,9 @@
-import { GetCommand, UpdateCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import {
+  GetCommand,
+  QueryCommand,
+  UpdateCommand,
+  type DynamoDBDocumentClient,
+} from '@aws-sdk/lib-dynamodb';
 import { z } from 'zod';
 import type { DynamoDbOp, InMemoryOp, TransactWriteItem } from './transaction';
 
@@ -43,11 +48,37 @@ export interface MetricCounterIncrement {
 
 const counterItemSchema = z.object({ [METRIC_COUNTERS_VALUE_ATTRIBUTE]: z.number() });
 
+const dayItemSchema = z.object({ [METRIC_COUNTERS_SK_ATTRIBUTE]: z.string() });
+
+const DAY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Daily value of one counter. */
+export interface DayCounterValue {
+  /** `YYYY-MM-DD` (UTC). */
+  day: string;
+  value: number;
+}
+
+function assertDay(day: string): void {
+  if (!DAY_PATTERN.test(day)) throw new Error(`Invalid counter day ${day}`);
+}
+
 export interface MetricCounterStore<Op> {
   /** Atomic `ADD` outside a transaction (e.g. UsageAggregator). */
   add(increment: MetricCounterIncrement): Promise<void>;
   /** Counter value; 0 if never written. */
-  get(scope: string, code: string, day?: string): Promise<number>;
+  get(scope: string, code: string, day?: string, signal?: AbortSignal): Promise<number>;
+  /**
+   * Daily values of `code` in `scope` for `fromDay ≤ day ≤ toDay` (both `YYYY-MM-DD`), ordered by
+   * day; days never written are absent. One `Query` (key range) instead of one read per day.
+   */
+  listDays(
+    scope: string,
+    code: string,
+    fromDay: string,
+    toDay: string,
+    signal?: AbortSignal,
+  ): Promise<DayCounterValue[]>;
   /**
    * `ADD` inside a transaction (label `metric.add`), unconditional. One transaction may touch a
    * counter only once: sum the deltas per counter before building the operations.
@@ -65,6 +96,24 @@ export class InMemoryMetricCounterStore implements MetricCounterStore<InMemoryOp
 
   async get(scope: string, code: string, day?: string): Promise<number> {
     return this.values.get(counterTarget(scope, code, day)) ?? 0;
+  }
+
+  async listDays(
+    scope: string,
+    code: string,
+    fromDay: string,
+    toDay: string,
+  ): Promise<DayCounterValue[]> {
+    assertDay(fromDay);
+    assertDay(toDay);
+    const prefix = `${scope}|${code}#`;
+    return [...this.values.entries()]
+      .flatMap(([key, value]) => {
+        if (!key.startsWith(prefix)) return [];
+        const day = key.slice(prefix.length);
+        return DAY_PATTERN.test(day) && day >= fromDay && day <= toDay ? [{ day, value }] : [];
+      })
+      .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : 0));
   }
 
   addOp(increment: MetricCounterIncrement): InMemoryOp {
@@ -109,13 +158,54 @@ export class DynamoDbMetricCounterStore implements MetricCounterStore<DynamoDbOp
     await this.client.send(new UpdateCommand(this.addUpdate(increment)));
   }
 
-  async get(scope: string, code: string, day?: string): Promise<number> {
+  async get(scope: string, code: string, day?: string, signal?: AbortSignal): Promise<number> {
     const out = await this.client.send(
       new GetCommand({ TableName: this.tableName, Key: this.key(scope, code, day) }),
+      signal === undefined ? {} : { abortSignal: signal },
     );
     return out.Item === undefined
       ? 0
       : counterItemSchema.parse(out.Item)[METRIC_COUNTERS_VALUE_ATTRIBUTE];
+  }
+
+  async listDays(
+    scope: string,
+    code: string,
+    fromDay: string,
+    toDay: string,
+    signal?: AbortSignal,
+  ): Promise<DayCounterValue[]> {
+    assertDay(fromDay);
+    assertDay(toDay);
+    const prefix = `${code}#`;
+    const values: DayCounterValue[] = [];
+    let startKey: Record<string, unknown> | undefined;
+    do {
+      const out = await this.client.send(
+        new QueryCommand({
+          TableName: this.tableName,
+          KeyConditionExpression: '#pk = :scope AND #sk BETWEEN :from AND :to',
+          ExpressionAttributeNames: {
+            '#pk': METRIC_COUNTERS_PK_ATTRIBUTE,
+            '#sk': METRIC_COUNTERS_SK_ATTRIBUTE,
+          },
+          ExpressionAttributeValues: {
+            ':scope': scope,
+            ':from': counterSortKey(code, fromDay),
+            ':to': counterSortKey(code, toDay),
+          },
+          ExclusiveStartKey: startKey,
+        }),
+        signal === undefined ? {} : { abortSignal: signal },
+      );
+      for (const item of out.Items ?? []) {
+        const day = dayItemSchema.parse(item)[METRIC_COUNTERS_SK_ATTRIBUTE].slice(prefix.length);
+        if (!DAY_PATTERN.test(day)) continue;
+        values.push({ day, value: counterItemSchema.parse(item)[METRIC_COUNTERS_VALUE_ATTRIBUTE] });
+      }
+      startKey = out.LastEvaluatedKey;
+    } while (startKey !== undefined);
+    return values;
   }
 
   addOp(increment: MetricCounterIncrement): DynamoDbOp {
