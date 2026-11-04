@@ -1,0 +1,32 @@
+{
+  "name": "@open-estate/admin",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Admin API Lambda adapter",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "open-estate-admin": "dist/cli/bin.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1162.0",
+    "@aws-sdk/client-lambda": "3.1162.0",
+    "@aws-sdk/client-sfn": "3.1162.0",
+    "@aws-sdk/client-sns": "3.1162.0",
+    "@aws-sdk/client-ssm": "3.1162.0",
+    "@aws-sdk/credential-provider-node": "3.972.93",
+    "@aws-sdk/lib-dynamodb": "3.1162.0",
+    "@open-estate/core": "0.0.0",
+    "@open-estate/shared": "0.0.0",
+    "@smithy/signature-v4": "5.7.5",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@open-estate/ingestion": "0.0.0",
+    "@types/aws-lambda": "8.10.164"
+  }
+}
