@@ -14,6 +14,7 @@ export * from './result';
 export * from './schema/import-config';
 export * from './schema/json-schema';
 export * from './schema/listing';
+export * from './schema/locations';
 export * from './schema/management';
 export * from './schema/search';
 export * from './taxonomy';

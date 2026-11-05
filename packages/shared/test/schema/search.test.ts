@@ -385,3 +385,20 @@ describe('toApiErrors', () => {
     }
   });
 });
+
+describe('country filter', () => {
+  it('accepts an ISO 3166-1 alpha-2 code and is absent by default', () => {
+    expect(valueOf({ country: 'TH' }).country).toBe('TH');
+    expect('country' in valueOf({})).toBe(false);
+  });
+
+  it.each(['th', 'THA', 'T', '', 'D1'])('rejects %j with INVALID_PARAMETER', (country) => {
+    expect(codesOf({ country })).toEqual([{ code: 'INVALID_PARAMETER', field: 'country' }]);
+  });
+
+  it('rejects a repeated parameter', () => {
+    expect(codesOf({ country: ['DE', 'TH'] })).toEqual([
+      { code: 'INVALID_PARAMETER', field: 'country' },
+    ]);
+  });
+});

@@ -4,6 +4,7 @@ import { Area, Money } from '../money';
 import { err, ok, type Result } from '../result';
 import { groupCodes, typeCodes, type Taxonomy } from '../taxonomy';
 import {
+  CountryCode,
   Currency,
   LISTING_BOUNDS,
   ListingBase,
@@ -135,6 +136,8 @@ function searchQueryShape(taxonomy: Taxonomy) {
     areaMax: area,
     city: boundedString(B.city).optional(),
     postalCode: boundedString(B.postalCode).optional(),
+    /** `address.country`, ISO 3166-1 alpha-2 in upper case (exact match). */
+    country: CountryCode.optional(),
     /** Exactly one group code (repeated parameter allowed, then counted). */
     group: codeList('group', groupCodes(taxonomy), S.group)
       .transform((codes) => codes[0] ?? '')
