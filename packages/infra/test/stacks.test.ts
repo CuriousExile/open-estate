@@ -2,6 +2,9 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import {
+  AUDIT_LOG_BY_AGENCY_INDEX,
+  AUDIT_LOG_BY_AGENCY_PK_ATTRIBUTE,
+  AUDIT_LOG_BY_AGENCY_SK_ATTRIBUTE,
   DEFAULT_METRICS_NAMESPACE,
   DEFAULT_RATE_LIMIT,
   DELETION_BLOCKLIST_KEY_ATTRIBUTE,
@@ -9,9 +12,13 @@ import {
   DELETION_REQUESTS_BY_STATUS_PK_ATTRIBUTE,
   DELETION_REQUESTS_BY_STATUS_SK_ATTRIBUTE,
   DELETION_REQUESTS_KEY_ATTRIBUTE,
+  LISTINGS_BY_AGENCY_INDEX,
+  LISTINGS_BY_AGENCY_PK_ATTRIBUTE,
+  LISTINGS_BY_AGENCY_SK_ATTRIBUTE,
   LISTINGS_BY_ID_INDEX,
   LISTINGS_BY_ID_PK_ATTRIBUTE,
   LISTINGS_BY_SOURCE_INDEX,
+  customIdBlocklistKey,
   MCP_REQUEST_DEADLINE_MS,
   rateLimitSchema,
 } from '@open-estate/core';
@@ -141,7 +148,7 @@ describe('DataStack', () => {
     }
   });
 
-  it('defines Listings: PK id, PITR, GSI byId (constant PK, SK id) and bySource (Req 9.2)', () => {
+  it('defines Listings: PK id, PITR, GSIs byId (sparse gsiPk), bySource, byAgency (Req 2.7, 6.3)', () => {
     expect(resource(dev.data, 'AWS::DynamoDB::GlobalTable', 'Listings').Properties).toMatchObject({
       KeySchema: [{ AttributeName: 'id', KeyType: 'HASH' }],
       AttributeDefinitions: expect.arrayContaining([
@@ -165,6 +172,14 @@ describe('DataStack', () => {
           ],
           Projection: { ProjectionType: 'ALL' },
         },
+        {
+          IndexName: LISTINGS_BY_AGENCY_INDEX,
+          KeySchema: [
+            { AttributeName: LISTINGS_BY_AGENCY_PK_ATTRIBUTE, KeyType: 'HASH' },
+            { AttributeName: LISTINGS_BY_AGENCY_SK_ATTRIBUTE, KeyType: 'RANGE' },
+          ],
+          Projection: { ProjectionType: 'ALL' },
+        },
       ],
       Replicas: [
         expect.objectContaining({
@@ -172,18 +187,39 @@ describe('DataStack', () => {
         }),
       ],
     });
-    expect([LISTINGS_BY_ID_INDEX, LISTINGS_BY_ID_PK_ATTRIBUTE, LISTINGS_BY_SOURCE_INDEX]).toEqual([
-      'byId',
-      'gsiPk',
-      'bySource',
-    ]);
+    expect([
+      LISTINGS_BY_ID_INDEX,
+      LISTINGS_BY_ID_PK_ATTRIBUTE,
+      LISTINGS_BY_SOURCE_INDEX,
+      LISTINGS_BY_AGENCY_INDEX,
+      LISTINGS_BY_AGENCY_PK_ATTRIBUTE,
+      LISTINGS_BY_AGENCY_SK_ATTRIBUTE,
+    ]).toEqual(['byId', 'gsiPk', 'bySource', 'byAgency', 'agencyId', 'updatedAt']);
   });
 
-  it('defines DeletionBlocklist: PK listingId, PITR, protected in prod', () => {
+  it('adds at most one new GSI per table, as DynamoDB allows only one GSI creation per update', () => {
+    // Listings gained byAgency, AuditLog gained byAgency: one each, deployable in one update.
+    const indexNames = (prefix: string) =>
+      (
+        resource(dev.data, 'AWS::DynamoDB::GlobalTable', prefix).Properties[
+          'GlobalSecondaryIndexes'
+        ] as { IndexName: string }[]
+      ).map((i) => i.IndexName);
+    expect(indexNames('Listings')).toEqual(['byId', 'bySource', 'byAgency']);
+    expect(indexNames('AuditLog')).toEqual(['byAgency']);
+  });
+
+  it('defines DeletionBlocklist: PK listingId (ids and custom# keys), PITR, protected in prod', () => {
+    // Custom_Id keys share the string key attribute with listing ids: no schema change (Req 12.14).
+    expect(DELETION_BLOCKLIST_KEY_ATTRIBUTE).toBe('listingId');
+    expect(customIdBlocklistKey('agency-1', 'ext-7')).toBe('custom#agency-1#ext-7');
     expect(resource(dev.data, 'AWS::DynamoDB::GlobalTable', 'DeletionBlocklist')).toMatchObject({
       DeletionPolicy: 'Delete',
       Properties: {
         KeySchema: [{ AttributeName: DELETION_BLOCKLIST_KEY_ATTRIBUTE, KeyType: 'HASH' }],
+        AttributeDefinitions: [
+          { AttributeName: DELETION_BLOCKLIST_KEY_ATTRIBUTE, AttributeType: 'S' },
+        ],
         Replicas: [
           expect.objectContaining({
             PointInTimeRecoverySpecification: { PointInTimeRecoveryEnabled: true },
@@ -234,11 +270,21 @@ describe('DataStack', () => {
     });
   });
 
-  it('defines AuditLog with the keys DynamoDbAuditLog writes, PITR', () => {
+  it('defines AuditLog with the keys DynamoDbAuditLog writes, GSI byAgency, PITR (Req 11.5)', () => {
     expect(resource(dev.data, 'AWS::DynamoDB::GlobalTable', 'AuditLog').Properties).toMatchObject({
       KeySchema: [
         { AttributeName: AUDIT_LOG_PARTITION_KEY, KeyType: 'HASH' },
         { AttributeName: AUDIT_LOG_SORT_KEY, KeyType: 'RANGE' },
+      ],
+      GlobalSecondaryIndexes: [
+        {
+          IndexName: AUDIT_LOG_BY_AGENCY_INDEX,
+          KeySchema: [
+            { AttributeName: AUDIT_LOG_BY_AGENCY_PK_ATTRIBUTE, KeyType: 'HASH' },
+            { AttributeName: AUDIT_LOG_BY_AGENCY_SK_ATTRIBUTE, KeyType: 'RANGE' },
+          ],
+          Projection: { ProjectionType: 'ALL' },
+        },
       ],
       Replicas: [
         expect.objectContaining({
@@ -558,7 +604,7 @@ describe('ApiStack', () => {
     ]);
   });
 
-  it('sets the same metrics namespace on the API and MCP Lambda (Req 11.4)', () => {
+  it('sets the same metrics namespace on the API and MCP Lambda (Req 11.4, 14.1)', () => {
     expect(METRICS_NAMESPACE).toBe(DEFAULT_METRICS_NAMESPACE);
     for (const fn of [listingsFunction(), mcpFunction()]) {
       expect(fn.Properties).toMatchObject({

@@ -16,11 +16,17 @@ import {
 import { BucketDeployment, Source } from 'aws-cdk-lib/aws-s3-deployment';
 import { ParameterTier, StringParameter } from 'aws-cdk-lib/aws-ssm';
 import {
+  AUDIT_LOG_BY_AGENCY_INDEX,
+  AUDIT_LOG_BY_AGENCY_PK_ATTRIBUTE,
+  AUDIT_LOG_BY_AGENCY_SK_ATTRIBUTE,
   DELETION_BLOCKLIST_KEY_ATTRIBUTE,
   DELETION_REQUESTS_BY_STATUS_INDEX,
   DELETION_REQUESTS_BY_STATUS_PK_ATTRIBUTE,
   DELETION_REQUESTS_BY_STATUS_SK_ATTRIBUTE,
   DELETION_REQUESTS_KEY_ATTRIBUTE,
+  LISTINGS_BY_AGENCY_INDEX,
+  LISTINGS_BY_AGENCY_PK_ATTRIBUTE,
+  LISTINGS_BY_AGENCY_SK_ATTRIBUTE,
   LISTINGS_BY_ID_INDEX,
   LISTINGS_BY_ID_PK_ATTRIBUTE,
   LISTINGS_BY_SOURCE_INDEX,
@@ -108,6 +114,8 @@ export class DataStack extends Stack {
     this.listingsTable = new TableV2(this, 'Listings', {
       partitionKey: { name: 'id', type: AttributeType.STRING },
       // Constant partition key + sort key `id`: ordered, paginated reads for the DynamoDB provider.
+      // Sparse: `toListingItem` sets `gsiPk` only for public (`ACTIVE`) listings, so inactive ones
+      // are neither found by the DynamoDB provider nor indexed by the stream indexer (Req 6.3).
       globalSecondaryIndexes: [
         {
           indexName: LISTINGS_BY_ID_INDEX,
@@ -119,6 +127,13 @@ export class DataStack extends Stack {
           indexName: LISTINGS_BY_SOURCE_INDEX,
           partitionKey: { name: 'source', type: AttributeType.STRING },
           sortKey: { name: 'id', type: AttributeType.STRING },
+        },
+        // Portal lists of one agency, newest change first (Req 2.7). Sparse as well: platform
+        // listings without `agencyId` are not part of it.
+        {
+          indexName: LISTINGS_BY_AGENCY_INDEX,
+          partitionKey: { name: LISTINGS_BY_AGENCY_PK_ATTRIBUTE, type: AttributeType.STRING },
+          sortKey: { name: LISTINGS_BY_AGENCY_SK_ATTRIBUTE, type: AttributeType.STRING },
         },
       ],
       // Feeds the indexer of the SearchStack; only with OpenSearch, nothing reads it otherwise.
@@ -132,7 +147,8 @@ export class DataStack extends Stack {
     });
 
     // Ids removed by a deletion request; the import refuses them (Req 18.6, 18.7). Written by the
-    // admin deletion workflow (14.10), read by the import pipeline.
+    // admin deletion workflow (14.10), read by the import pipeline and the versioned writer. The
+    // same key attribute also holds Custom_Id keys `custom#{agencyId}#{customId}` (one key space).
     this.deletionBlocklistTable = new TableV2(this, 'DeletionBlocklist', {
       partitionKey: { name: DELETION_BLOCKLIST_KEY_ATTRIBUTE, type: AttributeType.STRING },
       billing: Billing.onDemand(),
@@ -162,10 +178,19 @@ export class DataStack extends Stack {
       removalPolicy,
     });
 
-    // Append-only audit trail of admin changes and executed deletions (Req 17.8, 18.8).
+    // Append-only audit trail of admin changes, executed deletions and management operations
+    // (Req 17.8, 18.8; management: Req 11).
     this.auditLogTable = new TableV2(this, 'AuditLog', {
       partitionKey: { name: AUDIT_LOG_PARTITION_KEY, type: AttributeType.STRING },
       sortKey: { name: AUDIT_LOG_SORT_KEY, type: AttributeType.STRING },
+      // Entries of one agency in time order (Req 11.5); entries without `agencyId` stay out.
+      globalSecondaryIndexes: [
+        {
+          indexName: AUDIT_LOG_BY_AGENCY_INDEX,
+          partitionKey: { name: AUDIT_LOG_BY_AGENCY_PK_ATTRIBUTE, type: AttributeType.STRING },
+          sortKey: { name: AUDIT_LOG_BY_AGENCY_SK_ATTRIBUTE, type: AttributeType.STRING },
+        },
+      ],
       billing: Billing.onDemand(),
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       deletionProtection: retain,

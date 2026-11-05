@@ -56,8 +56,9 @@ const LAMBDA_TIMEOUT = Duration.seconds(5);
 const MCP_LAMBDA_TIMEOUT = Duration.millis(MCP_REQUEST_DEADLINE_MS + 2_000);
 
 /**
- * EMF namespace of `RequestLatency`, set on the API and MCP Lambda alike; the alarms of task 19.2
- * reference the same constant.
+ * EMF namespace of `RequestLatency` and `RequestCount`, set on the API and MCP Lambda alike; the
+ * alarms of task 19.2 and the platform monitoring (Req 14.1) read the same namespace. EMF goes
+ * through the function's log stream, so no `cloudwatch:PutMetricData` permission is needed.
  */
 export const METRICS_NAMESPACE = DEFAULT_METRICS_NAMESPACE;
 
