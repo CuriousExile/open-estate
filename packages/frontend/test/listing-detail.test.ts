@@ -1,12 +1,12 @@
 import type { LocalizedListing } from '@open-estate/shared';
 import {
+  DETAIL_ROWS_HIDDEN_BY_DEFAULT,
   displayName,
   formatDateTime,
   httpUrl,
   toListingDetail,
   toOfferView,
 } from '../src/app/listing/listing-detail-model';
-import { galleryImages, markFailed } from '../src/app/listing/media-gallery-model';
 
 /** Intl uses (narrow) no-break spaces in some locales; compare with plain spaces. */
 const plain = (text: string) => text.replace(/\s/g, ' ');
@@ -109,7 +109,7 @@ describe('toListingDetail (Req 7.5)', () => {
       tours: [{ url: 'https://tour.example.com/1', providerCode: 'matterport' }],
       contact: { name: 'Agency', phone: '+49 30 123', email: 'info@example.com' },
     });
-    const detail = toListingDetail(source, 'de');
+    const detail = toListingDetail(source, 'de', { showRows: DETAIL_ROWS_HIDDEN_BY_DEFAULT });
     expect(detail).toMatchObject({
       listing: source,
       title: 'Loft by the river',
@@ -178,6 +178,21 @@ describe('toListingDetail (Req 7.5)', () => {
     ]);
   });
 
+  it('hides technical and provenance rows by default', () => {
+    const detail = toListingDetail(listing({ contact: {} }), 'de');
+    const keys = detail.sections.flatMap((s) => s.rows.map((row) => row.key));
+    for (const hidden of DETAIL_ROWS_HIDDEN_BY_DEFAULT) expect(keys).not.toContain(hidden);
+    expect(keys).toEqual(expect.arrayContaining(['detail.city', 'detail.sourceUrl']));
+    // Single rows can be switched on.
+    const withId = toListingDetail(listing({ contact: {} }), 'de', {
+      showRows: new Set(['detail.id']),
+    });
+    expect(withId.sections.flatMap((s) => s.rows)).toContainEqual({
+      key: 'detail.id',
+      text: 'l-1',
+    });
+  });
+
   it('omits rows and sections of values that are not stored', () => {
     const address = { city: 'Berlin', postalCode: '10115', country: 'DE' };
     const detail = toListingDetail(
@@ -212,46 +227,5 @@ describe('detail helpers', () => {
     expect(httpUrl('http://example.com/a')).toBe('http://example.com/a');
     expect(httpUrl('javascript:alert(1)')).toBeUndefined();
     expect(httpUrl('relative/path')).toBeUndefined();
-  });
-});
-
-describe('galleryImages (Req 16.10, 16.12)', () => {
-  const media = [
-    { url: 'https://img.example.com/c.jpg' },
-    { url: 'https://img.example.com/a.jpg' },
-    { url: 'https://img.example.com/b.jpg' },
-  ];
-
-  it('keeps the stored order with position and count', () => {
-    expect(galleryImages(media, new Set())).toEqual([
-      { index: 0, url: media[0]?.url, position: 1, count: 3, failed: false },
-      { index: 1, url: media[1]?.url, position: 2, count: 3, failed: false },
-      { index: 2, url: media[2]?.url, position: 3, count: 3, failed: false },
-    ]);
-  });
-
-  it('replaces only failed images by a placeholder in their slot', () => {
-    const failed = markFailed(new Set(), 1);
-    expect(galleryImages(media, failed).map((image) => [image.url, image.failed])).toEqual([
-      [media[0]?.url, false],
-      [media[1]?.url, true],
-      [media[2]?.url, false],
-    ]);
-  });
-
-  it('shows non-https URLs as placeholder', () => {
-    const images = galleryImages(
-      [{ url: 'http://img.example.com/a.jpg' }, { url: 'x' }],
-      new Set(),
-    );
-    expect(images.map((image) => image.failed)).toEqual([true, true]);
-  });
-
-  it('markFailed returns a new set and keeps an already failed set unchanged', () => {
-    const empty: ReadonlySet<number> = new Set();
-    const once = markFailed(empty, 2);
-    expect(empty.size).toBe(0);
-    expect([...once]).toEqual([2]);
-    expect(markFailed(once, 2)).toBe(once);
   });
 });

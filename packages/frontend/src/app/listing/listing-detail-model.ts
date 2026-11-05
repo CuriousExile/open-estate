@@ -126,7 +126,34 @@ const section = (name: string, rows: (DetailRow | false | undefined)[]): DetailS
   rows: rows.filter((row): row is DetailRow => row !== false && row !== undefined),
 });
 
-export function toListingDetail(listing: LocalizedListing, locale: string): ListingDetail {
+/**
+ * Rows of technical or provenance data that the public detail view hides unless they are
+ * explicitly made visible: coordinates, languages, listing ID, source, import time and run.
+ * Visitors need none of them; which rows an agency may switch on is still open (known issues).
+ */
+export const DETAIL_ROWS_HIDDEN_BY_DEFAULT: ReadonlySet<string> = new Set([
+  'detail.coordinates',
+  'detail.language',
+  'detail.originalLanguage',
+  'detail.id',
+  'detail.source',
+  'detail.importedAt',
+  'detail.runId',
+]);
+
+/** Options of {@link toListingDetail}. */
+export interface ListingDetailOptions {
+  /** Row keys of {@link DETAIL_ROWS_HIDDEN_BY_DEFAULT} to show anyway. */
+  readonly showRows?: ReadonlySet<string>;
+}
+
+export function toListingDetail(
+  listing: LocalizedListing,
+  locale: string,
+  { showRows = new Set() }: ListingDetailOptions = {},
+): ListingDetail {
+  const shown = (row: DetailRow | false | undefined): DetailRow | undefined =>
+    row && (!DETAIL_ROWS_HIDDEN_BY_DEFAULT.has(row.key) || showRows.has(row.key)) ? row : undefined;
   const { address, geo, contact } = listing;
   const sourceHref = httpUrl(listing.sourceUrl);
   const sections = [
@@ -190,7 +217,9 @@ export function toListingDetail(listing: LocalizedListing, locale: string): List
       { key: 'detail.importedAt', text: formatDateTime(listing.lastImportedAt, locale) },
       { key: 'detail.runId', text: listing.lastRunId },
     ]),
-  ].filter((s) => s.rows.length > 0);
+  ]
+    .map((s) => ({ ...s, rows: s.rows.flatMap((row) => shown(row) ?? []) }))
+    .filter((s) => s.rows.length > 0);
 
   return {
     listing,
