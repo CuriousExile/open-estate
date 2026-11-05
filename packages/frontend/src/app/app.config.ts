@@ -6,11 +6,13 @@ import {
   provideZonelessChangeDetection,
   type ApplicationConfig,
 } from '@angular/core';
+import { provideRouter, withComponentInputBinding } from '@angular/router';
 import {
   provideTransloco,
   provideTranslocoFallbackStrategy,
   provideTranslocoMissingHandler,
 } from '@jsverse/transloco';
+import { routes } from './app.routes';
 import { DefaultLocaleFallbackStrategy, FallbackMissingHandler } from './locale/transloco-fallback';
 import { runStartup } from './startup/run-startup';
 import { StartupTranslationLoader } from './startup/startup-translation-loader';
@@ -20,6 +22,7 @@ export const appConfig: ApplicationConfig = {
     provideBrowserGlobalErrorListeners(),
     provideZonelessChangeDetection(),
     provideHttpClient(withFetch()),
+    provideRouter(routes, withComponentInputBinding()),
     provideTransloco({
       config: {
         // Real default/available locales come from i18n-config.json and are set by runStartup.
