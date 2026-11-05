@@ -1,14 +1,5 @@
 import type { Routes } from '@angular/router';
-import { PortalPlaceholderComponent } from '../portal-placeholder.component';
+import { AgencyMonitoringComponent } from './agency-monitoring.component';
 
-/**
- * `/portal/monitoring` (Req 13.6, 15.5): task 14.7 replaces the placeholder with
- * `AgencyMonitoringComponent`. Inherits `access: monitoring:read`.
- */
-export const MONITORING_ROUTES: Routes = [
-  {
-    path: '',
-    component: PortalPlaceholderComponent,
-    data: { titleKey: 'portal.monitoring.title' },
-  },
-];
+/** `/portal/monitoring` (Req 13.6, 15.5). Inherits `access: monitoring:read`. */
+export const MONITORING_ROUTES: Routes = [{ path: '', component: AgencyMonitoringComponent }];
