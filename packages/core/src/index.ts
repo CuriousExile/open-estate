@@ -58,3 +58,5 @@ export * from './management/agency-service';
 export * from './management/membership-service';
 export * from './management/listing-view';
 export * from './management/listing-command-service';
+export * from './management/listing-query-service';
+export * from './management/version-service';
