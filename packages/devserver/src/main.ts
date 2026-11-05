@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { DemoClock, loadContentConfig, readNetworkConfig } from './config';
+import { DEMO_MEDIA_PREFIX } from './media/demo-media';
 import { createDevPlatform } from './platform';
 import { demoFeedModule } from './seed/demo-connector';
 import { AGENCIES, SEED_USERS } from './seed/demo-data';
@@ -36,6 +37,7 @@ async function main(): Promise<void> {
     searchApi: `${base}${PREFIX.api}`,
     mcp: `${base}${PREFIX.mcp}`,
     managementApi: `${base}${PREFIX.management}`,
+    demoMedia: `${network.frontendOrigin}${DEMO_MEDIA_PREFIX}`,
     oidcIssuer: issuer,
     users: SEED_USERS.map(({ email, displayName, role, agencyId }) => ({
       email,
@@ -52,6 +54,7 @@ async function main(): Promise<void> {
     createRequestListener({
       platform,
       info,
+      mediaPublicBase: `${network.frontendOrigin}${DEMO_MEDIA_PREFIX}`,
       ...(!quiet && { log: (line: string) => console.log(`[dev] ${line}`) }),
     }),
   );

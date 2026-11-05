@@ -1,8 +1,10 @@
 import type { DirectoryUser } from '@open-estate/core';
+import { DEMO_MEDIA_ORIGIN, demoArt, demoPhoto } from '../media/demo-media';
 
 // DEV ONLY: fictitious demo data of the local server. Names, e-mail addresses (example.org) and
-// URLs are made up; media URLs point to example.org and do not resolve (the SPA hides broken
-// images). Coordinates are approximate city centres.
+// URLs are made up. Media point to the dev server's demo images (generated illustrations and
+// crops of the project's own hero image, see ../media/demo-media); a few listings have no images
+// or a broken one on purpose, so the SPA's placeholder shows. Coordinates are approximate.
 
 export const AGENCIES = {
   nordlicht: { agencyId: 'agency-nordlicht', displayName: 'Nordlicht Immobilien' },
@@ -94,10 +96,18 @@ export function markDemoContent(content: ContentInput): ContentInput {
   };
 }
 
-const media = (slug: string, count: number) =>
-  Array.from({ length: count }, (_, i) => ({
-    url: `https://example.org/open-estate/demo/${slug}/photo-${i + 1}.jpg`,
-  }));
+/**
+ * Demo images of a listing: `photo:<name>` for a hero crop, else an illustration name
+ * (`<scene>-<time>-<palette>`). Unknown names are not checked here; the route answers 404.
+ */
+const media = (...names: string[]) =>
+  names.map((name) => (name.startsWith('photo:') ? demoPhoto(name.slice(6)) : demoArt(name)));
+
+/** An image URL that does not exist (404), to show the placeholder of a broken image. */
+export const BROKEN_DEMO_IMAGE = { url: `${DEMO_MEDIA_ORIGIN}/photos/lost-in-the-move.webp` };
+
+/** Extra photo added to Berlin-Mitte during seeding (a later version of the listing). */
+export const BERLIN_MITTE_EXTRA_IMAGE = demoArt('interior-golden-sand');
 
 const sale = (price: string) => ({ offerType: 'SALE', price, currency: 'EUR' });
 const rent = (coldRent: string, additionalCosts?: string) => ({
@@ -146,7 +156,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '82.5',
       address: { city: 'Berlin', postalCode: '10115', country: 'DE', street: 'Ackerstraße 12' },
       geo: { lat: 52.532, lon: 13.385 },
-      media: media('berlin-mitte', 3),
+      media: media('apartment-day-white', 'interior-day-sand', 'photo:residence-balcony'),
       tours: [],
     },
   },
@@ -166,7 +176,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '61',
       address: { city: 'Berlin', postalCode: '10435', country: 'DE' },
       geo: { lat: 52.536, lon: 13.418 },
-      media: media('berlin-prenzlauer-berg', 2),
+      media: media('townhouses-golden-sage', 'interior-day-sage'),
       tours: [],
     },
   },
@@ -193,7 +203,13 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '118.4',
       address: { city: 'Hamburg', postalCode: '20457', country: 'DE' },
       geo: { lat: 53.541, lon: 9.984 },
-      media: media('hamburg-hafencity', 4),
+      media: media(
+        'loft-dusk-brick',
+        'loft-day-brick',
+        'interior-night-brick',
+        'interior-day-slate',
+        'photo:residence-facade',
+      ),
       tours: [],
     },
   },
@@ -233,7 +249,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '112',
       address: { city: 'Lübeck', postalCode: '23562', country: 'DE' },
       geo: { lat: 53.85, lon: 10.69 },
-      media: media('luebeck-reihenhaus', 2),
+      media: media('townhouses-day-terracotta', 'interior-golden-terracotta'),
       tours: [],
     },
   },
@@ -252,7 +268,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       rooms: 2,
       area: '54',
       address: { city: 'Kiel', postalCode: '24105', country: 'DE' },
-      media: media('kiel-wohnung', 1),
+      media: media('apartment-day-navy'),
       tours: [],
     },
   },
@@ -272,7 +288,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       rooms: 7,
       area: '286',
       address: { city: 'Potsdam', postalCode: '14469', country: 'DE' },
-      media: media('potsdam-villa', 2),
+      media: media('house-golden-white', 'interior-night-white', 'photo:residence-garden'),
       tours: [],
     },
   },
@@ -298,7 +314,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '210',
       address: { city: 'Berlin', postalCode: '10999', country: 'DE' },
       geo: { lat: 52.497, lon: 13.42 },
-      media: media('berlin-buero', 2),
+      media: media('loft-night-slate'),
       tours: [],
     },
   },
@@ -318,7 +334,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '63',
       address: { city: 'München', postalCode: '80802', country: 'DE' },
       geo: { lat: 48.162, lon: 11.586 },
-      media: media('muenchen-schwabing', 2),
+      media: [BROKEN_DEMO_IMAGE],
       tours: [],
     },
   },
@@ -337,7 +353,12 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       rooms: 5.5,
       area: '184',
       address: { city: 'Salzburg', postalCode: '5020', country: 'AT' },
-      media: media('salzburg-haus', 3),
+      media: media(
+        'house-day-sand',
+        'chalet-golden-sand',
+        'interior-day-timber',
+        'house-night-sand',
+      ),
       tours: [],
     },
   },
@@ -356,7 +377,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       rooms: 6,
       area: '240',
       address: { city: 'Garmisch-Partenkirchen', postalCode: '82467', country: 'DE' },
-      media: media('garmisch-chalet', 3),
+      media: media('chalet-day-timber', 'chalet-night-timber', 'interior-night-timber'),
       tours: [],
     },
   },
@@ -388,7 +409,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '54.2',
       address: { city: 'Bangkok', postalCode: '10110', country: 'TH' },
       geo: { lat: 13.737, lon: 100.56 },
-      media: media('bangkok-sukhumvit', 3),
+      media: media('tower-night-navy', 'tower-day-navy', 'interior-dusk-navy'),
       tours: [],
     },
   },
@@ -420,7 +441,13 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '68',
       address: { city: 'Pattaya', postalCode: '20150', country: 'TH' },
       geo: { lat: 12.923, lon: 100.882 },
-      media: media('pattaya-jomtien', 4),
+      media: media(
+        'photo:villa-pool',
+        'photo:villa-terrace',
+        'photo:villa-lounge',
+        'villa-day-white',
+        'villa-night-white',
+      ),
       tours: [],
     },
   },
@@ -442,7 +469,7 @@ export const CRM_RECORDS = {
     address: { city: 'Hamburg', postalCode: '22301', country: 'DE' },
     geo: { lat: 53.585, lon: 10.005 },
     sourceUrl: 'https://crm.example.org/nordlicht/expose/4711',
-    media: media('crm-4711', 3),
+    media: media('apartment-dusk-slate', 'interior-golden-slate', 'photo:residence-balcony'),
   },
   charlottenburg: {
     customId: 'CRM-4712',
@@ -458,7 +485,7 @@ export const CRM_RECORDS = {
     address: { city: 'Berlin', postalCode: '10623', country: 'DE' },
     geo: { lat: 52.506, lon: 13.322 },
     sourceUrl: 'https://crm.example.org/nordlicht/expose/4712',
-    media: media('crm-4712', 2),
+    media: media('apartment-golden-sand', 'interior-day-white'),
   },
   rostock: {
     customId: 'CRM-4713',
@@ -473,7 +500,8 @@ export const CRM_RECORDS = {
     area: '58',
     address: { city: 'Rostock', postalCode: '18119', country: 'DE' },
     sourceUrl: 'https://crm.example.org/nordlicht/expose/4713',
-    media: media('crm-4713', 2),
+    // No photos yet: the result card shows the placeholder.
+    media: [],
   },
   bremen: {
     customId: 'CRM-4714',

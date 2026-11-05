@@ -7,6 +7,7 @@ import {
   type ProxyResult,
   type RawHttpRequest,
 } from './http/proxy-event';
+import { DEMO_MEDIA_PREFIX, publishDemoMediaUrls, serveDemoMedia } from './media/demo-media';
 import { isLoopbackUrl } from './oidc/provider';
 import type { DevPlatform } from './platform';
 
@@ -82,6 +83,11 @@ export interface RequestListenerOptions {
   platform: DevPlatform;
   /** Shown by `GET /` (URLs, demo users). */
   info: () => unknown;
+  /**
+   * Where the browser loads demo media (`<frontend origin>/demo-media`); stored demo media URLs
+   * in Search_API and MCP responses are rewritten to it. Without it they stay as stored.
+   */
+  mediaPublicBase?: string;
   log?: (line: string) => void;
 }
 
@@ -89,6 +95,7 @@ export interface RequestListenerOptions {
 export function createRequestListener({
   platform,
   info,
+  mediaPublicBase,
   log,
 }: RequestListenerOptions): RequestListener {
   const { search, mcp, management } = platform.handlers;
@@ -112,6 +119,15 @@ export function createRequestListener({
       );
       return;
     }
+    if (under(path, DEMO_MEDIA_PREFIX)) {
+      if (method !== 'GET' && method !== 'HEAD') {
+        send(res, 405, { Allow: 'GET, HEAD', ...cors }, '');
+        return;
+      }
+      const out = serveDemoMedia(stripPathPrefix(path, DEMO_MEDIA_PREFIX));
+      send(res, out.status, { ...out.headers, ...cors }, method === 'HEAD' ? '' : out.body);
+      return;
+    }
 
     let body: Buffer;
     try {
@@ -130,18 +146,27 @@ export function createRequestListener({
       body,
       ...(req.socket.remoteAddress !== undefined && { remoteAddress: req.socket.remoteAddress }),
     };
-    const reply = (result: ProxyResult) => {
+    const reply = (result: ProxyResult, publishMedia = false) => {
       const out = fromProxyResult(result);
+      if (publishMedia && mediaPublicBase !== undefined && result.isBase64Encoded !== true) {
+        const body = publishDemoMediaUrls(out.body.toString('utf8'), mediaPublicBase);
+        const headers = Object.fromEntries(
+          Object.entries(out.headers).filter(([name]) => name.toLowerCase() !== 'content-length'),
+        );
+        send(res, out.status, { ...headers, ...cors }, body);
+        return;
+      }
       send(res, out.status, { ...out.headers, ...cors }, out.body);
     };
 
     if (path === PREFIX.mcp || path === `${PREFIX.api}${PREFIX.mcp}`) {
-      reply(await mcp(toProxyEvent(raw)));
+      reply(await mcp(toProxyEvent(raw)), true);
       return;
     }
     if (under(path, PREFIX.api)) {
       reply(
         await search(toProxyEvent(raw, { stripPrefix: PREFIX.api, resources: SEARCH_RESOURCES })),
+        true,
       );
       return;
     }

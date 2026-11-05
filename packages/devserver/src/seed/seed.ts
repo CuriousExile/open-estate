@@ -14,6 +14,7 @@ import type { DevPlatform } from '../platform';
 import { DEMO_FEED_MODULE } from './demo-connector';
 import {
   AGENCIES,
+  BERLIN_MITTE_EXTRA_IMAGE,
   CRM_INVALID_RECORDS,
   CRM_RECORDS,
   MANUAL_LISTINGS,
@@ -221,10 +222,7 @@ export async function seedDemo(
     description:
       'Altbau mit Stuck, Dielenboden und Südbalkon. Ruhige Seitenstraße, fünf Minuten zur U-Bahn. ' +
       'Neu: Badezimmer 2025 saniert, Kellerabteil inklusive.',
-    media: [
-      ...((mitte['media'] as unknown[] | undefined) ?? []),
-      { url: 'https://example.org/open-estate/demo/berlin-mitte/photo-4.jpg' },
-    ],
+    media: [...((mitte['media'] as unknown[] | undefined) ?? []), BERLIN_MITTE_EXTRA_IMAGE],
   });
 
   // Prenzlauer Berg: rent increase, then restored to the original content.
