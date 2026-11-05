@@ -364,7 +364,7 @@ describe('Deletion process', () => {
       advance(10_000);
       await expect(
         workflow.deleteListing({ requestId: 'req-1', listingId: 'L-1', source: 'partner-a' }),
-      ).resolves.toEqual({ removed: false });
+      ).resolves.toEqual({ removed: false, complete: true });
       await runDeletionWorkflow(workflow, 'req-1');
 
       expect(await requests.get('req-1')).toEqual(first);
@@ -396,7 +396,7 @@ describe('Deletion process', () => {
       });
       await expect(
         task({ step: 'deleteListing', requestId: 'req-1', listingId: 'L-1', source: 'partner-a' }),
-      ).resolves.toEqual({ removed: true });
+      ).resolves.toEqual({ removed: true, complete: true });
       await expect(task({ step: 'finalize', requestId: 'req-1' })).resolves.toMatchObject({
         status: 'EXECUTED',
         removedCount: 1,

@@ -1,8 +1,22 @@
-import { DeleteCommand, PutCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import {
+  DeleteCommand,
+  PutCommand,
+  TransactWriteCommand,
+  type DynamoDBDocumentClient,
+} from '@aws-sdk/lib-dynamodb';
 import { DELETION_BLOCKLIST_KEY_ATTRIBUTE, type DeletionBlocklistStore } from '@open-estate/core';
 import type { DeletionBlocklistEntry } from './deletion-model';
 
 export type { DeletionBlocklistStore };
+
+/**
+ * Blocks several keys at once — a listing id and its Custom_Id key `custom#{agencyId}#{customId}`
+ * (design: "Löschprozess-Erweiterung", step 1) — so no import or edit can slip in between.
+ */
+export interface DeletionBlocklistBatch {
+  /** All entries or none; existing entries are kept unchanged (idempotent). */
+  blockAll(entries: readonly DeletionBlocklistEntry[]): Promise<void>;
+}
 
 /**
  * Id set the in-memory store mirrors its changes into. `InMemoryDeletionBlocklist` of
@@ -14,7 +28,9 @@ export interface BlocklistIdMirror {
 }
 
 /** Fake for tests and in-process runs; also readable via `has` like the pipeline's port. */
-export class InMemoryDeletionBlocklistStore implements DeletionBlocklistStore {
+export class InMemoryDeletionBlocklistStore
+  implements DeletionBlocklistStore, DeletionBlocklistBatch
+{
   private readonly entries = new Map<string, DeletionBlocklistEntry>();
 
   constructor(private readonly mirror?: BlocklistIdMirror) {}
@@ -23,6 +39,10 @@ export class InMemoryDeletionBlocklistStore implements DeletionBlocklistStore {
     if (this.entries.has(entry.listingId)) return;
     this.entries.set(entry.listingId, { ...entry });
     this.mirror?.add(entry.listingId);
+  }
+
+  async blockAll(entries: readonly DeletionBlocklistEntry[]): Promise<void> {
+    for (const entry of entries) await this.block(entry);
   }
 
   async unblock(listingId: string): Promise<boolean> {
@@ -53,8 +73,14 @@ export interface DynamoDbDeletionBlocklistStoreOptions {
 
 const KEY = DELETION_BLOCKLIST_KEY_ATTRIBUTE;
 
-/** `PutItem` with `attribute_not_exists`, so re-runs keep the first entry; `DeleteItem` to lift. */
-export class DynamoDbDeletionBlocklistStore implements DeletionBlocklistStore {
+/**
+ * `PutItem` with `attribute_not_exists`, so re-runs keep the first entry; `DeleteItem` to lift.
+ * `blockAll` writes one `TransactWriteItems` of `UpdateItem`s with `if_not_exists`, which keeps
+ * existing entries unchanged without failing the transaction.
+ */
+export class DynamoDbDeletionBlocklistStore
+  implements DeletionBlocklistStore, DeletionBlocklistBatch
+{
   private readonly client: DynamoDBDocumentClient;
   private readonly tableName: string;
 
@@ -77,6 +103,36 @@ export class DynamoDbDeletionBlocklistStore implements DeletionBlocklistStore {
       if (error instanceof Error && error.name === 'ConditionalCheckFailedException') return;
       throw error;
     }
+  }
+
+  async blockAll(entries: readonly DeletionBlocklistEntry[]): Promise<void> {
+    const [first, ...rest] = entries;
+    if (first === undefined) return;
+    if (rest.length === 0) return this.block(first);
+    await this.client.send(
+      new TransactWriteCommand({
+        TransactItems: entries.map(({ listingId, source, deletedAt, requestId }) => ({
+          Update: {
+            TableName: this.tableName,
+            Key: { [KEY]: listingId },
+            UpdateExpression:
+              'SET #source = if_not_exists(#source, :source), ' +
+              '#deletedAt = if_not_exists(#deletedAt, :deletedAt), ' +
+              '#requestId = if_not_exists(#requestId, :requestId)',
+            ExpressionAttributeNames: {
+              '#source': 'source',
+              '#deletedAt': 'deletedAt',
+              '#requestId': 'requestId',
+            },
+            ExpressionAttributeValues: {
+              ':source': source,
+              ':deletedAt': deletedAt,
+              ':requestId': requestId,
+            },
+          },
+        })),
+      }),
+    );
   }
 
   async unblock(listingId: string): Promise<boolean> {

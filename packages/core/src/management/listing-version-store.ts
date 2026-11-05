@@ -150,6 +150,11 @@ export class InMemoryListingVersionStore implements ListingVersionStore<InMemory
     };
   }
 
+  /** Removes every version of a listing — only a deletion request may do this (Req 7.4, 9.2). */
+  removeListing(listingId: string): void {
+    this.byListing.delete(listingId);
+  }
+
   /** All versions of all listings (for assertions in tests). */
   all(): ListingVersionRecord[] {
     return [...this.byListing.values()].flatMap((versions) =>

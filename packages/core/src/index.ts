@@ -16,6 +16,7 @@ export * from './search/listing-service';
 export * from './search/suspended-agencies';
 export * from './deletion/deletion-tables';
 export * from './deletion/deletion-blocklist-check';
+export * from './deletion/listing-history';
 export * from './config/config-error';
 export * from './config/config-provider';
 export * from './access/ttl-cache';

@@ -59,6 +59,13 @@ export class InMemorySnapshotStore implements SnapshotStore {
     return body === undefined ? null : (JSON.parse(body) as ListingContent);
   }
 
+  /** Deletes every object under `prefix` (deletion of a listing, Req 9.2). */
+  removePrefix(prefix: string): void {
+    for (const key of [...this.objects.keys()]) {
+      if (key.startsWith(prefix)) this.objects.delete(key);
+    }
+  }
+
   /** Stored object keys (for assertions in tests). */
   keys(): string[] {
     return [...this.objects.keys()].sort();

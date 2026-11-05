@@ -207,6 +207,108 @@ describe('DynamoDbDeletionListingStore', () => {
     // Unknown request: the listing stays (transaction cancelled) and the error surfaces.
     await expect(store.removeForRequest('L-1', 'missing')).rejects.toThrow('cancelled');
   });
+
+  it('inspect reads status, agency and Custom_Id strongly consistent', async () => {
+    const { client, store } = create();
+    const send = jest.spyOn(client, 'send').mockImplementationOnce(async () => ({
+      Item: { id: 'L-1', source: 'agency:a', status: 'INACTIVE', agencyId: 'a', customId: 'C-1' },
+    }));
+
+    await expect(store.inspect('L-1')).resolves.toEqual({
+      listingId: 'L-1',
+      source: 'agency:a',
+      status: 'INACTIVE',
+      agencyId: 'a',
+      customId: 'C-1',
+    });
+    expect(inputOf(send)).toMatchObject({ Key: { id: 'L-1' }, ConsistentRead: true });
+  });
+
+  it('releases the Custom_Id key and decrements counters in the removal transaction', async () => {
+    const client = documentClient();
+    const store = new DynamoDbDeletionListingStore({
+      client,
+      listingsTable: 'Listings',
+      deletionRequestsTable: 'DeletionRequests',
+      listingKeysTable: 'ListingKeys',
+      metricCountersTable: 'MetricCounters',
+    });
+    const send = jest.spyOn(client, 'send').mockImplementation(async () => ({}));
+
+    await store.removeForRequest('L-1', 'req-1', {
+      customKey: { owner: 'a', customId: 'C-1' },
+      counters: [{ scope: 'agency#a', code: 'history.version_count', delta: -3 }],
+    });
+
+    const items = (inputOf(send) as { TransactItems: Record<string, unknown>[] }).TransactItems;
+    expect(items).toHaveLength(4);
+    expect(items[2]).toEqual({
+      Delete: {
+        TableName: 'ListingKeys',
+        Key: { customKey: 'a#C-1' },
+        ConditionExpression: '#listingId = :listingId',
+        ExpressionAttributeNames: { '#listingId': 'listingId' },
+        ExpressionAttributeValues: { ':listingId': 'L-1' },
+      },
+    });
+    expect(items[3]).toMatchObject({
+      Update: {
+        TableName: 'MetricCounters',
+        Key: { scope: 'agency#a', sk: 'history.version_count#current' },
+        ExpressionAttributeValues: { ':delta': -3 },
+      },
+    });
+  });
+
+  it('refuses a removal it cannot write completely', async () => {
+    const { store } = create();
+    await expect(
+      store.removeForRequest('L-1', 'req-1', { customKey: { owner: 'a', customId: 'C-1' } }),
+    ).rejects.toThrow('listingKeysTable is not configured');
+  });
+});
+
+describe('DynamoDbDeletionRequestStore: incomplete listings', () => {
+  it('tracks incomplete listings in a string set beside the record', async () => {
+    const client = documentClient();
+    const send = jest
+      .spyOn(client, 'send')
+      .mockImplementationOnce(async () => ({}))
+      .mockImplementationOnce(async () => ({}))
+      .mockImplementationOnce(async () => ({
+        Item: { incompleteListingIds: new Set(['L-2', 'L-1']) },
+      }))
+      .mockImplementationOnce(async () => {
+        throw conditionFailed();
+      });
+    const store = new DynamoDbDeletionRequestStore({ client, tableName: 'DeletionRequests' });
+
+    await store.markIncomplete('req-1', 'L-1');
+    await store.markComplete('req-1', 'L-1');
+    await expect(store.incompleteListings('req-1')).resolves.toEqual(['L-1', 'L-2']);
+    await expect(store.markIncomplete('missing', 'L-1')).rejects.toThrow(
+      'Deletion request missing not found',
+    );
+
+    expect(inputOf(send, 0)).toEqual({
+      TableName: 'DeletionRequests',
+      Key: { requestId: 'req-1' },
+      UpdateExpression: 'ADD #incomplete :ids',
+      ConditionExpression: 'attribute_exists(#key)',
+      ExpressionAttributeNames: { '#key': 'requestId', '#incomplete': 'incompleteListingIds' },
+      ExpressionAttributeValues: { ':ids': new Set(['L-1']) },
+    });
+    expect(inputOf(send, 1)).toMatchObject({ UpdateExpression: 'DELETE #incomplete :ids' });
+  });
+
+  it('get keeps the Admin_API record unchanged (no incomplete attribute)', async () => {
+    const client = documentClient();
+    jest.spyOn(client, 'send').mockImplementation(async () => ({
+      Item: { ...RECORD, incompleteListingIds: new Set(['L-1']) },
+    }));
+    const store = new DynamoDbDeletionRequestStore({ client, tableName: 'DeletionRequests' });
+    await expect(store.get('req-1')).resolves.toEqual(RECORD);
+  });
 });
 
 describe('DynamoDbDeletionBlocklistStore', () => {
@@ -245,6 +347,33 @@ describe('DynamoDbDeletionBlocklistStore', () => {
       ReturnValues: 'ALL_OLD',
     });
     await expect(store.unblock('L-2')).resolves.toBe(false);
+  });
+
+  it('blockAll blocks id and Custom_Id key in one transaction, keeping existing entries', async () => {
+    const client = documentClient();
+    const send = jest.spyOn(client, 'send').mockImplementation(async () => ({}));
+    const store = new DynamoDbDeletionBlocklistStore({ client, tableName: 'DeletionBlocklist' });
+    const entry = (listingId: string) => ({
+      listingId,
+      source: 'agency:a',
+      deletedAt: '2026-01-01T12:00:00.000Z',
+      requestId: 'req-1',
+    });
+
+    await store.blockAll([entry('L-1'), entry('custom#a#C-1')]);
+
+    expect(send.mock.calls[0]?.[0]).toBeInstanceOf(TransactWriteCommand);
+    const items = (inputOf(send) as { TransactItems: { Update: Record<string, unknown> }[] })
+      .TransactItems;
+    expect(items.map((item) => item.Update['Key'])).toEqual([
+      { listingId: 'L-1' },
+      { listingId: 'custom#a#C-1' },
+    ]);
+    expect(items[0]?.Update).toMatchObject({
+      UpdateExpression: expect.stringContaining('#deletedAt = if_not_exists(#deletedAt'),
+      ExpressionAttributeValues: { ':requestId': 'req-1' },
+    });
+    expect(items[0]?.Update['ConditionExpression']).toBeUndefined();
   });
 });
 
@@ -343,6 +472,10 @@ describe('production wiring', () => {
         'DELETION_REQUESTS_TABLE_NAME',
         'DELETION_BLOCKLIST_TABLE_NAME',
         'AUDIT_LOG_TABLE_NAME',
+        'LISTING_VERSIONS_TABLE_NAME',
+        'LISTING_KEYS_TABLE_NAME',
+        'METRIC_COUNTERS_TABLE_NAME',
+        'SNAPSHOT_BUCKET_NAME',
       ],
     });
   });

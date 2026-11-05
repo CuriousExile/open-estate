@@ -1,6 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { ConfigError } from '@open-estate/core';
+import { ConfigError, DynamoDbS3ListingHistoryStore } from '@open-estate/core';
 import { z } from 'zod';
 import { DynamoDbAuditLog } from '../audit-log';
 import { DynamoDbDeletionBlocklistStore } from './deletion-blocklist-store';
@@ -60,6 +60,21 @@ export const DELETION_ENV = {
   auditLogTable: 'AUDIT_LOG_TABLE_NAME',
 } as const;
 
+/**
+ * Stores of the version history the deletion task removes besides the listing (design:
+ * "Löschprozess-Erweiterung", Req 9.2, 9.3); same names as the connector Lambda's. Required: the
+ * task refuses to start without them rather than leave versions behind.
+ */
+export const DELETION_HISTORY_ENV = {
+  listingVersionsTable: 'LISTING_VERSIONS_TABLE_NAME',
+  listingKeysTable: 'LISTING_KEYS_TABLE_NAME',
+  metricCountersTable: 'METRIC_COUNTERS_TABLE_NAME',
+  snapshotBucket: 'SNAPSHOT_BUCKET_NAME',
+} as const;
+
+/** All variables of the deletion task Lambda. */
+export const DELETION_TASK_ENV = { ...DELETION_ENV, ...DELETION_HISTORY_ENV } as const;
+
 /** Throws `ConfigError{code:"CONFIG_MISSING"}` naming every missing or empty variable (Req 9.4). */
 export function readEnv<K extends string>(
   env: NodeJS.ProcessEnv,
@@ -76,12 +91,12 @@ export function readEnv<K extends string>(
   return result as Record<K, string>;
 }
 
-/** Production workflow over DynamoDB from {@link DELETION_ENV}. */
+/** Production workflow over DynamoDB and S3 from {@link DELETION_TASK_ENV}. */
 export function createDeletionWorkflowFromEnv(
   env: NodeJS.ProcessEnv,
   dynamo: DynamoDBDocumentClient = DynamoDBDocumentClient.from(new DynamoDBClient({})),
 ): DeletionWorkflow {
-  const config = readEnv(env, DELETION_ENV);
+  const config = readEnv(env, DELETION_TASK_ENV);
   return createDeletionWorkflow({
     requests: new DynamoDbDeletionRequestStore({
       client: dynamo,
@@ -91,10 +106,17 @@ export function createDeletionWorkflowFromEnv(
       client: dynamo,
       listingsTable: config.listingsTable,
       deletionRequestsTable: config.deletionRequestsTable,
+      listingKeysTable: config.listingKeysTable,
+      metricCountersTable: config.metricCountersTable,
     }),
     blocklist: new DynamoDbDeletionBlocklistStore({
       client: dynamo,
       tableName: config.deletionBlocklistTable,
+    }),
+    history: new DynamoDbS3ListingHistoryStore({
+      client: dynamo,
+      versionsTable: config.listingVersionsTable,
+      bucketName: config.snapshotBucket,
     }),
     audit: new DynamoDbAuditLog({ client: dynamo, tableName: config.auditLogTable }),
   });

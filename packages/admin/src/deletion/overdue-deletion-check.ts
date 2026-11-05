@@ -4,7 +4,11 @@ import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { systemClock, type Clock } from '@open-estate/core';
 import { describeCriterion, type DeletionCriterion } from './deletion-model';
 import { DynamoDbDeletionListingStore, type DeletionListingStore } from './deletion-listing-store';
-import { DynamoDbDeletionRequestStore, type DeletionRequestStore } from './deletion-request-store';
+import {
+  DynamoDbDeletionRequestStore,
+  type DeletionCompletionTracker,
+  type DeletionRequestStore,
+} from './deletion-request-store';
 import { DELETION_ENV, readEnv } from './deletion-task-handler';
 
 /** A request counts as overdue once it is OPEN for longer than this (Req 18.10). */
@@ -55,8 +59,10 @@ export interface SnsOverdueDeletionNotifierOptions {
 }
 
 /**
- * Publishes to one topic; the message attribute `adminArn` (String) lets each administrator's
- * subscription select its own requests via filter policy (design, infra 14.10).
+ * Publishes to one topic; subscriptions select their own requests via filter policy on the
+ * message attribute `adminArn` (IAM requester, design, infra 14.10) or `requesterId` (any
+ * requester incl. a Plattform_Admin user id, design: "Management_API", Req 9.5). Both carry the
+ * request's `requestedBy`.
  */
 export class SnsOverdueDeletionNotifier implements OverdueDeletionNotifier {
   private readonly client: SNSClient;
@@ -75,6 +81,7 @@ export class SnsOverdueDeletionNotifier implements OverdueDeletionNotifier {
         Message: formatOverdueDeletionMessage(notice),
         MessageAttributes: {
           adminArn: { DataType: 'String', StringValue: notice.adminArn },
+          requesterId: { DataType: 'String', StringValue: notice.adminArn },
           requestId: { DataType: 'String', StringValue: notice.requestId },
           remainingCount: { DataType: 'Number', StringValue: String(notice.remainingCount) },
         },
@@ -84,7 +91,7 @@ export class SnsOverdueDeletionNotifier implements OverdueDeletionNotifier {
 }
 
 export interface OverdueDeletionCheckDeps {
-  requests: DeletionRequestStore;
+  requests: DeletionRequestStore & Pick<DeletionCompletionTracker, 'incompleteListings'>;
   listings: Pick<DeletionListingStore, 'find' | 'listBySource'>;
   notifier: OverdueDeletionNotifier;
   clock?: Clock;
@@ -144,7 +151,10 @@ export function createOverdueDeletionCheck(deps: OverdueDeletionCheckDeps): Over
       requestId,
       criterion: record.criterion,
       requestedAt: record.requestedAt,
-      remainingCount: await countRemaining(record.criterion),
+      // Removed listings whose versions or snapshots are still present count as remaining too.
+      remainingCount:
+        (await countRemaining(record.criterion)) +
+        (await deps.requests.incompleteListings(requestId)).length,
       adminArn: record.requestedBy,
     });
     await deps.requests.markNotified(requestId, now);

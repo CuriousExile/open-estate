@@ -160,6 +160,7 @@ describe('createOverdueDeletionCheck', () => {
       TopicArn: 'arn:aws:sns:topic',
       MessageAttributes: {
         adminArn: { DataType: 'String', StringValue: ADMIN },
+        requesterId: { DataType: 'String', StringValue: ADMIN },
         requestId: { DataType: 'String', StringValue: 'req-1' },
         remainingCount: { DataType: 'Number', StringValue: '1' },
       },

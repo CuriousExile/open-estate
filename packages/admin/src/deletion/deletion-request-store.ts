@@ -15,12 +15,31 @@ import {
   type RequestIdPageRequest,
 } from '@open-estate/core';
 import {
+  DeletionRequestNotFoundError,
   deletionRequestRecordSchema,
   type DeletionCriterion,
   type DeletionRequestRecord,
 } from './deletion-model';
 
 export type { DeletionRequestStore, RequestIdPage, RequestIdPageRequest };
+
+/**
+ * Listings of a request whose versions or snapshots could not be removed completely yet (design:
+ * "Löschprozess-Erweiterung", step 4). Kept beside the request record (attribute
+ * {@link INCOMPLETE_LISTINGS_ATTRIBUTE}), not in it, so the Admin_API response stays unchanged.
+ * While the set is non-empty the request stays `OPEN` (Req 9.5).
+ */
+export interface DeletionCompletionTracker {
+  /** Throws `DeletionRequestNotFoundError` for an unknown request. */
+  markIncomplete(requestId: string, listingId: string): Promise<void>;
+  /** Idempotent; throws `DeletionRequestNotFoundError` for an unknown request. */
+  markComplete(requestId: string, listingId: string): Promise<void>;
+  /** Sorted ids; empty for an unknown request. */
+  incompleteListings(requestId: string): Promise<string[]>;
+}
+
+/** String set attribute of a `DeletionRequests` item; absent = none incomplete. */
+export const INCOMPLETE_LISTINGS_ATTRIBUTE = 'incompleteListingIds';
 
 const KEY = DELETION_REQUESTS_KEY_ATTRIBUTE;
 
@@ -36,8 +55,27 @@ function toRecord(item: unknown): DeletionRequestRecord {
 }
 
 /** Fake for tests and in-process runs; stores and returns copies. */
-export class InMemoryDeletionRequestStore implements DeletionRequestStore {
+export class InMemoryDeletionRequestStore
+  implements DeletionRequestStore, DeletionCompletionTracker
+{
   private readonly records = new Map<string, DeletionRequestRecord>();
+  private readonly incomplete = new Map<string, Set<string>>();
+
+  async markIncomplete(requestId: string, listingId: string): Promise<void> {
+    if (!this.records.has(requestId)) throw new DeletionRequestNotFoundError(requestId);
+    const ids = this.incomplete.get(requestId) ?? new Set<string>();
+    ids.add(listingId);
+    this.incomplete.set(requestId, ids);
+  }
+
+  async markComplete(requestId: string, listingId: string): Promise<void> {
+    if (!this.records.has(requestId)) throw new DeletionRequestNotFoundError(requestId);
+    this.incomplete.get(requestId)?.delete(listingId);
+  }
+
+  async incompleteListings(requestId: string): Promise<string[]> {
+    return [...(this.incomplete.get(requestId) ?? [])].sort();
+  }
 
   async create(record: DeletionRequestRecord): Promise<void> {
     if (this.records.has(record.requestId)) {
@@ -119,13 +157,60 @@ const isConditionFailure = (error: unknown) =>
  * `PutItem` with `attribute_not_exists(requestId)`; strongly consistent reads; the status change
  * is an `UpdateItem` conditioned on `status = OPEN`, so a re-run cannot overwrite `executedAt`.
  */
-export class DynamoDbDeletionRequestStore implements DeletionRequestStore {
+export class DynamoDbDeletionRequestStore
+  implements DeletionRequestStore, DeletionCompletionTracker
+{
   private readonly client: DynamoDBDocumentClient;
   private readonly tableName: string;
 
   constructor({ client, tableName }: DynamoDbDeletionRequestStoreOptions) {
     this.client = client;
     this.tableName = tableName;
+  }
+
+  async markIncomplete(requestId: string, listingId: string): Promise<void> {
+    await this.updateIncomplete(requestId, 'ADD', listingId);
+  }
+
+  async markComplete(requestId: string, listingId: string): Promise<void> {
+    await this.updateIncomplete(requestId, 'DELETE', listingId);
+  }
+
+  async incompleteListings(requestId: string): Promise<string[]> {
+    const out = await this.client.send(
+      new GetCommand({
+        TableName: this.tableName,
+        Key: { [KEY]: requestId },
+        ProjectionExpression: '#incomplete',
+        ExpressionAttributeNames: { '#incomplete': INCOMPLETE_LISTINGS_ATTRIBUTE },
+        ConsistentRead: true,
+      }),
+    );
+    const ids: unknown = out.Item?.[INCOMPLETE_LISTINGS_ATTRIBUTE];
+    return ids instanceof Set ? [...(ids as Set<unknown>)].map(String).sort() : [];
+  }
+
+  /** `ADD`/`DELETE` on the string set; the condition keeps it from creating a request item. */
+  private async updateIncomplete(
+    requestId: string,
+    action: 'ADD' | 'DELETE',
+    listingId: string,
+  ): Promise<void> {
+    try {
+      await this.client.send(
+        new UpdateCommand({
+          TableName: this.tableName,
+          Key: { [KEY]: requestId },
+          UpdateExpression: `${action} #incomplete :ids`,
+          ConditionExpression: 'attribute_exists(#key)',
+          ExpressionAttributeNames: { '#key': KEY, '#incomplete': INCOMPLETE_LISTINGS_ATTRIBUTE },
+          ExpressionAttributeValues: { ':ids': new Set([listingId]) },
+        }),
+      );
+    } catch (error) {
+      if (isConditionFailure(error)) throw new DeletionRequestNotFoundError(requestId);
+      throw error;
+    }
   }
 
   async create(record: DeletionRequestRecord): Promise<void> {
