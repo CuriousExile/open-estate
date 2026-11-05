@@ -11,6 +11,7 @@
   ],
   "dependencies": {
     "@aws-sdk/client-dynamodb": "3.1162.0",
+    "@aws-sdk/client-s3": "3.1162.0",
     "@aws-sdk/client-ssm": "3.1162.0",
     "@aws-sdk/lib-dynamodb": "3.1162.0",
     "@open-estate/core": "0.0.0",
