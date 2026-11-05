@@ -60,3 +60,4 @@ export * from './management/listing-view';
 export * from './management/listing-command-service';
 export * from './management/listing-query-service';
 export * from './management/version-service';
+export * from './management/monitoring-service';
