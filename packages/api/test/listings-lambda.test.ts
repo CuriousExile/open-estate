@@ -22,6 +22,7 @@ const ENV = {
   LISTINGS_TABLE_NAME: 'listings',
   API_KEYS_TABLE_NAME: 'api-keys',
   RATE_LIMIT_COUNTERS_TABLE_NAME: 'rate-limit-counters',
+  AGENCIES_TABLE_NAME: 'agencies',
 };
 
 const SSM_VALUES: Record<string, string> = {
@@ -77,8 +78,9 @@ function setup(
     return { Body: { transformToString: async () => body } };
   });
   // Counter update admits; listing queries return nothing.
-  const dynamoSend = jest.fn(async (command: { constructor: { name: string } }) =>
-    command.constructor.name === 'QueryCommand' ? { Items: [] } : {},
+  const dynamoSend = jest.fn(
+    async (command: { constructor: { name: string }; input: { TableName?: string } }) =>
+      command.constructor.name === 'QueryCommand' ? { Items: [] } : {},
   );
   const dynamo = { send: dynamoSend } as unknown as DynamoDBDocumentClient;
   const log = jest.spyOn(logger, 'error');
@@ -99,11 +101,13 @@ describe('createListingsHandlerFromEnv', () => {
     expect(JSON.parse(first.body)).toEqual({ items: [] });
     expect(second.statusCode).toBe(200);
     expect(s3Send).toHaveBeenCalledTimes(3); // taxonomy, i18n, tour providers — once
-    expect(dynamoSend.mock.calls.map(([c]) => c.constructor.name)).toEqual([
-      'UpdateCommand',
-      'QueryCommand',
-      'UpdateCommand',
-      'QueryCommand',
+    // Counter, suspended agencies (cached for 60 s, so only once), listings.
+    expect(dynamoSend.mock.calls.map(([c]) => [c.constructor.name, c.input.TableName])).toEqual([
+      ['UpdateCommand', 'rate-limit-counters'],
+      ['QueryCommand', 'agencies'],
+      ['QueryCommand', 'listings'],
+      ['UpdateCommand', 'rate-limit-counters'],
+      ['QueryCommand', 'listings'],
     ]);
   });
 
@@ -157,8 +161,11 @@ describe('createListingsHandlerFromEnv', () => {
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body)).toEqual({ items: [] });
-    // No allowed host: hasTour matches nothing, the provider skips the query.
-    expect(dynamoSend.mock.calls.map(([c]) => c.constructor.name)).toEqual(['UpdateCommand']);
+    // No allowed host: hasTour matches nothing, the provider skips the listings query.
+    expect(dynamoSend.mock.calls.map(([c]) => [c.constructor.name, c.input.TableName])).toEqual([
+      ['UpdateCommand', 'rate-limit-counters'],
+      ['QueryCommand', 'agencies'],
+    ]);
   });
 
   it.each([

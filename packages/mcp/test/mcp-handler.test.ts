@@ -63,9 +63,15 @@ function setup(
     access?: AccessConfig;
     search?: SearchService;
     deadlineMs?: number;
+    /** Hook to store listings with visibility (status, agency). */
+    prepare?: (provider: InMemorySearchProvider) => void;
+    suspendedAgencies?: readonly string[];
   } = {},
 ) {
   const provider = new InMemorySearchProvider(options.stored ?? []);
+  options.prepare?.(provider);
+  const suspended = new Set(options.suspendedAgencies ?? []);
+  const suspendedAgencies = { current: async () => suspended };
   // One counter store for both adapters, like the shared DynamoDB table (Req 17.1).
   const guard = createAccessGuard({
     config: new StaticAccessConfigSource(options.access ?? OPEN),
@@ -80,13 +86,14 @@ function setup(
       taxonomy,
       tourProviders: { providers: [] },
       defaultCurrency: 'EUR',
+      suspendedAgencies,
     });
   const deps: McpHandlerDeps = {
     guard,
     schemas,
     taxonomy,
     search,
-    listings: createListingService({ provider, taxonomy }),
+    listings: createListingService({ provider, taxonomy, suspendedAgencies }),
     ...(options.deadlineMs !== undefined && { deadlineMs: options.deadlineMs }),
   };
   const mcp = createMcpHandler(deps);
@@ -222,6 +229,26 @@ describe('POST /mcp: get_listing and list_property_types', () => {
     expect(res.tool.structuredContent).toEqual({
       errors: [{ code: 'NOT_FOUND', message: expect.any(String), details: { id: 'missing' } }],
     });
+  });
+
+  it('answers inactive and suspended listings like unknown ids (Req 1.8, 1.9, 6.4)', async () => {
+    const { callTool } = setup({
+      prepare: (p) => {
+        p.put(exampleListing('off'), { status: 'INACTIVE' });
+        p.put(exampleListing('susp'), { status: 'ACTIVE', agencyId: 'agency-x' });
+      },
+      suspendedAgencies: ['agency-x'],
+    });
+
+    for (const id of ['off', 'susp']) {
+      const res = await callTool('get_listing', { id });
+      expect(res.tool.isError).toBe(true);
+      expect(res.tool.structuredContent).toEqual({
+        errors: [{ code: 'NOT_FOUND', message: `Listing ${id} not found`, details: { id } }],
+      });
+    }
+    const search = await callTool('search_listings');
+    expect(search.tool.structuredContent).toEqual({ items: [] });
   });
 
   it('returns the full taxonomy (Req 19.5)', async () => {

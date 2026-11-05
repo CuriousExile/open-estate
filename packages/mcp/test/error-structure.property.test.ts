@@ -76,6 +76,7 @@ const ENV: Record<string, string> = {
   LISTINGS_TABLE_NAME: 'listings',
   API_KEYS_TABLE_NAME: 'api-keys',
   RATE_LIMIT_COUNTERS_TABLE_NAME: 'rate-limit-counters',
+  AGENCIES_TABLE_NAME: 'agencies',
 };
 
 const CATALOG: ReadonlySet<string> = new Set(ERROR_CODES);

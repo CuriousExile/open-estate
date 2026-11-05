@@ -139,6 +139,20 @@ describe('buildOpenSearchSearchBody', () => {
     expect(buildOpenSearchSearchBody({ after: 'id-007' })?.search_after).toEqual(['id-007']);
   });
 
+  it('excludes suspended agencies via must_not terms (Req 1.9)', () => {
+    expect(
+      buildOpenSearchSearchBody({ cityNorm: 'berlin', excludeAgencies: ['a-1', 'a-2'] })?.query,
+    ).toEqual({
+      bool: {
+        filter: [{ term: { cityNorm: 'berlin' } }],
+        must_not: [{ terms: { agencyId: ['a-1', 'a-2'] } }],
+      },
+    });
+    expect(buildOpenSearchSearchBody({ excludeAgencies: [] })?.query).toEqual({
+      bool: { filter: [] },
+    });
+  });
+
   it('returns null for empty type or host sets', () => {
     expect(buildOpenSearchSearchBody({ listingTypes: [] })).toBeNull();
     expect(buildOpenSearchSearchBody({ tourHosts: [] })).toBeNull();
@@ -222,13 +236,32 @@ describe('OpenSearchSearchProvider.getById', () => {
     const { provider, search } = setup((body) =>
       JSON.stringify(body).includes('"id":"a"') ? [l] : [],
     );
-    await expect(provider.getById('a')).resolves.toEqual(l);
+    await expect(provider.getById('a')).resolves.toEqual({
+      listing: l,
+      visibility: { status: 'ACTIVE' },
+    });
     await expect(provider.getById('b')).resolves.toBeNull();
     expect(search.mock.calls[0]?.[0].body).toEqual({
       size: 1,
       query: { bool: { filter: [{ term: { id: 'a' } }] } },
       track_total_hits: false,
-      _source: ['listing'],
+      _source: ['listing', 'agencyId'],
+    });
+  });
+
+  it('returns the owning agency of the document; indexed listings are ACTIVE', async () => {
+    const l = listing('a');
+    const provider = new OpenSearchSearchProvider({
+      client: {
+        search: async () => ({
+          body: { hits: { hits: [{ _source: { listing: l, agencyId: 'agency-1' } }] } },
+        }),
+      },
+      index: INDEX,
+    });
+    await expect(provider.getById('a')).resolves.toEqual({
+      listing: l,
+      visibility: { status: 'ACTIVE', agencyId: 'agency-1' },
     });
   });
 });

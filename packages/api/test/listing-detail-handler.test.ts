@@ -47,7 +47,11 @@ const BOTH_OFFERS = exampleListing('home-1', {
   ],
 });
 
-function setup(stored: readonly Listing[] = [BOTH_OFFERS], access: AccessConfig = OPEN) {
+function setup(
+  stored: readonly Listing[] = [BOTH_OFFERS],
+  access: AccessConfig = OPEN,
+  suspended: ReadonlySet<string> = new Set(),
+) {
   const provider = new InMemorySearchProvider(stored);
   const guard = createAccessGuard({
     config: new StaticAccessConfigSource(access),
@@ -55,7 +59,11 @@ function setup(stored: readonly Listing[] = [BOTH_OFFERS], access: AccessConfig 
     counters: new InMemoryRateLimitCounterStore(),
     clock: () => NOW,
   });
-  const listings = createListingService({ provider, taxonomy });
+  const listings = createListingService({
+    provider,
+    taxonomy,
+    suspendedAgencies: { current: async () => suspended },
+  });
   const handler = createListingDetailHandler({ guard, schemas, listings });
 
   async function call(id: string | undefined, req: Partial<ListingsRequest> = {}) {
@@ -151,6 +159,22 @@ describe('GET /listings/{id}: errors', () => {
     expect(res.json).toEqual({
       errors: [{ code: 'NOT_FOUND', message: expect.any(String), details: { id: 'missing-1' } }],
     });
+  });
+
+  it('answers inactive and suspended listings with the 404 of an unknown id (Req 1.8, 1.9, 6.4)', async () => {
+    const { provider, call } = setup([], OPEN, new Set(['agency-x']));
+    provider.put(exampleListing('off'), { status: 'INACTIVE' });
+    provider.put(exampleListing('susp'), { status: 'ACTIVE', agencyId: 'agency-x' });
+    provider.put(exampleListing('own'), { status: 'ACTIVE', agencyId: 'agency-ok' });
+
+    for (const id of ['off', 'susp', 'unknown']) {
+      const res = await call(id);
+      expect(res.statusCode).toBe(404);
+      expect(res.json).toEqual({
+        errors: [{ code: 'NOT_FOUND', message: `Listing ${id} not found`, details: { id } }],
+      });
+    }
+    expect((await call('own')).statusCode).toBe(200);
   });
 
   it.each([

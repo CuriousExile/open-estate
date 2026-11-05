@@ -16,6 +16,7 @@ import {
 import { localize } from './localize';
 import { normalizeCity } from './search-document';
 import type { IntRange, OfferCondition, ResolvedQuery, SearchProvider } from './search-provider';
+import { NO_SUSPENDED_AGENCIES, type SuspendedAgencies } from './suspended-agencies';
 
 // SearchService (design: "Domänenkern", "Indexierungs-Strategie und Ordnung"). Expected request
 // errors (`INVALID_PAGE_TOKEN`) are returned as `Result`, like `parseSearchQuery` and the
@@ -42,6 +43,11 @@ export interface SearchServiceDeps {
   tourProviders: TourProvidersConfig;
   /** ISO 4217 code used when a price filter has no `currency` (Req 12.9). */
   defaultCurrency: string;
+  /**
+   * Suspended agencies, resolved per request into `excludeAgencies` (Req 1.9). Defaults to none
+   * (no `Agencies` table, e.g. local development).
+   */
+  suspendedAgencies?: SuspendedAgencies;
 }
 
 /**
@@ -65,6 +71,7 @@ const toHalf = (rooms: number | undefined): number | undefined =>
 
 export function createSearchService(deps: SearchServiceDeps): SearchService {
   const { provider, taxonomy, defaultCurrency } = deps;
+  const suspendedAgencies = deps.suspendedAgencies ?? NO_SUSPENDED_AGENCIES;
   const allowedTourHosts = [
     ...new Set(
       deps.tourProviders.providers.flatMap((p) => p.hostnames.map((h) => h.toLowerCase())),
@@ -86,7 +93,11 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     return q.types;
   }
 
-  function resolve(q: SearchQuery, after: string | undefined): ResolvedQuery {
+  function resolve(
+    q: SearchQuery,
+    after: string | undefined,
+    suspended: ReadonlySet<string>,
+  ): ResolvedQuery {
     const roomsHalf = range(toHalf(q.roomsMin), toHalf(q.roomsMax));
     const areaMinor = range(q.areaMin, q.areaMax);
     const types = listingTypes(q);
@@ -100,6 +111,8 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       // Only `hasTour=true` filters (Req 16.9); `false` means "no tour filter", not "without
       // tour". An empty allow-list yields no matches.
       ...(q.hasTour === true && { tourHosts: allowedTourHosts }),
+      // Sorted for deterministic provider queries; omitted when no agency is suspended.
+      ...(suspended.size > 0 && { excludeAgencies: [...suspended].sort() }),
       pageSize: q.pageSize,
       ...(after !== undefined && { after }),
     };
@@ -115,7 +128,8 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
         after = cursor.value.lastId;
       }
 
-      const result = await provider.search(resolve(query, after));
+      const suspended = await suspendedAgencies.current();
+      const result = await provider.search(resolve(query, after, suspended));
       const items = result.items.map((listing) => localize(listing, prefs, taxonomy));
       return ok({
         items,

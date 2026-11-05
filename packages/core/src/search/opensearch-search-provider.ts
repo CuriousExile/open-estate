@@ -7,6 +7,7 @@ import {
   type ResolvedQuery,
   type SearchProvider,
   type SearchResult,
+  type StoredListing,
 } from './search-provider';
 import { ServiceUnavailableError } from './service-unavailable-error';
 
@@ -64,7 +65,7 @@ export type OpenSearchFilterClause =
 
 export interface OpenSearchSearchBody {
   size: number;
-  query: { bool: { filter: OpenSearchFilterClause[] } };
+  query: { bool: { filter: OpenSearchFilterClause[]; must_not?: OpenSearchFilterClause[] } };
   sort: [{ id: 'asc' }];
   search_after?: [string];
   track_total_hits: false;
@@ -114,9 +115,16 @@ export function buildOpenSearchFilter(q: ResolvedQuery): OpenSearchFilterClause[
  */
 export function buildOpenSearchSearchBody(q: ResolvedQuery): OpenSearchSearchBody | null {
   if (q.listingTypes?.length === 0 || q.tourHosts?.length === 0) return null;
+  const excluded = q.excludeAgencies ?? [];
   return {
     size: effectivePageSize(q.pageSize) + 1,
-    query: { bool: { filter: buildOpenSearchFilter(q) } },
+    query: {
+      bool: {
+        filter: buildOpenSearchFilter(q),
+        // Suspended owners (Req 1.9); documents without `agencyId` never match `terms`.
+        ...(excluded.length > 0 ? { must_not: [{ terms: { agencyId: [...excluded] } }] } : {}),
+      },
+    },
     sort: [{ id: 'asc' }],
     ...(q.after !== undefined ? { search_after: [q.after] as [string] } : {}),
     track_total_hits: false,
@@ -150,15 +158,24 @@ export interface OpenSearchSearchProviderOptions {
 }
 
 interface Hit {
-  _source?: { listing?: Listing };
+  _source?: { listing?: Listing; agencyId?: unknown };
 }
 
-function listingsOf(body: unknown): Listing[] {
+/**
+ * Hits as stored listings. The index only holds `ACTIVE` listings (the indexer removes inactive
+ * ones), so every hit is `ACTIVE`; the owner comes from the document's `agencyId`.
+ */
+function storedListingsOf(body: unknown): StoredListing[] {
   const hits = (body as { hits?: { hits?: unknown } } | undefined)?.hits?.hits;
   if (!Array.isArray(hits)) throw new Error('OpenSearch response without hits');
   return hits.map((hit: Hit) => {
     if (hit._source?.listing === undefined) throw new Error('OpenSearch hit without listing');
-    return fromOpenSearchDocument({ listing: hit._source.listing });
+    const { agencyId } = hit._source;
+    return {
+      listing: fromOpenSearchDocument({ listing: hit._source.listing }),
+      visibility:
+        typeof agencyId === 'string' ? { status: 'ACTIVE', agencyId } : { status: 'ACTIVE' },
+    };
   });
 }
 
@@ -188,23 +205,23 @@ export class OpenSearchSearchProvider implements SearchProvider {
     const body = buildOpenSearchSearchBody(q);
     if (body === null) return { items: [] };
     const pageSize = effectivePageSize(q.pageSize);
-    const matches = await this.query({ ...body });
+    const matches = (await this.query({ ...body })).map(({ listing }) => listing);
     if (matches.length <= pageSize) return { items: matches };
     const items = matches.slice(0, pageSize);
     return { items, next: { lastId: (items[pageSize - 1] as Listing).id } };
   }
 
-  async getById(id: string): Promise<Listing | null> {
+  async getById(id: string): Promise<StoredListing | null> {
     const [found] = await this.query({
       size: 1,
       query: { bool: { filter: [{ term: { id } }] } },
       track_total_hits: false,
-      _source: ['listing'],
+      _source: ['listing', 'agencyId'],
     });
     return found ?? null;
   }
 
-  private async query(body: Record<string, unknown>): Promise<Listing[]> {
+  private async query(body: Record<string, unknown>): Promise<StoredListing[]> {
     const signal = this.deadlineSignal(this.deadlineMs);
     try {
       signal.throwIfAborted();
@@ -221,7 +238,7 @@ export class OpenSearchSearchProvider implements SearchProvider {
         signal.addEventListener('abort', onAbort, { once: true });
         request.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
       });
-      return listingsOf(response.body);
+      return storedListingsOf(response.body);
     } catch (cause) {
       const message = signal.aborted
         ? `OpenSearch deadline of ${this.deadlineMs} ms exceeded`

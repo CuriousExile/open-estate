@@ -21,6 +21,7 @@ import { DynamoDbApiKeyStore } from '../access/api-key-store';
 import { DynamoDbRateLimitCounterStore } from '../access/rate-limit-counter-store';
 import { ConfigError } from '../config/config-error';
 import { loadConfig, SSM_PARAMETER_SUFFIX, type ConfigSources } from '../config/config-provider';
+import { DynamoDbAgencyStore } from '../management/agency-store';
 import { createListingService, type ListingService } from '../search/listing-service';
 import { createOpenSearchClient } from '../search/opensearch-client';
 import {
@@ -29,6 +30,7 @@ import {
   type SearchProviderKind,
 } from '../search/search-provider-factory';
 import { createSearchService, type SearchService } from '../search/search-service';
+import { createCachedSuspendedAgencies } from '../search/suspended-agencies';
 
 // Lambda init of the read side shared by the public adapters (design: "ConfigProvider",
 // "Taxonomy", "Konfigurationsmodelle"): config, taxonomy, locales and tour allow-list are loaded
@@ -40,6 +42,8 @@ export const READ_MODEL_ENV = {
   listingsTable: 'LISTINGS_TABLE_NAME',
   apiKeysTable: 'API_KEYS_TABLE_NAME',
   rateLimitCountersTable: 'RATE_LIMIT_COUNTERS_TABLE_NAME',
+  /** `Agencies` table; GSI `byState` yields the suspended agencies (Req 1.9). */
+  agenciesTable: 'AGENCIES_TABLE_NAME',
   /** SSM parameter names read by the AccessGuard (60-s cache, no restart needed, Req 17.9). */
   accessModeParameter: `ACCESS_MODE${SSM_PARAMETER_SUFFIX}`,
   rateLimitParameter: `RATE_LIMIT${SSM_PARAMETER_SUFFIX}`,
@@ -195,6 +199,7 @@ export async function initReadModel(
   const vars = requireEnv(env, [
     READ_MODEL_ENV.apiKeysTable,
     READ_MODEL_ENV.rateLimitCountersTable,
+    READ_MODEL_ENV.agenciesTable,
     READ_MODEL_ENV.accessModeParameter,
     READ_MODEL_ENV.rateLimitParameter,
     ...providerEnv(kind),
@@ -232,6 +237,14 @@ export async function initReadModel(
     }),
   });
 
+  // One cache shared by search and detail, so both see the same suspension state.
+  const suspendedAgencies = createCachedSuspendedAgencies({
+    store: new DynamoDbAgencyStore({
+      client: dynamo,
+      tableName: vars(READ_MODEL_ENV.agenciesTable),
+    }),
+  });
+
   return {
     guard,
     schemas: buildSchemas(taxonomy, locales),
@@ -239,8 +252,14 @@ export async function initReadModel(
     locales,
     defaultCurrency,
     tourProviders,
-    search: createSearchService({ provider, taxonomy, tourProviders, defaultCurrency }),
-    listings: createListingService({ provider, taxonomy }),
+    search: createSearchService({
+      provider,
+      taxonomy,
+      tourProviders,
+      defaultCurrency,
+      suspendedAgencies,
+    }),
+    listings: createListingService({ provider, taxonomy, suspendedAgencies }),
   };
 }
 

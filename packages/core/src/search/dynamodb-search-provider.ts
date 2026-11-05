@@ -4,10 +4,11 @@ import {
   type DynamoDBDocumentClient,
   type QueryCommandInput,
 } from '@aws-sdk/lib-dynamodb';
-import type { Listing } from '@open-estate/shared';
+import { ListingStatusSchema, type Listing } from '@open-estate/shared';
 import { DOWNSTREAM_DEADLINE_MS } from '../deadlines';
 import {
   fromListingItem,
+  type ListingVisibility,
   LISTINGS_BY_ID_INDEX,
   LISTINGS_BY_ID_PK_ATTRIBUTE,
   LISTINGS_BY_ID_PK_VALUE,
@@ -18,6 +19,7 @@ import {
   type ResolvedQuery,
   type SearchProvider,
   type SearchResult,
+  type StoredListing,
 } from './search-provider';
 import { ServiceUnavailableError } from './service-unavailable-error';
 
@@ -35,6 +37,9 @@ export interface DynamoDbSearchProviderOptions {
 }
 
 type Values = Record<string, unknown>;
+
+/** DynamoDB allows at most 100 operands per `IN`; longer exclusion lists are split. */
+export const DYNAMODB_IN_OPERAND_LIMIT = 100;
 
 /** Collects placeholders so that every attribute name and value is passed via `#n`/`:v`. */
 class ExpressionBuilder {
@@ -90,7 +95,24 @@ function addFilter(q: ResolvedQuery, b: ExpressionBuilder): string | undefined {
     const hosts = q.tourHosts.map((h) => `contains(${b.name('tourHosts')}, ${b.value(h)})`);
     parts.push(`(${hosts.join(' OR ')})`);
   }
+  // `IN` on a missing attribute is false, so listings without agency stay visible (Req 1.9).
+  const excluded = q.excludeAgencies ?? [];
+  for (let i = 0; i < excluded.length; i += DYNAMODB_IN_OPERAND_LIMIT) {
+    const chunk = excluded.slice(i, i + DYNAMODB_IN_OPERAND_LIMIT);
+    parts.push(`NOT (${b.name('agencyId')} IN (${chunk.map((a) => b.value(a)).join(', ')}))`);
+  }
   return parts.length > 0 ? parts.join(' AND ') : undefined;
+}
+
+/**
+ * Status and owner of a stored item. Unmanaged items (seed, legacy imports) carry no `status` and
+ * are `ACTIVE`; a malformed status throws instead of being guessed.
+ */
+export function visibilityOf(item: Record<string, unknown>): ListingVisibility {
+  const status =
+    item['status'] === undefined ? 'ACTIVE' : ListingStatusSchema.parse(item['status']);
+  const agencyId = item['agencyId'];
+  return typeof agencyId === 'string' ? { status, agencyId } : { status };
 }
 
 /** Query input on the `byId` GSI: `id ASC`, exclusive start at `after`, filter on flat fields. */
@@ -161,13 +183,14 @@ export class DynamoDbSearchProvider implements SearchProvider {
     return { items, next: { lastId: (items[pageSize - 1] as Listing).id } };
   }
 
-  async getById(id: string): Promise<Listing | null> {
+  async getById(id: string): Promise<StoredListing | null> {
     const result = await this.withDeadline((abortSignal) =>
       this.client.send(new GetCommand({ TableName: this.tableName, Key: { id } }), {
         abortSignal,
       }),
     );
-    return result.Item === undefined ? null : fromListingItem(result.Item);
+    if (result.Item === undefined) return null;
+    return { listing: fromListingItem(result.Item), visibility: visibilityOf(result.Item) };
   }
 
   private async withDeadline<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {

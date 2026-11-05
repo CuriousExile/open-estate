@@ -22,6 +22,7 @@ const ENV = {
   LISTINGS_TABLE_NAME: 'listings',
   API_KEYS_TABLE_NAME: 'api-keys',
   RATE_LIMIT_COUNTERS_TABLE_NAME: 'rate-limit-counters',
+  AGENCIES_TABLE_NAME: 'agencies',
 };
 
 const SSM_VALUES: Record<string, string> = {
@@ -79,6 +80,9 @@ const hanging: Send = (_command, options) =>
     options?.abortSignal?.addEventListener('abort', () => reject(new Error('Request aborted')));
   });
 
+const isAgenciesQuery = (command: object): boolean =>
+  command instanceof QueryCommand && command.input.TableName === ENV['AGENCIES_TABLE_NAME'];
+
 async function setup(listingTable: Send) {
   const ssm = new SSMClient({ region: REGION });
   const s3 = new S3Client({ region: REGION });
@@ -98,16 +102,21 @@ async function setup(listingTable: Send) {
     if (body === undefined) throw Object.assign(new Error('NoSuchKey'), { name: 'NoSuchKey' });
     return { Body: { transformToString: async () => body } };
   });
-  // The counter update always succeeds; listing reads go to `listingTable`.
+  // The counter update always succeeds; no agency is suspended; listing reads go to
+  // `listingTable`.
   const send = jest
     .spyOn(dynamo, 'send')
     .mockImplementation(((command: object, options?: { abortSignal?: AbortSignal }) =>
-      command instanceof QueryCommand || command instanceof GetCommand
-        ? listingTable(command, options)
-        : Promise.resolve({})) as never);
+      isAgenciesQuery(command)
+        ? Promise.resolve({ Items: [] })
+        : command instanceof QueryCommand || command instanceof GetCommand
+          ? listingTable(command, options)
+          : Promise.resolve({})) as never);
 
   const handler = await initListingsHandler(ENV, { ssm, s3, dynamo });
-  const commands = () => send.mock.calls.map(([c]) => c.constructor.name);
+  // The suspended-agency lookup (cached 60 s) is covered by the core tests; omitted here.
+  const commands = () =>
+    send.mock.calls.filter(([c]) => !isAgenciesQuery(c)).map(([c]) => c.constructor.name);
   const writes = () =>
     send.mock.calls
       .map(([c]) => c as { constructor: { name: string }; input: { TableName?: string } })

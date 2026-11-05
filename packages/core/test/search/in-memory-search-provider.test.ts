@@ -52,10 +52,26 @@ describe('InMemorySearchProvider', () => {
     expect(items).toHaveLength(3);
   });
 
-  it('getById returns the listing or null', async () => {
+  it('getById returns the listing with its visibility or null', async () => {
     const provider = new InMemorySearchProvider([listing('a')]);
-    await expect(provider.getById('a')).resolves.toEqual(listing('a'));
+    await expect(provider.getById('a')).resolves.toEqual({
+      listing: listing('a'),
+      visibility: { status: 'ACTIVE' },
+    });
     await expect(provider.getById('missing')).resolves.toBeNull();
+  });
+
+  it('searches only ACTIVE listings and excludes suspended owners (Req 1.8, 1.9)', async () => {
+    const provider = new InMemorySearchProvider([listing('a')]);
+    provider.put(listing('b'), { status: 'INACTIVE' });
+    provider.put(listing('c'), { status: 'ACTIVE', agencyId: 'agency-1' });
+    provider.put(listing('d'), { status: 'ACTIVE', agencyId: 'agency-2' });
+    const ids = async (q: ResolvedQuery) => (await provider.search(q)).items.map((l) => l.id);
+    expect(await ids({})).toEqual(['a', 'c', 'd']);
+    expect(await ids({ excludeAgencies: ['agency-1'] })).toEqual(['a', 'd']);
+    await expect(provider.getById('b')).resolves.toMatchObject({
+      visibility: { status: 'INACTIVE' },
+    });
   });
 
   it('put replaces a listing with the same id', async () => {

@@ -17,6 +17,7 @@ const ENV = {
   LISTINGS_TABLE_NAME: 'listings',
   API_KEYS_TABLE_NAME: 'api-keys',
   RATE_LIMIT_COUNTERS_TABLE_NAME: 'rate-limit-counters',
+  AGENCIES_TABLE_NAME: 'agencies',
 };
 
 const SSM_VALUES: Record<string, string> = {
@@ -67,8 +68,9 @@ function setup(env: Record<string, string | undefined> = ENV, metrics?: Metrics)
     if (body === undefined) throw awsError('NoSuchKey');
     return { Body: { transformToString: async () => body } };
   });
-  const dynamoSend = jest.fn(async (command: { constructor: { name: string } }) =>
-    command.constructor.name === 'QueryCommand' ? { Items: [] } : {},
+  const dynamoSend = jest.fn(
+    async (command: { constructor: { name: string }; input: { TableName?: string } }) =>
+      command.constructor.name === 'QueryCommand' ? { Items: [] } : {},
   );
   const dynamo = { send: dynamoSend } as unknown as DynamoDBDocumentClient;
   const log = jest.spyOn(logger, 'error');
@@ -85,9 +87,10 @@ describe('createMcpHandlerFromEnv', () => {
 
     expect(res.statusCode).toBe(200);
     expect(JSON.parse(res.body).result.structuredContent).toEqual({ items: [] });
-    expect(dynamoSend.mock.calls.map(([c]) => c.constructor.name)).toEqual([
-      'UpdateCommand',
-      'QueryCommand',
+    expect(dynamoSend.mock.calls.map(([c]) => [c.constructor.name, c.input.TableName])).toEqual([
+      ['UpdateCommand', 'rate-limit-counters'],
+      ['QueryCommand', 'agencies'],
+      ['QueryCommand', 'listings'],
     ]);
   });
 

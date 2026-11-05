@@ -2,7 +2,9 @@ import {
   createListingService,
   createSearchService,
   InMemorySearchProvider,
+  type ResolvedQuery,
   type SearchServiceDeps,
+  type SuspendedAgencies,
 } from '@open-estate/core';
 import {
   assertValidTaxonomy,
@@ -254,5 +256,78 @@ describe('ListingService', () => {
       ok: false,
       error: [expect.objectContaining({ code: 'NOT_FOUND', details: { id: 'missing' } })],
     });
+  });
+});
+
+const suspendedOf = (...ids: string[]): SuspendedAgencies & { current: jest.Mock } => ({
+  current: jest.fn(async () => new Set(ids)),
+});
+
+describe('agency suspension and status (Req 1.8, 1.9, 6.4)', () => {
+  function provider() {
+    const p = new InMemorySearchProvider([exampleListing('plain')]);
+    p.put(exampleListing('own'), { status: 'ACTIVE', agencyId: 'agency-ok' });
+    p.put(exampleListing('susp'), { status: 'ACTIVE', agencyId: 'agency-x' });
+    p.put(exampleListing('off'), { status: 'INACTIVE', agencyId: 'agency-ok' });
+    return p;
+  }
+
+  it('search passes the sorted suspended set as excludeAgencies and hides those listings', async () => {
+    const p = provider();
+    const search = jest.spyOn(p, 'search');
+    const svc = createSearchService({
+      provider: p,
+      taxonomy,
+      tourProviders: matterport,
+      defaultCurrency: 'EUR',
+      suspendedAgencies: suspendedOf('agency-z', 'agency-x'),
+    });
+    const result = await svc.search(query(), []);
+    expect(result.ok && result.value.items.map((l) => l.id)).toEqual(['own', 'plain']);
+    expect((search.mock.calls[0]?.[0] as ResolvedQuery).excludeAgencies).toEqual([
+      'agency-x',
+      'agency-z',
+    ]);
+  });
+
+  it('search omits excludeAgencies when no agency is suspended', async () => {
+    const p = provider();
+    const search = jest.spyOn(p, 'search');
+    const svc = createSearchService({
+      provider: p,
+      taxonomy,
+      tourProviders: matterport,
+      defaultCurrency: 'EUR',
+    });
+    await svc.search(query(), []);
+    expect(search.mock.calls[0]?.[0]).not.toHaveProperty('excludeAgencies');
+  });
+
+  it('detail answers inactive and suspended listings exactly like unknown ids', async () => {
+    const suspendedAgencies = suspendedOf('agency-x');
+    const svc = createListingService({ provider: provider(), taxonomy, suspendedAgencies });
+    const notFound = async (id: string) => {
+      const unknown = await svc.get(`${id}-unknown`, []);
+      const actual = await svc.get(id, []);
+      // Same shape and code; only the echoed id differs.
+      expect(JSON.stringify(actual).replaceAll(id, '#')).toBe(
+        JSON.stringify(unknown).replaceAll(`${id}-unknown`, '#'),
+      );
+      expect(actual).toMatchObject({ ok: false, error: [{ code: 'NOT_FOUND' }] });
+    };
+    await notFound('off');
+    await notFound('susp');
+    await expect(svc.get('own', [])).resolves.toMatchObject({ ok: true, value: { id: 'own' } });
+    await expect(svc.get('plain', [])).resolves.toMatchObject({ ok: true });
+  });
+
+  it('detail loads the suspended set only for listings with agency', async () => {
+    const suspendedAgencies = suspendedOf();
+    const svc = createListingService({ provider: provider(), taxonomy, suspendedAgencies });
+    await svc.get('plain', []);
+    await svc.get('missing', []);
+    expect(suspendedAgencies.current).not.toHaveBeenCalled();
+    await svc.get('own', []);
+    expect(suspendedAgencies.current).toHaveBeenCalledTimes(1);
   });
 });

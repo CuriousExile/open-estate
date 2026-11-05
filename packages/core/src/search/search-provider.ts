@@ -1,4 +1,5 @@
 import type { Cursor, Listing, OfferType } from '@open-estate/shared';
+import type { ListingVisibility } from './listings-table';
 import type { SearchDocument } from './search-document';
 
 // SearchProvider contract (design: "Domänenkern", "Indexierungs-Strategie und Ordnung").
@@ -45,6 +46,11 @@ export type ResolvedQuery = OfferCondition & {
   listingTypes?: readonly string[];
   /** `hasTour=true`: at least one tour host must be in this lowercase set (Req 16.9). */
   tourHosts?: readonly string[];
+  /**
+   * Suspended agencies (non-empty when set): listings owned by one of them are excluded; listings
+   * without agency are unaffected (Req 1.9, design: "Öffentliche Sichtbarkeit").
+   */
+  excludeAgencies?: readonly string[];
   /** 1–50; defaults to 20 when omitted (Req 1.5, 1.6). */
   pageSize?: number;
   /** Exclusive start: only ids greater than this (`lastId` of the decoded cursor, Req 1.7). */
@@ -61,9 +67,20 @@ export interface SearchResult {
   next?: NextPage;
 }
 
+/**
+ * A stored listing with the management data that decides its public visibility. Listings without
+ * management data (seeded, legacy imports) are `ACTIVE` without agency.
+ */
+export interface StoredListing {
+  listing: Listing;
+  visibility: ListingVisibility;
+}
+
 export interface SearchProvider {
+  /** Only `ACTIVE` listings are searched; `excludeAgencies` removes suspended owners. */
   search(q: ResolvedQuery): Promise<SearchResult>;
-  getById(id: string): Promise<Listing | null>;
+  /** The stored listing regardless of visibility; the ListingService applies `isPublic`. */
+  getById(id: string): Promise<StoredListing | null>;
 }
 
 /**
@@ -123,7 +140,7 @@ function offerMatches(doc: SearchDocument, q: ResolvedQuery): boolean {
   return currency === q.price.currency && inRange(amount, q.price);
 }
 
-/** Reference predicate: does `doc` satisfy every condition of `q`? (Req 1.1–1.4, 12.6–12.9, 16.9) */
+/** Reference predicate: does `doc` satisfy every condition of `q`? (Req 1.1–1.4, 1.9, 12.6–12.9, 16.9) */
 export function matchesQuery(doc: SearchDocument, q: ResolvedQuery): boolean {
   return (
     offerMatches(doc, q) &&
@@ -132,7 +149,10 @@ export function matchesQuery(doc: SearchDocument, q: ResolvedQuery): boolean {
     (q.cityNorm === undefined || doc.cityNorm === q.cityNorm) &&
     (q.postalCode === undefined || doc.postalCode === q.postalCode) &&
     (q.listingTypes === undefined || q.listingTypes.includes(doc.listingType)) &&
-    (q.tourHosts === undefined || doc.tourHosts.some((h) => q.tourHosts?.includes(h)))
+    (q.tourHosts === undefined || doc.tourHosts.some((h) => q.tourHosts?.includes(h))) &&
+    (q.excludeAgencies === undefined ||
+      doc.agencyId === undefined ||
+      !q.excludeAgencies.includes(doc.agencyId))
   );
 }
 

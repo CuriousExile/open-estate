@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import {
   DEFAULT_PAGE_SIZE,
+  DYNAMODB_IN_OPERAND_LIMIT,
   DYNAMODB_REQUEST_DEADLINE_MS,
   DynamoDbSearchProvider,
   fromListingItem,
@@ -11,6 +12,7 @@ import {
   ServiceUnavailableError,
   toListingItem,
   toSearchDocument,
+  visibilityOf,
   type DynamoDbSearchProviderOptions,
 } from '@open-estate/core';
 import type { Listing } from '@open-estate/shared';
@@ -145,6 +147,19 @@ describe('DynamoDbSearchProvider.search', () => {
     ]);
   });
 
+  it('excludes suspended agencies with NOT IN, split into chunks of 100 operands (Req 1.9)', async () => {
+    const { provider, inputs } = setup(queryPages([[]]));
+    const agencies = Array.from({ length: DYNAMODB_IN_OPERAND_LIMIT + 1 }, (_, i) => `a-${i}`);
+    await provider.search({ excludeAgencies: agencies });
+    const [input] = inputs();
+    const first = agencies.slice(0, DYNAMODB_IN_OPERAND_LIMIT).map((_, i) => `:v${i + 1}`);
+    expect(input?.FilterExpression).toBe(
+      `NOT (#agencyId IN (${first.join(', ')})) AND NOT (#agencyId IN (:v101))`,
+    );
+    expect(input?.ExpressionAttributeNames).toMatchObject({ '#agencyId': 'agencyId' });
+    expect(input?.ExpressionAttributeValues?.[':v101']).toBe('a-100');
+  });
+
   it('keeps reading DynamoDB pages until pageSize + 1 matches and reports next', async () => {
     const data = listings(10).reverse(); // ascending ids, as the GSI returns them
     const pages = [data.slice(0, 2), [], data.slice(2, 4), data.slice(4, 7), data.slice(7)];
@@ -192,12 +207,26 @@ describe('DynamoDbSearchProvider.search', () => {
 describe('DynamoDbSearchProvider.getById', () => {
   it('issues a GetCommand, strips search fields and maps a missing item to null', async () => {
     const { provider, send } = setup(queryPages([[listing('a')]]));
-    await expect(provider.getById('a')).resolves.toEqual(listing('a'));
+    await expect(provider.getById('a')).resolves.toEqual({
+      listing: listing('a'),
+      visibility: { status: 'ACTIVE' },
+    });
     await expect(provider.getById('missing')).resolves.toBeNull();
     expect((send.mock.calls[0]?.[0] as GetCommand).input).toEqual({
       TableName: TABLE,
       Key: { id: 'a' },
     });
+  });
+});
+
+describe('visibilityOf', () => {
+  it('reads status and agency; unmanaged items without status are ACTIVE', () => {
+    expect(visibilityOf({ id: 'a' })).toEqual({ status: 'ACTIVE' });
+    expect(visibilityOf({ id: 'a', status: 'INACTIVE', agencyId: 'agency-1' })).toEqual({
+      status: 'INACTIVE',
+      agencyId: 'agency-1',
+    });
+    expect(() => visibilityOf({ id: 'a', status: 'DELETED' })).toThrow();
   });
 });
 
