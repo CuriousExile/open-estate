@@ -1,27 +1,22 @@
 import type { Routes } from '@angular/router';
-import { PortalPlaceholderComponent } from '../portal-placeholder.component';
+import { ListingFormComponent } from './listing-form.component';
+import { ListingTableComponent } from './listing-table.component';
 
 /**
- * `/portal/listings` (Req 5.2–5.5): overview and form — task 14.3 replaces the placeholders with
- * `ListingTableComponent` and `ListingFormComponent`. `:id` is the workspace (own folder, 14.4).
- * Inherits `access: listing:read` from the parent route.
+ * `/portal/listings` (Req 5.2–5.5): overview and create/edit form. `:id` is the workspace (own
+ * folder, 14.4). Inherits `access: listing:read` from the parent route.
  */
 export const LISTINGS_ROUTES: Routes = [
-  {
-    path: '',
-    pathMatch: 'full',
-    component: PortalPlaceholderComponent,
-    data: { titleKey: 'portal.listings.title' },
-  },
+  { path: '', pathMatch: 'full', component: ListingTableComponent },
   {
     path: 'new',
-    component: PortalPlaceholderComponent,
-    data: { titleKey: 'portal.listings.new', access: { permissions: ['listing:write'] } },
+    component: ListingFormComponent,
+    data: { access: { permissions: ['listing:write'] } },
   },
   {
     path: ':id/edit',
-    component: PortalPlaceholderComponent,
-    data: { titleKey: 'portal.listings.edit', access: { permissions: ['listing:write'] } },
+    component: ListingFormComponent,
+    data: { access: { permissions: ['listing:write'] } },
   },
   {
     path: ':id',
