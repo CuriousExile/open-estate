@@ -1,4 +1,5 @@
 import type { ConnectorRunView, RunRejectionView } from '@open-estate/shared';
+import type { ConnectorRunWriter } from './connector-run-store';
 import {
   encodeKeyCursor,
   decodeKeyCursor,
@@ -8,8 +9,8 @@ import {
 } from './key-page';
 
 // Read side of `ConnectorRuns` / `RunRejections` (design: "DynamoDB-Tabellen", Req 13.2, 13.3,
-// 14.3). The persisting `RunLogger` (task 6.7) writes both tables and implements this interface
-// against them; monitoring only reads through it.
+// 14.3). The persisting `RunLogger` writes both tables through `ConnectorRunWriter`;
+// `DynamoDbConnectorRunStore` (connector-run-store.ts) implements reader and writer.
 
 /** Ergebnisstatus of a failed Connector_Lauf (the ingestion `RunStatus`). */
 export const CONNECTOR_RUN_FAILURE_STATUS = 'FAILURE';
@@ -91,10 +92,16 @@ export const matchesConnectorRunFilter = (
   Date.parse(run.startedAt) <= Date.parse(filter.to) &&
   (filter.problemsOnly !== true || isProblemRun(run));
 
-/** Fake for tests and local runs; also usable as write side by the 6.7 decorator tests. */
-export class InMemoryConnectorRunStore implements ConnectorRunReader {
+/** Fake for tests and local runs; also the write side of the persisting `RunLogger` in tests. */
+export class InMemoryConnectorRunStore implements ConnectorRunReader, ConnectorRunWriter {
   private readonly runs = new Map<string, ConnectorRunView>();
   private readonly rejected = new Map<string, RunRejectionView[]>();
+
+  async record(run: ConnectorRunView, rejections: readonly RunRejectionView[]): Promise<void> {
+    this.putRun(run);
+    this.rejected.set(run.runId, []);
+    rejections.forEach((rejection) => this.addRejection(run.runId, rejection));
+  }
 
   /** Stores or replaces the summary of a run. */
   putRun(run: ConnectorRunView): void {

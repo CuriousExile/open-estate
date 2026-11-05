@@ -63,6 +63,7 @@ export * from './management/listing-query-service';
 export * from './management/version-service';
 export * from './management/monitoring-service';
 export * from './management/connector-run-reader';
+export * from './management/connector-run-store';
 export * from './management/metric-resolvers';
 export * from './management/monitoring-queries';
 export * from './admin-operations/admin-audit-log';

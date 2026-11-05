@@ -46,8 +46,15 @@ export interface RunLogger {
   runSkipped(reason: string): void;
   /** Connector configuration refused before `initialize` (Req 5.4). */
   configRejected(issues: readonly FieldIssue[]): void;
-  /** Listing refused by the pipeline; lists every affected field. */
-  recordRejected(listingId: string | undefined, issues: readonly FieldIssue[]): void;
+  /**
+   * Listing refused by the pipeline; lists every affected field. `customId` only if it is valid
+   * (an identifier, never a field value).
+   */
+  recordRejected(
+    listingId: string | undefined,
+    issues: readonly FieldIssue[],
+    customId?: string,
+  ): void;
   /** PII field removed by the allow-list filter; the value is never passed in. */
   piiFieldDropped(listingId: string, field: string): void;
   /**
@@ -121,9 +128,10 @@ export function createRunLogger({
       }),
     runSkipped: (reason) => write('info', 'run.skipped', { reason: clip(reason) }),
     configRejected: (issues) => write('error', 'config.rejected', { issues: issuesOf(issues) }),
-    recordRejected: (listingId, issues) =>
+    recordRejected: (listingId, issues, customId) =>
       write('warn', 'record.rejected', {
         ...(listingId === undefined ? {} : { listingId: clip(listingId) }),
+        ...(customId === undefined ? {} : { customId: clip(customId) }),
         issues: issuesOf(issues),
       }),
     piiFieldDropped: (listingId, field) =>

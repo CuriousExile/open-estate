@@ -144,7 +144,7 @@ export class ImportPipeline implements RecordProcessor {
     const mapped = mapRecord(raw);
     const identity = parseIdentity(mapped);
     if (!identity.ok) {
-      logger.recordRejected(identity.listingId, identity.issues);
+      reject(logger, identity.listingId, identity.issues, identity.customId);
       return 'rejected';
     }
 
@@ -154,7 +154,12 @@ export class ImportPipeline implements RecordProcessor {
       result.notes.forEach((note) => note(logger));
       return result.outcome;
     }
-    logger.recordRejected(identity.value.id, [{ field: 'id', reason: CONCURRENT_CHANGE_REASON }]);
+    reject(
+      logger,
+      identity.value.id,
+      [{ field: 'id', reason: CONCURRENT_CHANGE_REASON }],
+      identity.value.customId,
+    );
     return 'rejected';
   }
 
@@ -172,10 +177,11 @@ export class ImportPipeline implements RecordProcessor {
     const target = await resolveImportTarget(identity, connector, this.reader, this.newId);
     if (target.kind === 'reject') {
       const issue = { field: TARGET_REJECTION_FIELD[target.code], reason: target.reason };
-      return rejected(target.listingId, [issue], []);
+      return rejected(target.listingId, [issue], [], identity.customId);
     }
     const listingId = target.kind === 'create' ? target.id : target.listing.listing.id;
     const existing = target.kind === 'update' ? target.listing : undefined;
+    const customId = identity.customId ?? existing?.management.customId;
     const notes: Note[] = [];
 
     // 3. PII filter and media/tour cleanup on the delivered fields.
@@ -203,7 +209,7 @@ export class ImportPipeline implements RecordProcessor {
     // 6. Status: delivered only for a new listing (Req 6.7, 12.5, 12.10).
     const status = statusOf(target, mapped['status']);
     const issues = [...(prepared.ok ? [] : prepared.issues), ...(status.ok ? [] : [status.issue])];
-    if (!prepared.ok || !status.ok) return rejected(listingId, issues, notes);
+    if (!prepared.ok || !status.ok) return rejected(listingId, issues, notes, customId);
 
     // 7. Versioned write.
     const result = await this.writer.write({
@@ -212,7 +218,7 @@ export class ImportPipeline implements RecordProcessor {
       next: {
         content: prepared.content,
         status: status.value,
-        ...optional('customId', identity.customId ?? existing?.management.customId),
+        ...optional('customId', customId),
         ...optional('agencyId', agencyOf(target, ctx.agencyId)),
       },
       changeType: 'IMPORT',
@@ -220,7 +226,7 @@ export class ImportPipeline implements RecordProcessor {
       actor: { kind: 'connector', connectorId: ctx.source, runId: ctx.runId },
     });
     if (result.ok) return { outcome: OUTCOMES[result.value.outcome], notes };
-    return conflictOutcome(result.error, listingId, notes);
+    return conflictOutcome(result.error, listingId, notes, customId);
   }
 
   /**
@@ -255,7 +261,8 @@ function mapRecord(raw: RawRecord): Candidate {
 }
 
 type ParsedIdentity =
-  { ok: true; value: ImportIdentity } | { ok: false; listingId?: string; issues: FieldIssue[] };
+  | { ok: true; value: ImportIdentity }
+  | { ok: false; listingId?: string; customId?: string; issues: FieldIssue[] };
 
 /** Delivered `id`/`customId` must be valid to resolve the target; absent ones are fine. */
 function parseIdentity(mapped: Candidate): ParsedIdentity {
@@ -270,7 +277,9 @@ function parseIdentity(mapped: Candidate): ParsedIdentity {
   };
   const id = parse('id', ListingId);
   const customId = parse('customId', CustomId);
-  if (issues.length > 0) return { ok: false, ...optional('listingId', id), issues };
+  if (issues.length > 0) {
+    return { ok: false, ...optional('listingId', id), ...optional('customId', customId), issues };
+  }
   return { ok: true, value: { ...optional('id', id), ...optional('customId', customId) } };
 }
 
@@ -297,13 +306,18 @@ function agencyOf(target: ImportTarget, connectorAgency: string | undefined): st
   return connectorAgency;
 }
 
-function conflictOutcome(conflict: WriteConflict, listingId: string, notes: Note[]): Attempt {
+function conflictOutcome(
+  conflict: WriteConflict,
+  listingId: string,
+  notes: Note[],
+  customId: string | undefined,
+): Attempt {
   switch (conflict.code) {
     case 'VERSION_CONFLICT':
     case 'NOT_FOUND':
       return 'retry';
     case 'DELETION_BLOCKED':
-      return rejected(listingId, [{ field: 'id', reason: DELETION_BLOCK_REASON }], notes);
+      return rejected(listingId, [{ field: 'id', reason: DELETION_BLOCK_REASON }], notes, customId);
     case 'CUSTOM_ID_TAKEN':
       return rejected(
         listingId,
@@ -317,11 +331,23 @@ function rejected(
   listingId: string | undefined,
   issues: readonly FieldIssue[],
   notes: readonly Note[],
+  customId?: string,
 ): Attempt {
   return {
     outcome: 'rejected',
-    notes: [...notes, (logger) => logger.recordRejected(listingId, issues)],
+    notes: [...notes, (logger) => reject(logger, listingId, issues, customId)],
   };
+}
+
+/** Logs a rejection; the Custom_Id only if valid (identifier, never a field value, Req 13.3). */
+function reject(
+  logger: RunLogger,
+  listingId: string | undefined,
+  issues: readonly FieldIssue[],
+  customId: string | undefined,
+): void {
+  if (customId === undefined) logger.recordRejected(listingId, issues);
+  else logger.recordRejected(listingId, issues, customId);
 }
 
 interface Drops {

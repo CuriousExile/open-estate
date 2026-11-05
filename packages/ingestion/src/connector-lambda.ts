@@ -6,6 +6,7 @@ import {
   CONFIG_BUCKET_ENV,
   ConfigError,
   describeInitFailure,
+  DynamoDbConnectorRunStore,
   DynamoDbDeletionBlocklistCheck,
   DynamoDbListingKeyStore,
   DynamoDbListingVersionStore,
@@ -54,6 +55,9 @@ export const CONNECTOR_LAMBDA_ENV = {
   listingVersionsTable: 'LISTING_VERSIONS_TABLE_NAME',
   listingKeysTable: 'LISTING_KEYS_TABLE_NAME',
   metricCountersTable: 'METRIC_COUNTERS_TABLE_NAME',
+  /** `ConnectorRuns` and `RunRejections` of the persisting run log (Req 13.2, 13.3). */
+  connectorRunsTable: 'CONNECTOR_RUNS_TABLE_NAME',
+  runRejectionsTable: 'RUN_REJECTIONS_TABLE_NAME',
   /** `VersionSnapshots` bucket of the `VersionedListingWriter`. */
   snapshotBucket: 'SNAPSHOT_BUCKET_NAME',
   configBucket: CONFIG_BUCKET_ENV,
@@ -148,6 +152,8 @@ export async function initConnectorHandler(
     names.listingVersionsTable,
     names.listingKeysTable,
     names.metricCountersTable,
+    names.connectorRunsTable,
+    names.runRejectionsTable,
     names.snapshotBucket,
   ]);
   const files = CONNECTOR_CONFIG_FILES;
@@ -201,6 +207,11 @@ export async function initConnectorHandler(
   const framework = new ConnectorFramework({
     registry,
     processor: pipeline,
+    runs: new DynamoDbConnectorRunStore({
+      client: dynamo,
+      runsTableName: env[names.connectorRunsTable] ?? '',
+      rejectionsTableName: env[names.runRejectionsTable] ?? '',
+    }),
     ...(sources.sink && { sink: sources.sink }),
     ...(sources.now && { now: sources.now }),
   });

@@ -46,6 +46,8 @@ function synth(withVersioning: boolean) {
     listingVersions: table('ListingVersions', 'listingId'),
     listingKeys: table('ListingKeys', 'key'),
     metricCounters: table('MetricCounters', 'scope'),
+    connectorRuns: table('ConnectorRuns', 'connectorId'),
+    runRejections: table('RunRejections', 'runId'),
     snapshotBucket: new Bucket(management, 'VersionSnapshots', {
       encryption: BucketEncryption.KMS,
       encryptionKey: new Key(management, 'SnapshotKey'),
@@ -93,9 +95,17 @@ describe('IngestionStack versioned write path (task 12.3)', () => {
       CONNECTOR_LAMBDA_ENV.listingKeysTable,
       CONNECTOR_LAMBDA_ENV.metricCountersTable,
       CONNECTOR_LAMBDA_ENV.snapshotBucket,
+      CONNECTOR_LAMBDA_ENV.connectorRunsTable,
+      CONNECTOR_LAMBDA_ENV.runRejectionsTable,
     ]) {
       expect(variables[name]).toBeDefined();
     }
+    expect(JSON.stringify(variables[CONNECTOR_LAMBDA_ENV.connectorRunsTable])).toMatch(
+      /ConnectorRuns/,
+    );
+    expect(JSON.stringify(variables[CONNECTOR_LAMBDA_ENV.runRejectionsTable])).toMatch(
+      /RunRejections/,
+    );
     expect(JSON.stringify(variables[CONNECTOR_LAMBDA_ENV.listingVersionsTable])).toMatch(
       /ListingVersions/,
     );
@@ -128,6 +138,12 @@ describe('IngestionStack versioned write path (task 12.3)', () => {
     ]);
   });
 
+  it('may only put run summaries and rejections (no read, update or delete)', () => {
+    for (const table of ['GetAttConnectorRuns', 'GetAttRunRejections']) {
+      expect(actionsOn(statements, table)).toEqual(['dynamodb:BatchWriteItem', 'dynamodb:PutItem']);
+    }
+  });
+
   it('may only put snapshots under listings/, never delete them', () => {
     const snapshot = statements.filter((s) =>
       JSON.stringify(s.Resource).includes('VersionSnapshots'),
@@ -154,6 +170,8 @@ describe('IngestionStack without the versioning stores', () => {
     const { statements, variables } = synth(false);
     expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.listingVersionsTable);
     expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.snapshotBucket);
+    expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.connectorRunsTable);
+    expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.runRejectionsTable);
     expect(actionsOn(statements, 'GetAttListings')).toEqual(['dynamodb:PutItem']);
   });
 });

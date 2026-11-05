@@ -7,6 +7,7 @@ export * from './pipeline';
 export * from './record-processor';
 export * from './registry';
 export * from './run-logger';
+export * from './persistent-run-logger';
 export * from './compliance';
 export * from './crawler';
 export * from './connectors';

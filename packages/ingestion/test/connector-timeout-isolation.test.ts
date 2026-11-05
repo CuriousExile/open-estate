@@ -121,6 +121,8 @@ async function connectorLambda(connectorId: string, lines: string[]): Promise<Co
       [CONNECTOR_LAMBDA_ENV.listingVersionsTable]: 'ListingVersions',
       [CONNECTOR_LAMBDA_ENV.listingKeysTable]: 'ListingKeys',
       [CONNECTOR_LAMBDA_ENV.metricCountersTable]: 'MetricCounters',
+      [CONNECTOR_LAMBDA_ENV.connectorRunsTable]: 'ConnectorRuns',
+      [CONNECTOR_LAMBDA_ENV.runRejectionsTable]: 'RunRejections',
       [CONNECTOR_LAMBDA_ENV.snapshotBucket]: 'version-snapshots',
       [CONNECTOR_LAMBDA_ENV.configBucket]: 'config-bucket',
       [CONNECTOR_LAMBDA_ENV.connectorId]: connectorId,

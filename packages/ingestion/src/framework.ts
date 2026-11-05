@@ -1,13 +1,16 @@
-import { resolveImportMode } from '@open-estate/shared';
+import type { ConnectorRunWriter } from '@open-estate/core';
+import { CustomId, resolveImportMode } from '@open-estate/shared';
 import type { z } from 'zod';
 import type { ConnectorContext, RawRecord } from './connector';
 import type { ConnectorConfig } from './connector-config';
+import { withRunPersistence, type PersistentRunLogger } from './persistent-run-logger';
 import type { RecordOutcome, RecordProcessingContext, RecordProcessor } from './record-processor';
 import type { ConnectorRegistry } from './registry';
 import {
   createRunLogger,
   type FieldIssue,
   type LogSink,
+  type RunLogger,
   type RunStatus,
   type RunSummary,
 } from './run-logger';
@@ -32,6 +35,8 @@ export interface ConnectorFrameworkOptions {
   readonly processor: RecordProcessor;
   /** Log destination; defaults to stdout. */
   readonly sink?: LogSink;
+  /** Persists run summaries and rejections (`ConnectorRuns`/`RunRejections`, Req 13.2, 13.3). */
+  readonly runs?: ConnectorRunWriter;
   readonly now?: () => Date;
 }
 
@@ -50,28 +55,46 @@ export class ConnectorFramework {
   private readonly registry: ConnectorRegistry;
   private readonly processor: RecordProcessor;
   private readonly sink: LogSink | undefined;
+  private readonly runs: ConnectorRunWriter | undefined;
   private readonly now: () => Date;
 
-  constructor({ registry, processor, sink, now = () => new Date() }: ConnectorFrameworkOptions) {
+  constructor({
+    registry,
+    processor,
+    sink,
+    runs,
+    now = () => new Date(),
+  }: ConnectorFrameworkOptions) {
     this.registry = registry;
     this.processor = processor;
     this.sink = sink;
+    this.runs = runs;
     this.now = now;
   }
 
   async runConnector(config: ConnectorConfig, { runId }: RunOptions): Promise<ConnectorRunSummary> {
     const source = config.id;
-    const logger = createRunLogger({
+    const baseLogger = createRunLogger({
       runId,
       source,
       now: this.now,
       ...(this.sink ? { sink: this.sink } : {}),
     });
+    // Persisting decorator: summary and rejections to `ConnectorRuns`/`RunRejections`.
+    const persistent: PersistentRunLogger | undefined =
+      this.runs === undefined
+        ? undefined
+        : withRunPersistence(baseLogger, {
+            writer: this.runs,
+            ...(config.agencyId !== undefined && { agencyId: config.agencyId }),
+          });
+    const logger: RunLogger = persistent ?? baseLogger;
     const startedAt = this.now();
     const counters = { imported: 0, updated: 0, unchanged: 0, rejected: 0 };
-    const finish = (outcome: RunOutcome, status: RunStatus): ConnectorRunSummary => {
+    const finish = async (outcome: RunOutcome, status: RunStatus): Promise<ConnectorRunSummary> => {
       const summary = { status, startedAt, endedAt: this.now(), ...counters };
       if (outcome !== 'DISABLED') logger.runFinished(summary);
+      await persistent?.flush();
       return { ...summary, runId, source, outcome };
     };
 
@@ -134,9 +157,11 @@ export class ConnectorFramework {
       return await this.processor.process(raw, ctx);
     } catch (error) {
       const id = raw['id'];
-      ctx.logger.recordRejected(typeof id === 'string' ? id : undefined, [
-        { field: 'record', reason: `processing failed: ${describe(error)}` },
-      ]);
+      const customId = CustomId.safeParse(raw['customId']);
+      const issues = [{ field: 'record', reason: `processing failed: ${describe(error)}` }];
+      const listingId = typeof id === 'string' ? id : undefined;
+      if (customId.success) ctx.logger.recordRejected(listingId, issues, customId.data);
+      else ctx.logger.recordRejected(listingId, issues);
       return 'rejected';
     }
   }

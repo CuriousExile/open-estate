@@ -1,6 +1,6 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
-import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { BatchWriteCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
 import { ConfigError } from '@open-estate/core';
 import {
   CONNECTOR_LAMBDA_ENV,
@@ -18,6 +18,8 @@ const ENV = {
   [CONNECTOR_LAMBDA_ENV.listingVersionsTable]: 'ListingVersions',
   [CONNECTOR_LAMBDA_ENV.listingKeysTable]: 'ListingKeys',
   [CONNECTOR_LAMBDA_ENV.metricCountersTable]: 'MetricCounters',
+  [CONNECTOR_LAMBDA_ENV.connectorRunsTable]: 'ConnectorRuns',
+  [CONNECTOR_LAMBDA_ENV.runRejectionsTable]: 'RunRejections',
   [CONNECTOR_LAMBDA_ENV.snapshotBucket]: 'version-snapshots',
   [CONNECTOR_LAMBDA_ENV.configBucket]: 'config-bucket',
 };
@@ -75,7 +77,20 @@ describe('connector Lambda', () => {
       imported: 0,
       startedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/),
     });
-    expect(writes).not.toHaveBeenCalled();
+    // Only the run log is written: summary and run marker, no listing (Req 13.2).
+    expect(writes).toHaveBeenCalledTimes(1);
+    const [batch] = writes.mock.calls[0] as unknown as [BatchWriteCommand];
+    expect(batch).toBeInstanceOf(BatchWriteCommand);
+    expect(Object.keys(batch.input.RequestItems ?? {}).sort()).toEqual([
+      'ConnectorRuns',
+      'RunRejections',
+    ]);
+    expect(batch.input.RequestItems?.['ConnectorRuns']?.[0]?.PutRequest?.Item).toMatchObject({
+      connectorId: 'partner-site',
+      runId: 'exec-1',
+      status: 'SUCCESS',
+      unchanged: 0,
+    });
     expect(lines.map((l) => (JSON.parse(l) as { event: string }).event)).toContain('crawl.checked');
     expect(keys()).toEqual([
       'connectors.json',
@@ -111,6 +126,8 @@ describe('connector Lambda', () => {
         CONNECTOR_LAMBDA_ENV.listingVersionsTable,
         CONNECTOR_LAMBDA_ENV.listingKeysTable,
         CONNECTOR_LAMBDA_ENV.metricCountersTable,
+        CONNECTOR_LAMBDA_ENV.connectorRunsTable,
+        CONNECTOR_LAMBDA_ENV.runRejectionsTable,
         CONNECTOR_LAMBDA_ENV.snapshotBucket,
       ],
     });

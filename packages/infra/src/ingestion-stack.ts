@@ -60,6 +60,9 @@ export interface ConnectorVersioningResources {
   readonly listingKeys: ITableV2;
   readonly metricCounters: ITableV2;
   readonly snapshotBucket: IBucket;
+  /** Run summaries and rejections of the persisting run log (Req 13.2, 13.3). */
+  readonly connectorRuns: ITableV2;
+  readonly runRejections: ITableV2;
 }
 
 export interface IngestionStackProps extends StackProps {
@@ -288,6 +291,8 @@ function versioningEnvironment(
     [CONNECTOR_LAMBDA_ENV.listingKeysTable]: versioning.listingKeys.tableName,
     [CONNECTOR_LAMBDA_ENV.metricCountersTable]: versioning.metricCounters.tableName,
     [CONNECTOR_LAMBDA_ENV.snapshotBucket]: versioning.snapshotBucket.bucketName,
+    [CONNECTOR_LAMBDA_ENV.connectorRunsTable]: versioning.connectorRuns.tableName,
+    [CONNECTOR_LAMBDA_ENV.runRejectionsTable]: versioning.runRejections.tableName,
   };
 }
 
@@ -298,6 +303,8 @@ function versioningEnvironment(
  * `ListingKeys`, the `ADD` on `MetricCounters` and `PutObject` of the snapshots (with
  * `kms:GenerateDataKey` if the bucket uses a key). The Custom_Id blocklist check (`custom#…`) uses
  * the `DeletionBlocklist` grant of {@link grantConnectorRun}. No `DeleteObject`, no `Scan`.
+ * The run log writes `ConnectorRuns` and `RunRejections` with `BatchWriteItem` (puts only): no
+ * read, update or delete, so a connector cannot alter recorded runs.
  */
 function grantVersionedWrite(
   fn: NodejsFunction,
@@ -329,4 +336,10 @@ function grantVersionedWrite(
     }),
   );
   versioning.snapshotBucket.grantPut(fn, snapshotKey('*', '*'));
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:PutItem', 'dynamodb:BatchWriteItem'],
+      resources: [versioning.connectorRuns.tableArn, versioning.runRejections.tableArn],
+    }),
+  );
 }
