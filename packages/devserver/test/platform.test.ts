@@ -118,6 +118,27 @@ describe('local demo platform', () => {
     expect(new Set(sources)).toEqual(new Set(['IMPORT', 'PORTAL']));
   });
 
+  it('serves /locations of the public listings, incl. the Thai demo listings', async () => {
+    const res = await platform.handlers.search(request('GET', '/api/locations'));
+    expect(res.statusCode).toBe(200);
+    const doc = JSON.parse(res.body) as {
+      countries: { code: string; count: number }[];
+      cities: { name: string; country: string; count: number }[];
+    };
+    const { items } = await search();
+    expect(doc.countries.reduce((sum, c) => sum + c.count, 0)).toBe(items.length);
+    expect(doc.countries.map((c) => c.code)).toEqual(expect.arrayContaining(['DE', 'TH']));
+    expect(doc.cities).toEqual(
+      expect.arrayContaining([
+        { name: 'Bangkok', country: 'TH', count: 1 },
+        { name: 'Pattaya', country: 'TH', count: 1 },
+      ]),
+    );
+    const thai = await search('&country=TH');
+    expect(thai.items).toHaveLength(2);
+    expect(thai.items.every((item) => item.title.startsWith('[DEMO]'))).toBe(true);
+  });
+
   it('serves the OpenAPI document of the Management_API publicly', async () => {
     const res = await platform.handlers.management(request('GET', '/management/openapi.json'));
     expect(res.statusCode).toBe(200);

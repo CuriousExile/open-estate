@@ -54,6 +54,46 @@ export const SEED_USERS: readonly SeedUser[] = Object.values(USERS);
 /** Listing_Inhalt as the Management_API accepts it (amounts and area as decimal strings). */
 export type ContentInput = Record<string, unknown>;
 
+/** `[DEMO]` title prefix and localized description marker, so demo data is unmistakable. */
+export const DEMO_TITLE_PREFIX = '[DEMO]';
+const DEMO_MARKER_DE = 'DEMO-Beispieldaten –';
+const DEMO_MARKER_EN = 'DEMO sample data –';
+
+const demoTitle = (value: unknown): unknown =>
+  typeof value === 'string' && !value.startsWith(DEMO_TITLE_PREFIX)
+    ? `${DEMO_TITLE_PREFIX} ${value}`
+    : value;
+const demoDescription = (value: unknown, locale: unknown): unknown => {
+  if (typeof value !== 'string') return value;
+  if (value.startsWith(DEMO_MARKER_DE) || value.startsWith(DEMO_MARKER_EN)) return value;
+  const marker =
+    typeof locale === 'string' && locale.toLowerCase().startsWith('de')
+      ? DEMO_MARKER_DE
+      : DEMO_MARKER_EN;
+  return `${marker} ${value}`;
+};
+
+/**
+ * Stamps listing content (and every translation) as demo data: `[DEMO]` title prefix and a
+ * localized marker in front of each description. Idempotent, so re-applying changes nothing.
+ * Applied centrally while seeding, so any entry added here or to the CRM feed is marked.
+ */
+export function markDemoContent(content: ContentInput): ContentInput {
+  const translations = Array.isArray(content['translations'])
+    ? (content['translations'] as Record<string, unknown>[]).map((t) => ({
+        ...t,
+        title: demoTitle(t['title']),
+        description: demoDescription(t['description'], t['locale']),
+      }))
+    : content['translations'];
+  return {
+    ...content,
+    title: demoTitle(content['title']),
+    description: demoDescription(content['description'], content['originalLocale']),
+    ...(translations !== undefined && { translations }),
+  };
+}
+
 const media = (slug: string, count: number) =>
   Array.from({ length: count }, (_, i) => ({
     url: `https://example.org/open-estate/demo/${slug}/photo-${i + 1}.jpg`,
@@ -317,6 +357,70 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       area: '240',
       address: { city: 'Garmisch-Partenkirchen', postalCode: '82467', country: 'DE' },
       media: media('garmisch-chalet', 3),
+      tours: [],
+    },
+  },
+  {
+    key: 'bangkok-sukhumvit',
+    agency: 'nordlicht',
+    customId: 'NL-TH-010',
+    status: 'ACTIVE',
+    daysAgo: 17,
+    content: {
+      originalLocale: 'en',
+      title: 'Condominium with skyline view in Sukhumvit',
+      description: 'High floor, shared pool and gym, a few minutes from the BTS skytrain.',
+      translations: [
+        {
+          locale: 'de',
+          title: 'Eigentumswohnung mit Skyline-Blick in Sukhumvit',
+          description: 'Hohe Etage, Gemeinschaftspool und Fitnessraum, wenige Minuten zur BTS.',
+        },
+        {
+          locale: 'th',
+          title: 'คอนโดวิวเมืองย่านสุขุมวิท',
+          description: 'ชั้นสูง สระว่ายน้ำและฟิตเนสส่วนกลาง ใกล้รถไฟฟ้า BTS',
+        },
+      ],
+      offers: [rent('45000.00')],
+      listingType: 'condominium',
+      rooms: 1.5,
+      area: '54.2',
+      address: { city: 'Bangkok', postalCode: '10110', country: 'TH' },
+      geo: { lat: 13.737, lon: 100.56 },
+      media: media('bangkok-sukhumvit', 3),
+      tours: [],
+    },
+  },
+  {
+    key: 'pattaya-jomtien',
+    agency: 'nordlicht',
+    customId: 'NL-TH-011',
+    status: 'ACTIVE',
+    daysAgo: 16,
+    content: {
+      originalLocale: 'en',
+      title: 'Beachfront condo in Pattaya',
+      description: 'Sea view, a short walk to Jomtien Beach, with a shared rooftop pool.',
+      translations: [
+        {
+          locale: 'de',
+          title: 'Strandnahe Eigentumswohnung in Pattaya',
+          description: 'Meerblick, wenige Minuten zum Jomtien Beach, Dachpool zur Mitnutzung.',
+        },
+        {
+          locale: 'th',
+          title: 'คอนโดติดชายหาดในพัทยา',
+          description: 'วิวทะเล ใกล้หาดจอมเทียน สระว่ายน้ำบนดาดฟ้า',
+        },
+      ],
+      offers: [sale('4200000.00'), rent('32000.00')],
+      listingType: 'condominium',
+      rooms: 2,
+      area: '68',
+      address: { city: 'Pattaya', postalCode: '20150', country: 'TH' },
+      geo: { lat: 12.923, lon: 100.882 },
+      media: media('pattaya-jomtien', 4),
       tours: [],
     },
   },

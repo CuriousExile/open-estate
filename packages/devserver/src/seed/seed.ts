@@ -17,6 +17,7 @@ import {
   CRM_INVALID_RECORDS,
   CRM_RECORDS,
   MANUAL_LISTINGS,
+  markDemoContent,
   USERS,
   type ContentInput,
   type SeedUser,
@@ -169,17 +170,18 @@ export async function seedDemo(
   const ordered = [...MANUAL_LISTINGS].sort((a, b) => b.daysAgo - a.daysAgo);
   for (const [index, seed] of ordered.entries()) {
     const author = seed.agency === 'alpenblick' ? sepp : index % 2 === 0 ? max : anna;
+    const content = markDemoContent(seed.content);
     clock.set(at(seed.daysAgo, 9, index));
     const view = unwrap(
       `create ${seed.key}`,
       await services.commands.create(author, {
-        content: seed.content,
+        content,
         status: 'INACTIVE',
         ...(seed.customId !== undefined && { customId: seed.customId }),
       }),
     );
     ids[seed.key] = view.id;
-    contents[seed.key] = seed.content;
+    contents[seed.key] = content;
     if (seed.status === 'ACTIVE') {
       clock.set(at(seed.daysAgo, 11, index));
       const publisher = seed.agency === 'alpenblick' ? sepp : anna;

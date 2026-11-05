@@ -5,6 +5,7 @@ import type {
   RawRecord,
 } from '@open-estate/ingestion';
 import { z } from 'zod';
+import { markDemoContent } from './demo-data';
 
 // DEV ONLY: a connector module that replays fixed batches of records, so the local demo runs the
 // real ConnectorFramework and ImportPipeline (field merge, provenance, IMPORT versions, rejections,
@@ -42,7 +43,9 @@ export function demoFeedModule(
               state = 'failed';
               throw new Error('Demo CRM: upstream request timed out');
             }
-            await ctx.emit(record);
+            // Mark demo data at the source; only touches title/description, so records that are
+            // meant to be rejected (unknown type, negative area, missing identity) still are.
+            await ctx.emit(markDemoContent(record as Record<string, unknown>) as RawRecord);
           }
           state = 'succeeded';
         },
