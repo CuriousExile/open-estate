@@ -103,6 +103,12 @@ describe('listing requests', () => {
     ).toBe(false);
   });
 
+  it('accepts customId null (remove) and absent (keep)', () => {
+    const base = { content: content(), baseVersion: 1 };
+    expect(ReplaceContentRequest.parse({ ...base, customId: null }).customId).toBeNull();
+    expect('customId' in ReplaceContentRequest.parse(base)).toBe(false);
+  });
+
   it('coerces query strings and defaults pageSize', () => {
     expect(ListListingsQuery.parse({ status: 'ACTIVE', pageSize: '5' })).toMatchObject({
       status: 'ACTIVE',

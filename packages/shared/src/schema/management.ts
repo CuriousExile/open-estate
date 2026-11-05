@@ -168,10 +168,13 @@ export const CreateListingRequest = z.strictObject({
 });
 export type CreateListingRequest = z.output<typeof CreateListingRequest>;
 
-/** `PUT /listings/{id}`: replaces the whole Listing_Inhalt (Req 4.6–4.12). */
+/**
+ * `PUT /listings/{id}`: replaces the whole Listing_Inhalt (Req 4.6–4.12). `customId`: absent =
+ * keep the current Custom_Id, a value = set it, `null` = remove it.
+ */
 export const ReplaceContentRequest = z.strictObject({
   content: ManualContentInput,
-  customId: CustomId.optional(),
+  customId: CustomId.nullable().optional(),
   baseVersion: VersionNumber,
 });
 export type ReplaceContentRequest = z.output<typeof ReplaceContentRequest>;

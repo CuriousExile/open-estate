@@ -73,27 +73,33 @@ export function decisionError(decision: Decision, permission: string): ApiError 
   }
 }
 
-/** Writes the audit entries of one service. */
-export class AgencyAuditTrail {
+/** Writes the audit entries of one service; `A` = the service's audit actions. */
+export class AgencyAuditTrail<A extends string = AgencyAuditAction> {
   private readonly audit: AgencyAudit;
 
   constructor(audit: AgencyAudit) {
     this.audit = audit;
   }
 
-  success(
-    actor: AgencyActor,
-    action: AgencyAuditAction,
-    target: string,
-    agencyId?: string,
-  ): Promise<void> {
+  success(actor: AgencyActor, action: A, target: string, agencyId?: string): Promise<void> {
     return this.append(actor, action, target, agencyId, 'SUCCESS');
+  }
+
+  /** Audits a call that succeeded with another outcome code than `SUCCESS` (e.g. `UNCHANGED`). */
+  outcome(
+    actor: AgencyActor,
+    action: A,
+    target: string,
+    agencyId: string | undefined,
+    result: string,
+  ): Promise<void> {
+    return this.append(actor, action, target, agencyId, result);
   }
 
   /** Audits the first error code and returns the errors as failed result. */
   async reject<T>(
     actor: AgencyActor,
-    action: AgencyAuditAction,
+    action: A,
     target: string,
     agencyId: string | undefined,
     error: ApiError,
@@ -104,7 +110,7 @@ export class AgencyAuditTrail {
 
   private async append(
     { principal, channel }: AgencyActor,
-    action: AgencyAuditAction,
+    action: A,
     target: string,
     agencyId: string | undefined,
     result: string,
