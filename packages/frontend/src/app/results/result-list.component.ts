@@ -179,22 +179,27 @@ import {
     }
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+      /* min(): a single column on phones never exceeds the screen. */
+      grid-template-columns: repeat(auto-fill, minmax(min(17rem, 100%), 1fr));
       gap: 1rem;
       margin: 0;
       padding: 0;
       list-style: none;
     }
+    /* overflow clips the image to the rounded top; minmax(0, 1fr) and min-width keep the
+       carousel from widening the card or the grid column. */
     .card {
       position: relative;
+      grid-template-columns: minmax(0, 1fr);
       align-content: start;
       gap: 0.5rem;
+      min-width: 0;
       padding: 0 1.5rem 1.5rem;
+      overflow: hidden;
     }
-    /* Image flush with the card's top and sides. */
+    /* Image flush with the card's top and sides (inside the border). */
     .media {
-      margin: -1px -1.5rem 0.5rem;
-      border-radius: var(--radius-card) var(--radius-card) 0 0;
+      margin: 0 -1.5rem 0.5rem;
     }
     .card:hover,
     .card:focus-within {

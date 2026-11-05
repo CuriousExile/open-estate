@@ -1102,21 +1102,28 @@ oe-search-form.is-compact {
 // component styles stay within the per-component budget.
 // ---------------------------------------------------------------------------------------------
 
+// The carousel never sizes its container: its width comes from the parent (min-width: 0 on every
+// level, so a grid or flex parent cannot be widened by the slides' min-content), its height from
+// the aspect ratio. Images are absolutely positioned, so their intrinsic size never counts.
 oe-image-carousel {
   display: block;
+  min-width: 0;
 }
 
 .oe-carousel {
   position: relative;
   // Above the card's full-size link overlay, so swipes and the buttons reach the carousel.
   z-index: 1;
+  min-width: 0;
   overflow: hidden;
   border-radius: inherit;
   background: #0f2a20;
 }
 
 .oe-carousel-viewport {
-  aspect-ratio: 16 / 10;
+  // 3:2 suits the ~18–23rem wide result cards; the detail view caps the height (max-height).
+  aspect-ratio: 3 / 2;
+  width: 100%;
   overflow: hidden;
   touch-action: pan-y;
   user-select: none;
@@ -1124,14 +1131,12 @@ oe-image-carousel {
   &.is-clickable {
     cursor: pointer;
   }
-
-  .oe-carousel--wide & {
-    aspect-ratio: 16 / 9;
-  }
 }
 
 .oe-carousel-track {
   display: flex;
+  // translateX(-n × 100%) is relative to this width, i.e. exactly one viewport per slide.
+  width: 100%;
   height: 100%;
   transition: transform 0.4s var(--ease-out);
 
@@ -1141,12 +1146,17 @@ oe-image-carousel {
 }
 
 .oe-carousel-slide {
+  position: relative;
   flex: 0 0 100%;
+  min-width: 0;
   height: 100%;
+  overflow: hidden;
   // Shown while an image loads.
   background: linear-gradient(135deg, #133a2c, #0c2219);
 
   img {
+    position: absolute;
+    inset: 0;
     display: block;
     width: 100%;
     height: 100%;
