@@ -3,6 +3,7 @@ export * from './content';
 export * from './cursor';
 export * from './diff';
 export * from './errors';
+export * from './exchange-rates';
 export * from './locale';
 export * from './locale-selection';
 export * from './management';

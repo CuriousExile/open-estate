@@ -129,6 +129,11 @@ function searchQueryShape(taxonomy: Taxonomy) {
     priceMin: money,
     priceMax: money,
     currency: Currency.optional(),
+    /**
+     * `true`: offers in other currencies match too, compared after converting the price bounds
+     * with the configured exchange rates (`exchange-rates.json`). Default: one currency only.
+     */
+    convertCurrency: z.preprocess(toBoolean, z.boolean()).optional(),
     roomsMin: rooms,
     roomsMax: rooms,
     /** Hundredths of m². */
