@@ -23,6 +23,8 @@ import { CodeLabelPipe } from '../../locale/code-label.pipe';
 import { LocaleService } from '../../locale/locale.service';
 import { ManagementApiClient } from '../../management/management-api-client.service';
 import { StartupState } from '../../startup/startup-state';
+import { CodeOptionsPipe } from '../../ui/select/code-options.pipe';
+import { SelectComponent } from '../../ui/select/select.component';
 import {
   currentToken,
   EMPTY_FILTERS,
@@ -45,7 +47,14 @@ import {
  */
 @Component({
   selector: 'oe-listing-table',
-  imports: [ReactiveFormsModule, RouterLink, TranslocoPipe, CodeLabelPipe],
+  imports: [
+    ReactiveFormsModule,
+    RouterLink,
+    TranslocoPipe,
+    CodeLabelPipe,
+    CodeOptionsPipe,
+    SelectComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="glass panel" aria-labelledby="listings-title">
@@ -89,30 +98,47 @@ import {
         </div>
         <div class="field">
           <label for="filter-status">{{ 'portal.field.status' | transloco }}</label>
-          <select id="filter-status" formControlName="status">
-            <option value="">{{ 'portal.listings.filter.any' | transloco }}</option>
-            @for (status of statuses; track status) {
-              <option [value]="status">{{ 'portal.listings.status.' + status | transloco }}</option>
-            }
-          </select>
+          <oe-select
+            variant="field"
+            triggerId="filter-status"
+            formControlName="status"
+            [label]="'portal.field.status' | transloco"
+            [options]="
+              statuses
+                | codeOptions
+                  : 'portal.listings.status.'
+                  : activeLocale()
+                  : 'portal.listings.filter.any'
+            "
+          />
         </div>
         <div class="field">
           <label for="filter-origin">{{ 'portal.listings.column.origin' | transloco }}</label>
-          <select id="filter-origin" formControlName="origin">
-            <option value="">{{ 'portal.listings.filter.any' | transloco }}</option>
-            @for (origin of origins; track origin) {
-              <option [value]="origin">{{ 'portal.listings.origin.' + origin | transloco }}</option>
-            }
-          </select>
+          <oe-select
+            variant="field"
+            triggerId="filter-origin"
+            formControlName="origin"
+            [label]="'portal.listings.column.origin' | transloco"
+            [options]="
+              origins
+                | codeOptions
+                  : 'portal.listings.origin.'
+                  : activeLocale()
+                  : 'portal.listings.filter.any'
+            "
+          />
         </div>
         <div class="field">
           <label for="filter-offerType">{{ 'portal.field.offerType' | transloco }}</label>
-          <select id="filter-offerType" formControlName="offerType">
-            <option value="">{{ 'portal.listings.filter.any' | transloco }}</option>
-            @for (type of offerTypes; track type) {
-              <option [value]="type">{{ type | codeLabel: 'offerType' | transloco }}</option>
-            }
-          </select>
+          <oe-select
+            variant="field"
+            triggerId="filter-offerType"
+            formControlName="offerType"
+            [label]="'portal.field.offerType' | transloco"
+            [options]="
+              offerTypes | codeOptions: 'offerType.' : activeLocale() : 'portal.listings.filter.any'
+            "
+          />
         </div>
         <div class="field">
           <label for="filter-listingType">{{ 'portal.field.listingType' | transloco }}</label>
@@ -452,6 +478,7 @@ export class ListingTableComponent implements OnInit {
   protected readonly statuses = LISTING_STATUSES;
   protected readonly origins = ORIGINS;
   protected readonly offerTypes = OFFER_TYPES;
+  protected readonly activeLocale = this.locale.active;
   protected readonly previous = previousPage;
 
   protected readonly filters = inject(NonNullableFormBuilder).group({ ...EMPTY_FILTERS });

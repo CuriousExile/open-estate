@@ -64,10 +64,10 @@ let nextId = 0;
       (blur)="onBlur()"
     />
     <ul
-      class="oe-listbox"
+      class="oe-popover oe-listbox"
       role="listbox"
       [id]="listId"
-      [hidden]="!expanded()"
+      [class.is-open]="expanded()"
       [attr.aria-label]="'search.city.suggestions' | transloco"
     >
       @for (city of suggestions(); track city.country + city.name; let i = $index) {
@@ -75,12 +75,13 @@ let nextId = 0;
           class="oe-option"
           role="option"
           [id]="listId + '-' + i"
+          [class.is-active]="i === state().active"
           [attr.aria-selected]="i === state().active"
           (mousedown)="$event.preventDefault()"
           (mouseenter)="highlight(i)"
           (click)="choose(i)"
         >
-          <span>{{ city.name }}</span>
+          <span class="oe-option-label">{{ city.name }}</span>
           <span class="oe-option-meta">{{
             'search.city.suggestion' | transloco: { country: city.countryLabel, count: city.count }
           }}</span>
@@ -109,6 +110,10 @@ let nextId = 0;
     }
     input[aria-invalid='true'] {
       box-shadow: inset 0 -2px var(--color-error-strong);
+    }
+    input::placeholder {
+      color: inherit;
+      opacity: 0.55;
     }
   `,
 })

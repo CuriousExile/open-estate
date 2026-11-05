@@ -23,6 +23,8 @@ import { CodeLabelPipe } from '../../locale/code-label.pipe';
 import { LocaleService } from '../../locale/locale.service';
 import { ManagementApiClient } from '../../management/management-api-client.service';
 import { StartupState } from '../../startup/startup-state';
+import { CodeOptionsPipe } from '../../ui/select/code-options.pipe';
+import { SelectComponent, type SelectOption } from '../../ui/select/select.component';
 import { DiffViewComponent } from '../shared/diff-view/diff-view.component';
 import {
   checkedListingView,
@@ -72,7 +74,15 @@ const CONTACT_FIELDS = [
  */
 @Component({
   selector: 'oe-listing-form',
-  imports: [ReactiveFormsModule, RouterLink, TranslocoPipe, CodeLabelPipe, DiffViewComponent],
+  imports: [
+    ReactiveFormsModule,
+    RouterLink,
+    TranslocoPipe,
+    CodeLabelPipe,
+    CodeOptionsPipe,
+    DiffViewComponent,
+    SelectComponent,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <section class="glass panel" aria-labelledby="listing-form-title">
@@ -174,20 +184,16 @@ const CONTACT_FIELDS = [
                 <label [for]="fieldId('originalLocale')">{{
                   'portal.field.originalLocale' | transloco
                 }}</label>
-                <select
-                  [id]="fieldId('originalLocale')"
-                  data-field="originalLocale"
+                <oe-select
+                  variant="field"
+                  [triggerId]="fieldId('originalLocale')"
+                  fieldName="originalLocale"
                   formControlName="originalLocale"
-                  [attr.aria-invalid]="invalid('originalLocale')"
-                  [attr.aria-describedby]="describedBy('originalLocale')"
-                >
-                  @for (
-                    option of localeOptions(form.controls.originalLocale.value);
-                    track option.locale
-                  ) {
-                    <option [value]="option.locale">{{ option.label }}</option>
-                  }
-                </select>
+                  [label]="'portal.field.originalLocale' | transloco"
+                  [options]="localeSelectOptions(form.controls.originalLocale.value)"
+                  [invalid]="invalid('originalLocale')"
+                  [describedBy]="describedBy('originalLocale')"
+                />
               </div>
               <div class="field">
                 <label [for]="fieldId('listingType')">{{
@@ -237,13 +243,14 @@ const CONTACT_FIELDS = [
               @if (!editing()) {
                 <div class="field">
                   <label [for]="fieldId('status')">{{ 'portal.field.status' | transloco }}</label>
-                  <select [id]="fieldId('status')" data-field="status" formControlName="status">
-                    @for (status of statuses; track status) {
-                      <option [value]="status">
-                        {{ 'portal.listings.status.' + status | transloco }}
-                      </option>
-                    }
-                  </select>
+                  <oe-select
+                    variant="field"
+                    [triggerId]="fieldId('status')"
+                    fieldName="status"
+                    formControlName="status"
+                    [label]="'portal.field.status' | transloco"
+                    [options]="statuses | codeOptions: 'portal.listings.status.' : activeLocale()"
+                  />
                 </div>
               }
               <div class="field wide">
@@ -289,19 +296,16 @@ const CONTACT_FIELDS = [
                     <label [for]="fieldId('offers.' + i + '.offerType')">{{
                       'portal.field.offerType' | transloco
                     }}</label>
-                    <select
-                      [id]="fieldId('offers.' + i + '.offerType')"
-                      [attr.data-field]="'offers.' + i + '.offerType'"
+                    <oe-select
+                      variant="field"
+                      [triggerId]="fieldId('offers.' + i + '.offerType')"
+                      [fieldName]="'offers.' + i + '.offerType'"
                       formControlName="offerType"
-                      [attr.aria-invalid]="invalid('offers.' + i + '.offerType')"
-                      [attr.aria-describedby]="describedBy('offers.' + i + '.offerType')"
-                    >
-                      @for (type of offerTypes; track type) {
-                        <option [value]="type">
-                          {{ type | codeLabel: 'offerType' | transloco }}
-                        </option>
-                      }
-                    </select>
+                      [label]="'portal.field.offerType' | transloco"
+                      [options]="offerTypes | codeOptions: 'offerType.' : activeLocale()"
+                      [invalid]="invalid('offers.' + i + '.offerType')"
+                      [describedBy]="describedBy('offers.' + i + '.offerType')"
+                    />
                   </div>
                   @for (name of amountFields(offer.controls.offerType.value); track name) {
                     <div class="field">
@@ -427,21 +431,21 @@ const CONTACT_FIELDS = [
                     <label [for]="fieldId('translations.' + i + '.locale')">{{
                       'portal.field.locale' | transloco
                     }}</label>
-                    <select
-                      [id]="fieldId('translations.' + i + '.locale')"
-                      [attr.data-field]="'translations.' + i + '.locale'"
+                    <oe-select
+                      variant="field"
+                      [triggerId]="fieldId('translations.' + i + '.locale')"
+                      [fieldName]="'translations.' + i + '.locale'"
                       formControlName="locale"
-                      [attr.aria-invalid]="invalid('translations.' + i + '.locale')"
-                      [attr.aria-describedby]="describedBy('translations.' + i + '.locale')"
-                    >
-                      <option value="">{{ 'portal.listings.form.choose' | transloco }}</option>
-                      @for (
-                        option of localeOptions(translation.controls.locale.value);
-                        track option.locale
-                      ) {
-                        <option [value]="option.locale">{{ option.label }}</option>
-                      }
-                    </select>
+                      [label]="'portal.field.locale' | transloco"
+                      [options]="
+                        localeSelectOptions(
+                          translation.controls.locale.value,
+                          'portal.listings.form.choose' | transloco
+                        )
+                      "
+                      [invalid]="invalid('translations.' + i + '.locale')"
+                      [describedBy]="describedBy('translations.' + i + '.locale')"
+                    />
                   </div>
                   <div class="field wide">
                     <label [for]="fieldId('translations.' + i + '.title')">{{
@@ -796,6 +800,7 @@ export class ListingFormComponent implements OnInit {
   protected readonly taxonomy = this.meta.taxonomy;
   protected readonly statuses = LISTING_STATUSES;
   protected readonly offerTypes = OFFER_TYPES;
+  protected readonly activeLocale = this.locale.active;
   protected readonly limits = LIST_LIMITS;
   protected readonly factFields = ['rooms', 'area'] as const;
   protected readonly geoFields = ['lat', 'lon'] as const;
@@ -989,6 +994,18 @@ export class ListingFormComponent implements OnInit {
     return current === '' || options.some((o) => o.locale === current)
       ? options
       : [...options, { locale: current, label: current }];
+  }
+
+  /** {@link localeOptions} for `oe-select`, optionally with a "choose" entry (value `''`). */
+  protected localeSelectOptions(current: string, chooseLabel?: string): SelectOption[] {
+    return [
+      ...(chooseLabel === undefined ? [] : [{ value: '', label: chooseLabel }]),
+      ...this.localeOptions(current).map(({ locale, label }) => ({
+        value: locale,
+        label,
+        lang: locale,
+      })),
+    ];
   }
 
   protected fieldId(path: string): string {

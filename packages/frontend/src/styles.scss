@@ -12,6 +12,12 @@
   --color-on-accent: #0b1f19;
   --color-error: #ffb4ab; // on dark backgrounds
   --color-error-strong: #b3261e; // on light surfaces (search bar)
+  // Thin gold lines of the hero image; used for hairlines, focus of popovers and the filter badge.
+  --color-gold: #d8b768;
+  --color-gold-soft: rgb(216 183 104 / 38%);
+  // Dark green glass of popovers, the sticky header and the "More filters" sheet.
+  --color-popover: rgb(9 28 20 / 94%);
+  --shadow-popover: 0 1.25rem 3rem rgb(0 0 0 / 45%), 0 0 0 1px rgb(0 0 0 / 20%);
 
   --font-display: 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Times New Roman', serif;
   // Distinctive grotesque/geometric sans stack — favours Avenir/Futura-like and modern system UI
@@ -24,7 +30,16 @@
   --radius-card: 1.5rem;
   --radius-pill: 999px;
   --blur-glass: 16px;
-  --space-page: clamp(1.25rem, 4vw, 4rem);
+  --space-page: clamp(1rem, 4vw, 4rem);
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  // Start page background (white label: override in a deployment stylesheet, see
+  // docs/configuration.md). The image's own edge colours fill what it does not cover.
+  --hero-background: image-set(
+    url('/hero-background.avif') type('image/avif'),
+    url('/hero-background.webp') type('image/webp'),
+    url('/hero-background.png') type('image/png')
+  );
 }
 
 *,
@@ -41,70 +56,91 @@ body {
 
 body {
   min-height: 100vh;
-  /* Hero photo (brand green, gold lines, tropical villa + pool) behind a green wash that keeps
-     text legible. The wash is darker top and bottom where the header and content sit; the middle
-     stays open so the architecture reads through. `--hero-background` lets the ThemeService swap
-     the image per white-label deployment. */
-  background-color: var(--color-bg);
-  background-image:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--color-bg) 82%, transparent) 0%,
-      color-mix(in srgb, var(--color-bg) 42%, transparent) 38%,
-      color-mix(in srgb, var(--color-bg) 55%, transparent) 70%,
-      color-mix(in srgb, var(--color-bg) 92%, transparent) 100%
-    ),
-    var(--hero-background, url('/hero-background.png'));
-  background-repeat: no-repeat;
-  background-position:
-    center top,
-    center center;
-  background-size: cover, cover;
-  background-attachment: fixed, fixed;
+  background: #0c2719;
   color: var(--color-text);
   font-family: var(--font-sans);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
-/* Mobile and tablets: the landscape photo would crop the buildings away, and fixed attachment is
-   unreliable on iOS. Scroll the image, shift toward the right side (villa + pool read best at
-   portrait), and strengthen the wash so the stacked content stays readable over a busier crop. */
-@media (max-width: 48rem) {
-  body {
-    background-image:
+// ---------------------------------------------------------------------------------------------
+// Background layer: hero image, vignette and the "searched" dimming
+// ---------------------------------------------------------------------------------------------
+
+/* The houses sit at the left and right edges of the image and its middle is empty, so `cover`
+   centred keeps both: on screens wider than 16:9 only the empty top and bottom are cropped, on
+   16:10 about 5 % per side. Phones (below) show the villa side. */
+.oe-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background-color: #0c2719;
+  background-image: var(--hero-background);
+  background-repeat: no-repeat;
+  background-position: center 45%;
+  background-size: cover;
+  view-transition-name: oe-backdrop;
+
+  // Vignette: a darker wash where header and card sit; the edges (houses) stay clear.
+  &::before,
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+  }
+
+  &::before {
+    background:
+      radial-gradient(ellipse 34% 52% at 50% 52%, rgb(6 20 14 / 42%), transparent 72%),
       linear-gradient(
         180deg,
-        color-mix(in srgb, var(--color-bg) 88%, transparent) 0%,
-        color-mix(in srgb, var(--color-bg) 60%, transparent) 45%,
-        color-mix(in srgb, var(--color-bg) 92%, transparent) 100%
-      ),
-      var(--hero-background, url('/hero-background.png'));
-    background-position:
-      center top,
-      72% center;
-    background-attachment: scroll, scroll;
+        rgb(6 20 14 / 55%) 0%,
+        transparent 22%,
+        transparent 80%,
+        rgb(6 20 14 / 60%) 100%
+      );
+  }
+
+  // After a search (and on other pages): a much darker green so results read calmly.
+  &::after {
+    background: linear-gradient(
+      180deg,
+      rgb(5 16 11 / 88%),
+      rgb(5 16 11 / 78%) 40%,
+      rgb(5 16 11 / 92%)
+    );
+    opacity: 0;
+    transition: opacity 0.7s ease;
+  }
+
+  &.is-dimmed::after {
+    opacity: 1;
   }
 }
 
-/* Honour reduced-motion / data-saver expectations: a static, non-fixed background. */
-@media (prefers-reduced-motion: reduce) {
-  body {
-    background-attachment: scroll, scroll;
+/* Phones and small tablets (portrait): a landscape image cannot show both houses; show the villa
+   with the pool, which reads around and through the translucent search card. */
+@media (max-width: 48rem) {
+  .oe-backdrop {
+    background-position: 88% center;
   }
 }
+
+// ---------------------------------------------------------------------------------------------
+// Typography and basics
+// ---------------------------------------------------------------------------------------------
 
 .display {
   font-family: var(--font-display);
   font-weight: 500;
-  font-size: clamp(2.5rem, 6vw, 4.5rem);
+  font-size: clamp(2.1rem, 3.6vw, 3.25rem);
   line-height: 1.05;
-  margin: 0 0 1rem;
+  margin: 0 0 0.75rem;
 }
 
 .lead {
   color: var(--color-text-muted);
-  font-size: 1.125rem;
+  font-size: 1.0625rem;
   max-width: 40rem;
   margin: 0;
 }
@@ -128,11 +164,36 @@ body {
   outline-offset: 2px;
 }
 
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Header: page (other routes), hero (start page) and searched (compact sticky bar)
+// ---------------------------------------------------------------------------------------------
+
 .site-header {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-areas: 'brand controls';
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+  padding: 1.25rem var(--space-page) 0;
+}
+
+.site-brand {
+  grid-area: brand;
+  display: inline-flex;
   align-items: center;
   gap: 0.75rem;
-  padding: 1.5rem var(--space-page) 0;
+  color: inherit;
+  text-decoration: none;
+  view-transition-name: oe-brand;
 }
 
 .site-logo {
@@ -143,123 +204,877 @@ body {
 .site-name {
   font-family: var(--font-display);
   font-size: 1.25rem;
+  white-space: nowrap;
 }
 
 .site-controls {
-  margin-left: auto;
+  grid-area: controls;
+  position: relative;
+  z-index: 2; // its popovers overlap the search slot below
+  justify-self: end;
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 0.5rem;
+  view-transition-name: oe-controls;
 }
 
-.visually-hidden {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-}
-
-// Shared dropdown look (header and search bar): a native <select> — keyboard, screen reader and
-// mobile pickers stay native — drawn as an outlined glass pill with a currentcolor chevron, so it
-// adapts to the dark header and the light search bar alike.
-.oe-select-field {
-  display: inline-flex;
+.site-header-slot {
+  grid-area: slot;
+  position: relative;
+  z-index: 1;
   min-width: 0;
 }
 
-.oe-select {
-  appearance: none;
-  min-width: 0;
-  max-width: 100%;
-  padding: 0.5rem 2.25rem 0.5rem 1rem;
-  border: 1px solid var(--color-surface-border);
-  border-radius: var(--radius-pill);
-  background:
-    linear-gradient(45deg, transparent 50%, currentcolor 50%) right 1.1rem center / 0.35rem 0.35rem
-      no-repeat,
-    linear-gradient(135deg, currentcolor 50%, transparent 50%) right 0.75rem center / 0.35rem
-      0.35rem no-repeat,
-    var(--color-surface);
-  backdrop-filter: blur(var(--blur-glass));
-  color: inherit;
-  font: inherit;
-  font-size: 0.875rem;
-  line-height: 1.4;
-  text-overflow: ellipsis;
-  cursor: pointer;
-  transition: border-color 0.15s ease;
+/* Start page: the header fills the viewport; the search card sits in the empty middle of the
+   image, between the two houses. */
+.site-header--hero {
+  grid-template-rows: auto 1fr;
+  grid-template-areas:
+    'brand controls'
+    'slot slot';
+  min-height: 100svh;
+  padding-bottom: 2rem;
 
-  &:hover {
-    border-color: var(--brand-secondary);
-  }
-
-  // Native option lists cannot be themed reliably; keep them dark-on-light and readable.
-  option {
-    color: var(--color-on-accent);
-    background: var(--color-text);
-  }
-
-  &[aria-invalid='true'] {
-    border-color: var(--color-error-strong);
+  .site-header-slot {
+    align-self: center;
+    justify-self: center;
+    display: grid;
+    gap: 1.25rem;
+    width: min(44rem, 100%);
+    margin-block: 2rem;
+    padding: clamp(1.25rem, 3vw, 2.25rem);
+    border: 1px solid var(--color-gold-soft);
+    border-radius: calc(var(--radius-card) + 0.5rem);
+    background: linear-gradient(160deg, rgb(10 32 23 / 70%), rgb(8 26 19 / 58%));
+    box-shadow: 0 2rem 5rem rgb(0 0 0 / 35%);
+    backdrop-filter: blur(14px) saturate(130%);
+    view-transition-name: oe-search;
   }
 }
 
-// Inside the light search bar: same pill, outlined in the bar's text colour.
-.oe-select--inline {
-  width: 100%;
-  margin-top: 0.15rem;
-  padding-block: 0.3rem;
-  border-color: color-mix(in srgb, currentcolor 22%, transparent);
-  background-color: color-mix(in srgb, currentcolor 5%, transparent);
-}
+.hero-intro {
+  text-align: center;
 
-// Popup of the city combobox (WAI-ARIA listbox), styled like the light search bar.
-.oe-listbox {
-  position: absolute;
-  z-index: 10;
-  top: calc(100% + 0.6rem);
-  left: -0.75rem;
-  width: max-content;
-  min-width: calc(100% + 1.5rem);
-  max-width: min(24rem, 90vw);
-  margin: 0;
-  padding: 0.35rem;
-  list-style: none;
-  border: 1px solid color-mix(in srgb, var(--color-on-accent) 12%, transparent);
-  border-radius: 1rem;
-  background: var(--color-text);
-  color: var(--color-on-accent);
-  box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 35%);
-}
-
-.oe-option {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0.7rem;
-  cursor: pointer;
-
-  &[aria-selected='true'] {
-    background: var(--brand-secondary);
+  .lead {
+    margin-inline: auto;
   }
 }
 
-.oe-option-meta {
-  font-size: 0.75rem;
-  white-space: nowrap;
-  opacity: 0.7;
+/* After a search: one compact, sticky glass bar — brand and controls, the search below them;
+   on very wide screens all in one row. */
+.site-header--searched {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  grid-template-areas:
+    'brand controls'
+    'slot slot';
+  padding: 0.75rem var(--space-page);
+  border-bottom: 1px solid var(--color-gold-soft);
+  background: rgb(7 22 16 / 82%);
+  box-shadow: 0 0.75rem 2rem rgb(0 0 0 / 30%);
+  backdrop-filter: blur(var(--blur-glass)) saturate(130%);
+
+  .site-header-slot {
+    view-transition-name: oe-search;
+  }
+
+  .site-logo {
+    height: 1.6rem;
+  }
+
+  .site-name {
+    font-size: 1.1rem;
+  }
+}
+
+@media (min-width: 110rem) {
+  .site-header--searched {
+    grid-template-columns: auto 1fr auto;
+    grid-template-areas: 'brand slot controls';
+  }
 }
 
 .shell {
   padding: var(--space-page);
 }
 
+.shell--hero {
+  padding: 0;
+}
+
+.shell--searched {
+  padding-top: 1.5rem;
+}
+
+@media (max-width: 48rem) {
+  .site-header--hero .site-header-slot {
+    margin-block: 1rem;
+  }
+
+  // Phones: the search scrolls away with the page; only the slim brand row is compact.
+  .site-header--searched {
+    position: relative;
+  }
+}
+
+// View transition start page ↔ results: the card morphs into the header bar.
+::view-transition-group(oe-search),
+::view-transition-group(oe-brand),
+::view-transition-group(oe-controls) {
+  animation-duration: 0.45s;
+  animation-timing-function: var(--ease-out);
+}
+
+::view-transition-old(oe-search),
+::view-transition-new(oe-search) {
+  height: 100%;
+  object-fit: none;
+  overflow: hidden;
+}
+
+::view-transition-group(oe-backdrop) {
+  animation-duration: 0.6s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
+  }
+
+  .oe-backdrop::after {
+    transition: none;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shared dropdown `oe-select` (trigger variants) and the popover listbox (also the city combobox)
+// ---------------------------------------------------------------------------------------------
+
+.oe-select {
+  position: relative;
+  display: inline-block;
+  min-width: 0;
+}
+
+.oe-select--block {
+  display: block;
+}
+
+.oe-select-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease;
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  &[aria-expanded='true'] .oe-select-chevron {
+    transform: rotate(180deg);
+  }
+}
+
+.oe-select-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.oe-select-icon {
+  flex: none;
+  font-size: 1rem;
+  line-height: 1;
+  opacity: 0.9;
+}
+
+.oe-select-chevron {
+  flex: none;
+  opacity: 0.75;
+  transition: transform 0.2s var(--ease-out);
+}
+
+// Outlined glass pill on dark backgrounds (header).
+.oe-select-trigger--glass {
+  padding: 0.5rem 0.85rem;
+  border: 1px solid var(--color-surface-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  backdrop-filter: blur(var(--blur-glass));
+  font-size: 0.875rem;
+  line-height: 1.4;
+
+  &:hover,
+  &[aria-expanded='true'] {
+    border-color: var(--color-gold-soft);
+    background: rgb(255 255 255 / 12%);
+  }
+}
+
+// Bare value with chevron inside the light search bar segment.
+.oe-select-trigger--inline {
+  width: 100%;
+  padding: 0.2rem 0;
+  border: 0;
+  border-radius: 0.4rem;
+  background: transparent;
+
+  &[aria-invalid='true'] {
+    box-shadow: inset 0 -2px var(--color-error-strong);
+  }
+}
+
+// Form field (portal, "More filters").
+.oe-select-trigger--field {
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--color-surface-border);
+  border-radius: 0.75rem;
+  background: var(--color-surface);
+
+  &:hover,
+  &[aria-expanded='true'] {
+    border-color: var(--color-gold-soft);
+  }
+
+  &[aria-invalid='true'] {
+    border-color: var(--color-error);
+  }
+}
+
+.oe-popover {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 0.5rem);
+  left: 0;
+  min-width: max(100%, 13rem);
+  max-width: min(22rem, calc(100vw - 2rem));
+  max-height: min(20rem, 60vh);
+  overflow-y: auto;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  border: 1px solid var(--color-gold-soft);
+  border-radius: 1rem;
+  background: var(--color-popover);
+  color: var(--color-text);
+  box-shadow: var(--shadow-popover);
+  backdrop-filter: blur(18px) saturate(140%);
+  font-size: 0.9375rem;
+  text-align: start;
+  text-transform: none;
+  letter-spacing: normal;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(-0.35rem) scale(0.98);
+  transform-origin: top left;
+  transition:
+    opacity 0.16s ease,
+    transform 0.2s var(--ease-out),
+    visibility 0s linear 0.2s;
+  scrollbar-width: thin;
+
+  &.is-open {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+    transition-delay: 0s;
+  }
+
+  &:focus {
+    outline: none;
+  }
+
+  &:focus-visible .oe-option.is-active {
+    box-shadow: inset 0 0 0 1.5px var(--brand-secondary);
+  }
+}
+
+.oe-popover--end {
+  left: auto;
+  right: 0;
+  transform-origin: top right;
+}
+
+.oe-popover--up {
+  top: auto;
+  bottom: calc(100% + 0.5rem);
+  transform-origin: bottom left;
+}
+
+.oe-option {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.7rem;
+  cursor: pointer;
+  white-space: nowrap;
+
+  &.is-active {
+    background: color-mix(in srgb, var(--brand-secondary) 16%, transparent);
+  }
+
+  &[aria-selected='true'] > .oe-option-label {
+    font-weight: 600;
+  }
+
+  &[aria-selected='true'] > .oe-option-check {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.oe-option-icon {
+  flex: none;
+  font-size: 1.1rem;
+  line-height: 1;
+}
+
+// Short code badge as leading icon (e.g. the country code — flag emoji are missing on Windows).
+.oe-option-icon,
+.oe-select-trigger .oe-select-icon:not(svg) {
+  min-width: 1.9rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--color-gold-soft);
+  border-radius: 0.4rem;
+  color: var(--color-gold);
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+.oe-option-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oe-option-meta {
+  flex: none;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.oe-option-check {
+  flex: none;
+  color: var(--color-gold);
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    opacity 0.12s ease,
+    transform 0.12s ease;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Search card / compact search bar
+// ---------------------------------------------------------------------------------------------
+
+.oe-search {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'type more'
+    'bar bar';
+  align-items: center;
+  gap: 1rem;
+
+  fieldset {
+    min-width: 0;
+    margin: 0;
+    border: 0;
+  }
+
+  legend {
+    padding: 0;
+  }
+
+  input {
+    font: inherit;
+    color: inherit;
+  }
+}
+
+.oe-search-type {
+  grid-area: type;
+  justify-self: start;
+}
+
+.oe-more-button {
+  grid-area: more;
+}
+
+.oe-search-bar {
+  grid-area: bar;
+}
+
+.oe-search-errors {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding-left: 1.25rem;
+  color: var(--color-error);
+}
+
+// Segmented pill toggle (offer type).
+.oe-segmented {
+  display: inline-flex;
+  padding: 0.25rem;
+  border: 1px solid var(--color-surface-border);
+  border-radius: var(--radius-pill);
+  background: rgb(0 0 0 / 18%);
+}
+
+.oe-segmented-input,
+.oe-chip-input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.oe-segmented-option {
+  padding: 0.4rem 1.1rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.875rem;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+
+.oe-segmented-input:checked + .oe-segmented-option {
+  background: var(--brand-secondary);
+  color: var(--color-on-accent);
+  font-weight: 600;
+}
+
+.oe-segmented-input:focus-visible + .oe-segmented-option,
+.oe-chip-input:focus-visible + .oe-chip {
+  outline: 2px solid var(--brand-secondary);
+  outline-offset: 2px;
+}
+
+// Light bar with labelled segments (style reference: one wide light search bar).
+.oe-search-bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  padding: 0.5rem;
+  border-radius: calc(var(--radius-card) - 0.25rem);
+  background: var(--color-text);
+  color: var(--color-on-accent);
+  box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 25%);
+
+  .label {
+    color: color-mix(in srgb, currentcolor 62%, transparent);
+    font-size: 0.6875rem;
+  }
+
+  input:not([type='radio']) {
+    width: 100%;
+    min-width: 0;
+    padding: 0.2rem 0;
+    border: 0;
+    background: transparent;
+
+    &::placeholder {
+      color: inherit;
+      opacity: 0.55;
+    }
+  }
+
+  [aria-invalid='true']:not([type='radio']) {
+    box-shadow: inset 0 -2px var(--color-error-strong);
+  }
+
+  // The focus ring of the dark theme is too light on the light bar.
+  :focus-visible {
+    outline-color: var(--brand-primary);
+  }
+}
+
+.oe-search-seg {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.1rem;
+  min-width: 0;
+  padding: 0.5rem 1rem;
+  border-radius: 0.9rem;
+  transition: background-color 0.15s ease;
+
+  &:focus-within {
+    background: color-mix(in srgb, var(--brand-primary) 6%, transparent);
+  }
+}
+
+.oe-search-pair {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.oe-search-dash {
+  opacity: 0.5;
+}
+
+// Rooms chips (radio group).
+.oe-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  padding-top: 0.15rem;
+}
+
+.oe-chip {
+  min-width: 2.25rem;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid color-mix(in srgb, currentcolor 22%, transparent);
+  border-radius: var(--radius-pill);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.4;
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+
+  &:hover {
+    border-color: var(--brand-primary);
+  }
+}
+
+.oe-chip-input:checked + .oe-chip {
+  border-color: var(--brand-primary);
+  background: var(--brand-primary);
+  color: var(--brand-secondary);
+}
+
+.oe-chip-input[aria-invalid='true'] + .oe-chip {
+  border-color: var(--color-error-strong);
+}
+
+.oe-search-submit {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  min-height: 3rem;
+  margin: 0.4rem 0.25rem 0.25rem;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: var(--brand-primary);
+  color: var(--brand-secondary);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+
+  &:hover {
+    filter: brightness(1.25);
+  }
+}
+
+// "More filters" button with the active-filter badge.
+.oe-more-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.95rem;
+  border: 1px solid var(--color-surface-border);
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--color-gold-soft);
+  }
+}
+
+.oe-badge {
+  display: inline-grid;
+  place-items: center;
+  min-width: 1.35rem;
+  height: 1.35rem;
+  padding-inline: 0.3rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-gold);
+  color: var(--color-on-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+// Compact layout in the sticky header: toggle, bar and "More filters" in one row.
+oe-search-form.is-compact {
+  .oe-search {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas: 'type bar more';
+    gap: 0.4rem 0.75rem;
+  }
+
+  .oe-segmented-option {
+    padding: 0.35rem 0.9rem;
+  }
+
+  .oe-search-bar {
+    grid-template-columns: minmax(9rem, 1.1fr) minmax(8rem, 1fr) minmax(9rem, 1fr) auto auto;
+    align-items: center;
+    padding: 0.25rem;
+    border-radius: var(--radius-pill);
+  }
+
+  .oe-search-seg {
+    padding: 0.2rem 0.9rem;
+    border-radius: var(--radius-pill);
+
+    & + .oe-search-seg::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      top: 22%;
+      bottom: 22%;
+      border-left: 1px solid color-mix(in srgb, currentcolor 15%, transparent);
+    }
+  }
+
+  .oe-chips {
+    flex-wrap: nowrap;
+  }
+
+  .oe-search-submit {
+    grid-column: auto;
+    width: 2.75rem;
+    min-height: 2.75rem;
+    margin: 0;
+    border-radius: 50%;
+  }
+
+  .oe-search-submit-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 64rem) {
+  oe-search-form.is-compact {
+    .oe-search {
+      grid-template-columns: 1fr auto;
+      grid-template-areas:
+        'type more'
+        'bar bar';
+    }
+
+    .oe-search-bar {
+      grid-template-columns: 1fr 1fr auto;
+      border-radius: 1.1rem;
+    }
+
+    .oe-search-seg + .oe-search-seg::before {
+      content: none;
+    }
+  }
+}
+
+@media (max-width: 40rem) {
+  .oe-search-bar,
+  oe-search-form.is-compact .oe-search-bar {
+    grid-template-columns: 1fr;
+  }
+
+  oe-search-form.is-compact .oe-search-submit {
+    width: auto;
+    border-radius: var(--radius-pill);
+    margin: 0.25rem;
+  }
+
+  oe-search-form.is-compact .oe-search-submit-text {
+    position: static;
+    width: auto;
+    height: auto;
+    clip-path: none;
+  }
+
+  .oe-chips {
+    flex-wrap: wrap;
+    gap: 0.25rem;
+  }
+
+  .oe-chip {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: 0.25rem;
+  }
+
+  // Narrow phones: icon-only "More filters" (the text stays its accessible name).
+  .oe-more-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .oe-more-button {
+    padding: 0.55rem 0.7rem;
+  }
+
+  // Header controls: icon-only pills (the value stays the accessible name).
+  .site-controls .oe-select-trigger--glass {
+    padding: 0.5rem 0.65rem;
+
+    .oe-select-value {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Shared form controls of the "More filters" sheet
+// ---------------------------------------------------------------------------------------------
+
+.oe-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+
+  .unit {
+    position: absolute;
+    right: 0.6rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: var(--radius-pill);
+    background: rgb(255 255 255 / 10%);
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    pointer-events: none;
+  }
+}
+
+.oe-input {
+  width: 100%;
+  min-width: 0;
+  padding: 0.6rem 3.25rem 0.6rem 0.85rem;
+  border: 1px solid var(--color-surface-border);
+  border-radius: 0.8rem;
+  background: var(--color-surface);
+  color: inherit;
+  font: inherit;
+
+  &::placeholder {
+    color: var(--color-text-muted);
+  }
+
+  &:hover {
+    border-color: var(--color-gold-soft);
+  }
+
+  &[aria-invalid='true'] {
+    border-color: var(--color-error);
+  }
+}
+
+.oe-switch {
+  appearance: none;
+  position: relative;
+  flex: none;
+  width: 2.75rem;
+  height: 1.55rem;
+  margin: 0;
+  border-radius: var(--radius-pill);
+  background: rgb(255 255 255 / 18%);
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0.2rem;
+    left: 0.2rem;
+    width: 1.15rem;
+    height: 1.15rem;
+    border-radius: 50%;
+    background: var(--color-text);
+    transition: transform 0.2s var(--ease-out);
+  }
+
+  &:checked {
+    background: var(--brand-secondary);
+
+    &::before {
+      background: var(--color-on-accent);
+      transform: translateX(1.2rem);
+    }
+  }
+}
+
+.oe-button {
+  padding: 0.65rem 1.4rem;
+  border: 1px solid var(--color-surface-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.oe-button--primary {
+  border-color: var(--brand-secondary);
+  background: var(--brand-secondary);
+  color: var(--color-on-accent);
+}
+
+.oe-button--ghost:hover {
+  border-color: var(--color-gold-soft);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oe-popover,
+  .oe-option-check,
+  .oe-select-chevron,
+  .oe-switch,
+  .oe-switch::before {
+    transition: none;
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Startup error page (Req 13.9): plain and readable without theme or translations.
+// ---------------------------------------------------------------------------------------------
+
 .startup-error {
   max-width: 40rem;
   margin: 15vh auto 0;
@@ -278,11 +1093,6 @@ body {
   }
 }
 
-.shell-search {
-  display: block;
-  margin-top: 2rem;
-}
-
 .shell-results {
-  margin-top: 2.5rem;
+  display: block;
 }
