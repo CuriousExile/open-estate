@@ -1,7 +1,8 @@
 import type { z } from 'zod';
 
 /**
- * Single error catalog for Search_API, MCP_Server and Admin-API (Req 3.4).
+ * Single error catalog for Search_API, MCP_Server, Admin-API and Management_API (Req 3.4; listing
+ * management Req 16.3).
  * Codes and HTTP status follow the "Fehlerkatalog" in design.md.
  */
 export const ERROR_CODES = [
@@ -25,6 +26,20 @@ export const ERROR_CODES = [
   'UNKNOWN_TOOL',
   'DELETION_TARGET_NOT_FOUND',
   'INVALID_RATE_LIMIT',
+  // Management_API (listing management, design: "Fehlerkatalog-Erweiterung").
+  'AUTH_MISSING',
+  'AUTH_INVALID',
+  'MACHINE_ACCESS_EXPIRED',
+  'AGENCY_SUSPENDED',
+  'METRIC_NOT_ALLOWED',
+  'VERSION_CONFLICT',
+  'CUSTOM_ID_TAKEN',
+  'DELETION_BLOCKED',
+  'LAST_AGENCY_ADMIN',
+  'LAST_PLATFORM_ADMIN',
+  'USER_ALREADY_ASSIGNED',
+  'INVALID_PERMISSION',
+  'UNKNOWN_METRIC',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -50,6 +65,19 @@ export const ERROR_HTTP_STATUS = {
   SERVICE_UNAVAILABLE: 503,
   DELETION_TARGET_NOT_FOUND: 404,
   INVALID_RATE_LIMIT: 400,
+  AUTH_MISSING: 401,
+  AUTH_INVALID: 401,
+  MACHINE_ACCESS_EXPIRED: 401,
+  AGENCY_SUSPENDED: 403,
+  METRIC_NOT_ALLOWED: 403,
+  VERSION_CONFLICT: 409,
+  CUSTOM_ID_TAKEN: 409,
+  DELETION_BLOCKED: 409,
+  LAST_AGENCY_ADMIN: 409,
+  LAST_PLATFORM_ADMIN: 409,
+  USER_ALREADY_ASSIGNED: 409,
+  INVALID_PERMISSION: 400,
+  UNKNOWN_METRIC: 400,
 } as const satisfies Record<Exclude<ErrorCode, 'UNKNOWN_TOOL'>, number>;
 
 export interface ApiError {

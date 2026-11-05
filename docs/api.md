@@ -637,6 +637,19 @@ The HTTP status is 400 if any entry is a validation error. Rate-limit errors als
 | `UNKNOWN_TOOL`              | —    | MCP only: unknown tool name, sent as a JSON-RPC error ([mcp.md](mcp.md#errors)).        |
 | `DELETION_TARGET_NOT_FOUND` | 404  | Admin API only: a deletion request matched no listing.                                  |
 | `INVALID_RATE_LIMIT`        | 400  | Admin API only: rate-limit value out of range.                                          |
+| `AUTH_MISSING`              | 401  | Management API only: no `Authorization` header.                                         |
+| `AUTH_INVALID`              | 401  | Management API only: token invalid/expired, unknown/revoked machine access, no access.  |
+| `MACHINE_ACCESS_EXPIRED`    | 401  | Management API only: the machine access has expired.                                    |
+| `AGENCY_SUSPENDED`          | 403  | Management API only: the caller's agency is suspended.                                  |
+| `METRIC_NOT_ALLOWED`        | 403  | Management API only: metric outside the caller's scope (`details.code`).                |
+| `VERSION_CONFLICT`          | 409  | Management API only: `baseVersion` is outdated (`details.currentVersion`).              |
+| `CUSTOM_ID_TAKEN`           | 409  | Management API only: the custom id belongs to another listing of the agency.            |
+| `DELETION_BLOCKED`          | 409  | Management API only: the id or custom id is on the deletion blocklist.                  |
+| `LAST_AGENCY_ADMIN`         | 409  | Management API only: the agency would be left without an agency admin.                  |
+| `LAST_PLATFORM_ADMIN`       | 409  | Management API only: the platform would be left without a platform admin.               |
+| `USER_ALREADY_ASSIGNED`     | 409  | Management API only: the user already belongs to an agency or is a platform admin.      |
+| `INVALID_PERMISSION`        | 400  | Management API only: unknown or non-grantable permission (`details.permission`).        |
+| `UNKNOWN_METRIC`            | 400  | Management API only: unknown metric code (`details.code`).                              |
 
 The `ErrorCode` schema in `/openapi.json` lists the same codes. A 503 never reveals internal details.
 

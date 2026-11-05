@@ -27,7 +27,7 @@ const HASH_PATTERN = /^[0-9a-f]{64}$/;
  * (e.g. `types`) sorted and deduplicated since they are sets semantically. Hand-written instead
  * of relying on `JSON.stringify` key order (integer-like keys would be reordered).
  */
-function canonicalJson(value: unknown): string | undefined {
+export function canonicalJson(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) {
