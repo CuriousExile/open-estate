@@ -6,13 +6,14 @@ import {
   provideZonelessChangeDetection,
   type ApplicationConfig,
 } from '@angular/core';
-import { provideRouter, withComponentInputBinding } from '@angular/router';
+import { provideRouter, withComponentInputBinding, withViewTransitions } from '@angular/router';
 import {
   provideTransloco,
   provideTranslocoFallbackStrategy,
   provideTranslocoMissingHandler,
 } from '@jsverse/transloco';
 import { routes } from './app.routes';
+import { isSearchLayoutChange } from './search/search-url';
 import { bearerInterceptor } from './auth/bearer.interceptor';
 import { provideOidcAuth } from './auth/oidc-config';
 import { DefaultLocaleFallbackStrategy, FallbackMissingHandler } from './locale/transloco-fallback';
@@ -24,7 +25,21 @@ export const appConfig: ApplicationConfig = {
     provideBrowserGlobalErrorListeners(),
     provideZonelessChangeDetection(),
     provideHttpClient(withFetch(), withInterceptors([bearerInterceptor])),
-    provideRouter(routes, withComponentInputBinding()),
+    provideRouter(
+      routes,
+      withComponentInputBinding(),
+      // Animates the start page ↔ "searched" layout (search card → sticky header); every other
+      // navigation and reduced motion skip the transition.
+      withViewTransitions({
+        skipInitialTransition: true,
+        onViewTransitionCreated: ({ transition, from, to }) => {
+          const reduced = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+          if (reduced || !isSearchLayoutChange(from.queryParams, to.queryParams)) {
+            transition.skipTransition();
+          }
+        },
+      }),
+    ),
     // Portal login; configuration is read from runtime-config.json on the first check.
     provideOidcAuth(),
     provideTransloco({

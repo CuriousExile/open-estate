@@ -13,17 +13,21 @@ import {
 import type { SearchParams } from '../api/api-client';
 import { FALLBACK_SEARCH_META, type SearchMeta } from './search-meta';
 
-/** Form fields in visual order; the first invalid one receives focus after submit. */
+/**
+ * Form fields in visual order — main bar first, then the "More filters" view — and the URL query
+ * parameters of a search (same names as `SearchParams`). The first invalid one receives focus.
+ */
 export const SEARCH_FORM_FIELDS = [
   'offerType',
   'city',
+  'group',
   'priceMin',
   'priceMax',
   'roomsMin',
   'roomsMax',
   'areaMin',
   'areaMax',
-  'group',
+  'postalCode',
   'hasTour',
 ] as const;
 export type SearchFormField = (typeof SEARCH_FORM_FIELDS)[number];
@@ -39,13 +43,15 @@ export interface SearchFormValues {
   areaMin: string;
   areaMax: string;
   city: string;
+  /** Exact postal code ("More filters"); optional so older callers need not set it. */
+  postalCode?: string;
   /** Group code or `''`. */
   group: string;
   hasTour: boolean;
 }
 
 /** Initial state: offer type `SALE` preselected (Req 12.10), no other filter. */
-export const INITIAL_SEARCH_FORM_VALUES: SearchFormValues = {
+export const INITIAL_SEARCH_FORM_VALUES: Required<SearchFormValues> = {
   offerType: 'SALE',
   priceMin: '',
   priceMax: '',
@@ -54,6 +60,7 @@ export const INITIAL_SEARCH_FORM_VALUES: SearchFormValues = {
   areaMin: '',
   areaMax: '',
   city: '',
+  postalCode: '',
   group: '',
   hasTour: false,
 };
@@ -113,6 +120,8 @@ function toRawQuery(values: SearchFormValues): SearchParams {
     if (value !== '') query[field] = value;
   }
   if (values.city !== '') query.city = values.city;
+  const postalCode = values.postalCode?.trim() ?? '';
+  if (postalCode !== '') query.postalCode = postalCode;
   if (values.group !== '') query.group = values.group;
   if (values.hasTour) query.hasTour = true;
   return query;
@@ -141,6 +150,8 @@ function invalidValueMessage(field: SearchFormField): Omit<SearchFormError, 'fie
       return { messageKey: 'search.error.area', params: AREA_PARAMS };
     case 'city':
       return { messageKey: 'search.error.text', params: { max: B.city.max } };
+    case 'postalCode':
+      return { messageKey: 'search.error.text', params: { max: B.postalCode.max } };
     default:
       return { messageKey: 'search.error.invalid' };
   }
