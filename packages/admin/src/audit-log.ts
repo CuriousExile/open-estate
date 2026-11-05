@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { PutCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
+import { AUDIT_LOG_PARTITION_KEY, AUDIT_LOG_SORT_KEY } from '@open-estate/core';
 
-/** Partition keys of the `AuditLog` table (design.md, data model). `deletion` is written by 14.3. */
+// Key layout of the shared `AuditLog` table is defined by `AuditService` in core.
+export { AUDIT_LOG_PARTITION_KEY, AUDIT_LOG_SORT_KEY };
+
+/**
+ * Partition keys of the `AuditLog` table written by the Admin_API (design.md, data model).
+ * `deletion` is written by 14.3; the management categories (`management`, `access-denied`) are
+ * written by core's `AuditService`.
+ */
 export const AUDIT_CATEGORIES = ['access-config', 'deletion'] as const;
 export type AuditCategory = (typeof AUDIT_CATEGORIES)[number];
 
@@ -44,9 +52,6 @@ export class InMemoryAuditLog implements AuditLog {
     else this.entries[index] = copy;
   }
 }
-
-export const AUDIT_LOG_PARTITION_KEY = 'category';
-export const AUDIT_LOG_SORT_KEY = 'timestampId';
 
 export interface DynamoDbAuditLogOptions {
   client: DynamoDBDocumentClient;

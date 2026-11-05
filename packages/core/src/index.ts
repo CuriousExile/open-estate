@@ -43,5 +43,6 @@ export * from './management/listing-key-store';
 export * from './management/snapshot-store';
 export * from './management/metric-counter-store';
 export * from './management/versioned-listing-writer';
+export * from './management/audit-service';
 export * from './management/authenticator';
 export * from './management/machine-access-service';
