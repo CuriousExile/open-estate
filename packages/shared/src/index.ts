@@ -6,6 +6,7 @@ export * from './locale';
 export * from './locale-selection';
 export * from './management';
 export * from './money';
+export * from './permissions';
 export * from './result';
 export * from './schema/import-config';
 export * from './schema/json-schema';
