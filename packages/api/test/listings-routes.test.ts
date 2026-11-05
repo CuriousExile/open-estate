@@ -42,6 +42,7 @@ const FILES: Record<string, string> = {
   'tour-providers.json': JSON.stringify({
     providers: [{ code: 'matterport', hostnames: ['my.matterport.com'] }],
   }),
+  'exchange-rates.json': JSON.stringify({ base: 'EUR', asOf: '2026-11-01', rates: { USD: 1.16 } }),
 };
 
 const BOTH_OFFERS = exampleListing('home-1', {
@@ -203,9 +204,40 @@ describe('initListingsHandler: success per route', () => {
       defaultCurrency: 'EUR',
       offerTypes: ['SALE', 'RENT'],
       tourProviders: ['my.matterport.com'],
+      exchangeRates: { base: 'EUR', asOf: '2026-11-01', rates: { USD: 1.16 } },
     });
     // Both go through the guard, neither reads listings.
     expect(commands()).toEqual(['UpdateCommand', 'UpdateCommand']);
+  });
+
+  it('GET /listings converts price bounds into the offer currencies with convertCurrency=true', async () => {
+    const filters: unknown[] = [];
+    const send = tableSend([[BOTH_OFFERS]]);
+    const { handler } = await setup((command, options) => {
+      if (command instanceof QueryCommand) filters.push(command.input.ExpressionAttributeValues);
+      return send(command, options);
+    });
+    const search = (params: Record<string, string>) =>
+      handler({
+        ...REQUEST,
+        resource: '/listings',
+        queryStringParameters: {
+          offerType: 'SALE',
+          currency: 'USD',
+          priceMax: '530000',
+          ...params,
+        },
+      });
+
+    await search({});
+    await search({ convertCurrency: 'true' });
+    // Without conversion only USD offers; with it also EUR offers up to 530,000 / 1.16 EUR.
+    const values = (i: number) => Object.values(filters[i] as object) as unknown[];
+    expect(values(0)).toEqual(expect.arrayContaining(['USD', 530_000_00]));
+    expect(values(0)).not.toContain('EUR');
+    expect(values(1)).toEqual(
+      expect.arrayContaining(['USD', 530_000_00, 'EUR', Math.floor(530_000_00 / 1.16)]),
+    );
   });
 });
 

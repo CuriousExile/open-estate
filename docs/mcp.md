@@ -191,7 +191,8 @@ The input schemas in `tools/list` are generated from the same request schemas as
 in `/openapi.json`, with the same types, bounds, defaults and configured enumerations. The rules from
 [`GET /listings`](api.md#get-listings) apply unchanged: filters are combined with AND, `group` and
 `types` exclude each other, a price filter needs `offerType`, and `currency` defaults to the
-deployment's default currency.
+deployment's default currency. `convertCurrency: true` also matches offers in other currencies,
+converted with the static exchange rates of `/meta`.
 
 - Pass amounts and areas as decimal strings (`"1300"`, `"92.40"`), as advertised in the schema. JSON
   numbers are accepted too and converted.
@@ -267,7 +268,7 @@ parameter, as in the [parameter table](api.md#get-listings).
     "tools": [
       {
         "name": "search_listings",
-        "description": "Search real estate listings by offer type, price, rooms, area, location (city, postal code, country as ISO 3166-1 alpha-2), property group or types and virtual tour. Amounts are decimal strings in the currency unit, area in m². Results are ordered and paged like GET /listings; pass nextPageToken as pageToken to fetch the next page. `lang` selects the language of title and description.",
+        "description": "Search real estate listings by offer type, price, rooms, area, location (city, postal code, country as ISO 3166-1 alpha-2), property group or types and virtual tour. Amounts are decimal strings in the currency unit, area in m². A price filter compares in `currency` (default: the default currency); with convertCurrency=true offers in other currencies match after conversion with the static exchange rates. Results are ordered and paged like GET /listings; pass nextPageToken as pageToken to fetch the next page. `lang` selects the language of title and description.",
         "inputSchema": {
           "type": "object",
           "properties": {

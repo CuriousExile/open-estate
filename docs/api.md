@@ -10,7 +10,7 @@ configured taxonomy, languages and bounds. AI agents can use the same functions 
 | `GET`  | `/listings`      | [Search listings](#get-listings) with filters, paged                       |
 | `GET`  | `/listings/{id}` | [Get one listing](#get-listingsid) with all offers, media and tours        |
 | `GET`  | `/openapi.json`  | [OpenAPI 3.1 document](#get-openapijson) (machine-readable API schema)     |
-| `GET`  | `/meta`          | [Platform metadata](#get-meta): taxonomy, locales, currency, tours, bounds |
+| `GET`  | `/meta`          | [Platform metadata](#get-meta): taxonomy, locales, currencies, tours, bounds |
 | `GET`  | `/locations`     | [Countries and cities](#get-locations) that have listings, with counts     |
 | `POST` | `/mcp`           | MCP server (JSON-RPC 2.0), see [mcp.md](mcp.md)                            |
 
@@ -142,6 +142,7 @@ listings.
 | `priceMin`   | decimal string           | 0.01 – 999999999.99, ≤ 2 fraction digits    | Inclusive lower bound of the offer price (`coldRent` for `RENT`). Requires `offerType`.          |
 | `priceMax`   | decimal string           | 0.01 – 999999999.99, ≤ 2 fraction digits    | Inclusive upper bound of the offer price (`coldRent` for `RENT`). Requires `offerType`.          |
 | `currency`   | string                   | ISO 4217, `^[A-Z]{3}$`                      | Currency of `priceMin`/`priceMax`. Default: the deployment's `defaultCurrency` (see `/meta`).    |
+| `convertCurrency` | boolean             | `true`, `false`                             | `true`: offers in other currencies match too, after converting the bounds (see below).           |
 | `roomsMin`   | number                   | 0 – 99.5, step 0.5                          | Inclusive lower bound of the number of rooms.                                                    |
 | `roomsMax`   | number                   | 0 – 99.5, step 0.5                          | Inclusive upper bound of the number of rooms.                                                    |
 | `areaMin`    | decimal string           | 1.00 – 100000.00 (m²), ≤ 2 fraction digits  | Inclusive lower bound of the living or plot area.                                                |
@@ -169,10 +170,17 @@ Filter rules:
   than 50 `types`) is `400 INVALID_FILTER_COUNT`.
 - **Price needs an offer type.** `priceMin`/`priceMax` apply to the offer of the given `offerType`:
   `price` for `SALE` and `coldRent` for `RENT`. A price bound without `offerType` is
-  `400 OFFER_TYPE_REQUIRED`. Prices are compared in one currency, with no conversion: `currency`, or
-  `defaultCurrency` if you leave it out. Offers in another currency don't match.
+  `400 OFFER_TYPE_REQUIRED`. By default prices are compared in one currency, with no conversion:
+  `currency`, or `defaultCurrency` if you leave it out. Offers in another currency don't match.
   `offerType=RENT&priceMax=1300` finds listings that can be rented for at most 1,300 EUR cold rent,
   including listings that are also for sale.
+- **Currency conversion.** With `convertCurrency=true` the bounds are converted into every
+  currency of the static exchange rates (`exchangeRates` in [`/meta`](#get-meta)), and an offer
+  matches if its amount lies within the bounds of its own currency. The converted lower bound is
+  rounded up and the upper bound down to whole cents, so the result is what you get by converting
+  each price into `currency`. Offers in a currency without a rate only match if it is `currency`
+  itself; without configured rates the flag changes nothing. The rates are maintained by hand and
+  are approximate (see [known issues](known-issues.md)).
 - **Tours.** `hasTour=true` checks the tour hosts against the tour-provider allow-list that is
   current when you search (`tourProviders` in `/meta`).
 - **Country.** `country` is an exact, upper-case ISO 3166-1 alpha-2 code (`th` is
@@ -351,6 +359,49 @@ Vary: Origin
       "tours": [
         { "url": "https://my.matterport.com/show/?m=Zh14WDtkjdC", "providerCode": "matterport" }
       ],
+      "source": "example-partner",
+      "lastImportedAt": "2026-11-05T03:00:12.000Z",
+      "lastRunId": "run-20261105-0300"
+    }
+  ]
+}
+```
+
+### Example: price filter in another currency
+
+Listings for sale from 800,000 USD, converting with the static exchange rates. The Altona house
+costs 789,000 EUR, about 915,000 USD, so it matches; the Mitte apartment (450,000 EUR, about
+522,000 USD) doesn't. The prices stay in their own currency. Without `convertCurrency=true`
+nothing matches, because no offer is in USD:
+
+```sh request:search-converted
+curl -sS "${API_URL}listings?offerType=SALE&priceMin=800000&currency=USD&convertCurrency=true&lang=en"
+```
+
+```http head:search-converted
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Vary: Origin
+```
+
+```json response:search-converted
+{
+  "items": [
+    {
+      "id": "hamburg-altona-0311",
+      "title": "Reihenhaus mit Garten in Altona",
+      "description": "",
+      "deliveredLocale": "de",
+      "originalLocale": "de",
+      "offers": [{ "offerType": "SALE", "price": "789000.00", "currency": "EUR" }],
+      "listingType": "terraced",
+      "group": "house",
+      "rooms": 5,
+      "area": "134.00",
+      "address": { "city": "Hamburg", "postalCode": "22765", "country": "DE" },
+      "sourceUrl": "https://partner.example/expose/hamburg-altona-0311",
+      "media": [],
+      "tours": [],
       "source": "example-partner",
       "lastImportedAt": "2026-11-05T03:00:12.000Z",
       "lastRunId": "run-20261105-0300"
@@ -540,9 +591,11 @@ operation. Fetch the full document from your deployment.
 
 Returns what a client needs to build a search form: the property taxonomy (every group with its
 type codes, in configuration order), the offer types, the enabled locales with labels and the
-default locale, the default currency for price filters, the host names of the allowed tour providers
-and all field bounds. Amount and area bounds are decimal strings. The cache rules are the same as
-for `/openapi.json`.
+default locale, the default currency for price filters, the static exchange rates (if the
+operator configured `exchange-rates.json`, see [configuration](configuration.md#exchange-rates)),
+the host names of the allowed tour providers and all field bounds. `exchangeRates.rates[X]` is the
+number of units of `X` per one unit of `base`. Amount and area bounds are decimal strings. The
+cache rules are the same as for `/openapi.json`.
 
 ```sh request:meta
 curl -sS "${API_URL}meta"
@@ -575,6 +628,11 @@ Vary: Origin
   },
   "defaultCurrency": "EUR",
   "tourProviders": ["my.matterport.com"],
+  "exchangeRates": {
+    "base": "EUR",
+    "asOf": "2026-11-01",
+    "rates": { "CHF": 0.93, "GBP": 0.88, "THB": 37.9, "USD": 1.16 }
+  },
   "bounds": {
     "listing": {
       "id": { "min": 1, "max": 128 },

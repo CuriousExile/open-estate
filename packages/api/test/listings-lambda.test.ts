@@ -100,7 +100,7 @@ describe('createListingsHandlerFromEnv', () => {
     expect(first.statusCode).toBe(200);
     expect(JSON.parse(first.body)).toEqual({ items: [] });
     expect(second.statusCode).toBe(200);
-    expect(s3Send).toHaveBeenCalledTimes(3); // taxonomy, i18n, tour providers — once
+    expect(s3Send).toHaveBeenCalledTimes(4); // taxonomy, i18n, tour providers, rates — once
     // Counter, suspended agencies (cached for 60 s, so only once), listings.
     expect(dynamoSend.mock.calls.map(([c]) => [c.constructor.name, c.input.TableName])).toEqual([
       ['UpdateCommand', 'rate-limit-counters'],
@@ -144,7 +144,9 @@ describe('createListingsHandlerFromEnv', () => {
       defaultCurrency: 'EUR',
       tourProviders: ['my.matterport.com'],
     });
-    expect(s3Send).toHaveBeenCalledTimes(3);
+    // exchange-rates.json is optional: missing here, so /meta has no `exchangeRates`.
+    expect(JSON.parse(meta.body)).not.toHaveProperty('exchangeRates');
+    expect(s3Send).toHaveBeenCalledTimes(4);
   });
 
   it('answers an unrouted resource with 404 without touching the stores', async () => {

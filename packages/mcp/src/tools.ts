@@ -71,8 +71,11 @@ export function toolDefinitions(schemas: Schemas): Tool[] {
         'Search real estate listings by offer type, price, rooms, area, location (city, postal ' +
         'code, country as ISO 3166-1 alpha-2), property ' +
         'group or types and virtual tour. Amounts are decimal strings in the currency unit, ' +
-        'area in m². Results are ordered and paged like GET /listings; pass nextPageToken as ' +
-        'pageToken to fetch the next page. `lang` selects the language of title and description.',
+        'area in m². A price filter compares in `currency` (default: the default currency); ' +
+        'with convertCurrency=true offers in other currencies match after conversion with the ' +
+        'static exchange rates. Results are ordered and paged like GET /listings; pass ' +
+        'nextPageToken as pageToken to fetch the next page. `lang` selects the language of ' +
+        'title and description.',
       inputSchema: inputSchema(schemas.searchQuery),
       annotations: { title: 'Search listings', ...readOnly },
     },

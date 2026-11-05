@@ -10,6 +10,7 @@ import {
   requestSchemaOverride,
   SEARCH_QUERY_BOUNDS,
   tourHostIndex,
+  type ExchangeRatesConfig,
   type LocaleConfig,
   type Schemas,
   type Taxonomy,
@@ -43,6 +44,8 @@ export interface DiscoveryInput {
   locales: LocaleConfig;
   defaultCurrency: string;
   tourProviders: TourProvidersConfig;
+  /** Optional static exchange rates; `/meta` omits `exchangeRates` without them. */
+  exchangeRates?: ExchangeRatesConfig | undefined;
 }
 
 export const API_TITLE = 'open-estate Search API';
@@ -81,10 +84,13 @@ export interface MetaDocument {
   defaultCurrency: string;
   /** Lower-cased host names of the tour allow-list (Req 16.6). */
   tourProviders: string[];
+  /** `exchange-rates.json` as configured; omitted if the file is missing. */
+  exchangeRates?: ExchangeRatesConfig;
   bounds: ReturnType<typeof fieldBounds>;
 }
 
 export function buildMetaDocument(input: DiscoveryInput): MetaDocument {
+  const rates = input.exchangeRates;
   return {
     taxonomy: {
       groups: input.taxonomy.groups.map((g) => ({ code: g.code, types: [...g.types] })),
@@ -96,6 +102,9 @@ export function buildMetaDocument(input: DiscoveryInput): MetaDocument {
     },
     defaultCurrency: input.defaultCurrency,
     tourProviders: [...tourHostIndex(input.tourProviders).keys()],
+    ...(rates !== undefined && {
+      exchangeRates: { base: rates.base, asOf: rates.asOf, rates: { ...rates.rates } },
+    }),
     bounds: fieldBounds(),
   };
 }
@@ -172,6 +181,18 @@ function componentSchemas(enums: Schemas['enums']) {
       }),
       defaultCurrency: Currency,
       tourProviders: z.array(z.string()).meta({ description: 'Allowed 3D-tour host names' }),
+      exchangeRates: z
+        .object({
+          base: Currency,
+          asOf: z.string().meta({ format: 'date' }),
+          rates: z.record(Currency, z.number()),
+        })
+        .optional()
+        .meta({
+          description:
+            'Static exchange rates (one unit of base = rates[X] units of X); used for display ' +
+            'conversion and convertCurrency=true. Omitted if not configured.',
+        }),
       bounds: z.object({
         listing: z.record(z.string(), bound),
         search: z.record(z.string(), bound),
@@ -253,6 +274,10 @@ function parameterDocs(input: DiscoveryInput): Record<string, string> {
     priceMin: 'Inclusive lower bound of the offer price (cold rent for RENT); requires offerType.',
     priceMax: 'Inclusive upper bound of the offer price (cold rent for RENT); requires offerType.',
     currency: `Currency of priceMin/priceMax; default ${input.defaultCurrency}.`,
+    convertCurrency:
+      'true: offers in other currencies match as well, compared after converting priceMin/' +
+      'priceMax with the static exchange rates of /meta (exchangeRates). Default: only offers ' +
+      'in `currency` match.',
     roomsMin: 'Inclusive lower bound of the number of rooms.',
     roomsMax: 'Inclusive upper bound of the number of rooms.',
     areaMin: 'Inclusive lower bound of the living or plot area in m².',
@@ -360,7 +385,7 @@ function operations(input: DiscoveryInput) {
     },
     meta: {
       operationId: 'getMeta',
-      summary: 'Taxonomy, locales, default currency, tour hosts and field bounds',
+      summary: 'Taxonomy, locales, currencies, tour hosts and field bounds',
       responses: {
         200: { description: 'Platform metadata.', content: jsonRef('Meta') },
         ...guardErrors,

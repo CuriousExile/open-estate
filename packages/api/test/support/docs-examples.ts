@@ -21,6 +21,7 @@ import {
   buildSchemas,
   DEFAULT_TAXONOMY_CONFIG,
   type Listing,
+  type ExchangeRatesConfig,
   type LocaleConfig,
   type TourProvidersConfig,
 } from '@open-estate/shared';
@@ -63,6 +64,11 @@ export const DOC_LOCALES: LocaleConfig = {
 };
 export const DOC_TOUR_PROVIDERS: TourProvidersConfig = {
   providers: [{ code: 'matterport', hostnames: ['my.matterport.com'] }],
+};
+export const DOC_EXCHANGE_RATES: ExchangeRatesConfig = {
+  base: 'EUR',
+  asOf: '2026-11-01',
+  rates: { CHF: 0.93, GBP: 0.88, THB: 37.9, USD: 1.16 },
 };
 export const DOC_DEFAULT_CURRENCY = 'EUR';
 /** Default rate limit (Req 17.1). */
@@ -177,11 +183,13 @@ export function docReadModel(mode: AccessConfig['mode'] = 'open'): DocReadModel 
     locales: DOC_LOCALES,
     defaultCurrency: DOC_DEFAULT_CURRENCY,
     tourProviders: DOC_TOUR_PROVIDERS,
+    exchangeRates: DOC_EXCHANGE_RATES,
     search: createSearchService({
       provider,
       taxonomy: DOC_TAXONOMY,
       tourProviders: DOC_TOUR_PROVIDERS,
       defaultCurrency: DOC_DEFAULT_CURRENCY,
+      exchangeRates: DOC_EXCHANGE_RATES,
     }),
     listings: createListingService({ provider, taxonomy: DOC_TAXONOMY }),
     locations: createLocationService({ provider }),
