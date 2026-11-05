@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    // `..` because the shared test arbitraries (packages/shared/test/arbitraries) are compiled here;
+    // they are not part of the shared package build. Output: dist/loadtest/src, dist/shared/test.
+    "rootDir": "..",
+    "outDir": "dist",
+    "resolveJsonModule": true
+  },
+  "include": ["src/**/*.ts", "src/**/*.json", "../shared/test/arbitraries/*.ts"],
+  "references": [{ "path": "../shared" }, { "path": "../infra/scripts" }]
+}

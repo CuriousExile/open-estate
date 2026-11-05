@@ -1,0 +1,21 @@
+{
+  "name": "@open-estate/loadtest",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Load-test data generator and k6 script for the reference load (Req 2.4, 11.3)",
+  "license": "Apache-2.0",
+  "scripts": {
+    "generate": "tsc -b . && node dist/loadtest/src/generate-cli.js",
+    "k6:search": "k6 run -e SCENARIO=search k6/api-load.js",
+    "k6:detail": "k6 run -e SCENARIO=detail k6/api-load.js",
+    "k6:all": "k6 run -e SCENARIO=all k6/api-load.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudformation": "3.1162.0",
+    "@aws-sdk/client-dynamodb": "3.1162.0",
+    "@aws-sdk/lib-dynamodb": "3.1162.0",
+    "@open-estate/infra": "0.0.0",
+    "@open-estate/shared": "0.0.0",
+    "fast-check": "4.10.2"
+  }
+}

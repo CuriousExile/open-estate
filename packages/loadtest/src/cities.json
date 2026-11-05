@@ -1,0 +1,20 @@
+[
+  { "city": "Berlin", "postalCode": "10115", "country": "DE", "lat": 52.52, "lon": 13.405 },
+  { "city": "Hamburg", "postalCode": "20095", "country": "DE", "lat": 53.551, "lon": 9.993 },
+  { "city": "München", "postalCode": "80331", "country": "DE", "lat": 48.137, "lon": 11.575 },
+  { "city": "Köln", "postalCode": "50667", "country": "DE", "lat": 50.938, "lon": 6.96 },
+  {
+    "city": "Frankfurt am Main",
+    "postalCode": "60311",
+    "country": "DE",
+    "lat": 50.11,
+    "lon": 8.682
+  },
+  { "city": "Stuttgart", "postalCode": "70173", "country": "DE", "lat": 48.775, "lon": 9.182 },
+  { "city": "Düsseldorf", "postalCode": "40213", "country": "DE", "lat": 51.227, "lon": 6.773 },
+  { "city": "Leipzig", "postalCode": "04109", "country": "DE", "lat": 51.34, "lon": 12.375 },
+  { "city": "Hannover", "postalCode": "30159", "country": "DE", "lat": 52.375, "lon": 9.732 },
+  { "city": "Wien", "postalCode": "1010", "country": "AT", "lat": 48.208, "lon": 16.373 },
+  { "city": "Zürich", "postalCode": "8001", "country": "CH", "lat": 47.377, "lon": 8.541 },
+  { "city": "Graz", "postalCode": "8010", "country": "AT", "lat": 47.071, "lon": 15.439 }
+]
