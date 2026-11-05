@@ -44,3 +44,4 @@ export * from './management/snapshot-store';
 export * from './management/metric-counter-store';
 export * from './management/versioned-listing-writer';
 export * from './management/authenticator';
+export * from './management/machine-access-service';
