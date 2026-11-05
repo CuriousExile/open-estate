@@ -7,7 +7,7 @@ import {
   page,
   RunRejectionView,
 } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 import type {
   ManagementRequestOptions,
   ManagementResult,

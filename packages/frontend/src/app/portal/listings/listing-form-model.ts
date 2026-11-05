@@ -19,7 +19,7 @@ import {
   type OfferType,
   type Taxonomy,
 } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 
 export interface OfferValues {
   offerType: OfferType;

@@ -9,7 +9,7 @@ import {
   type Schemas,
   type Taxonomy,
 } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 
 /**
  * `/meta` as far as the frontend uses it. Each part is validated on its own so a broken optional

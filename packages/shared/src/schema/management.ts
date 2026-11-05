@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import { CONTENT_MASK, ListingContent } from '../content';
 import type { ApiIssueParams } from '../errors';
 import {

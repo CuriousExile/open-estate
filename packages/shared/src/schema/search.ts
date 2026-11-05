@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import { toApiErrors, type ApiError, type ApiIssueParams } from '../errors';
 import { Area, Money } from '../money';
 import { err, ok, type Result } from '../result';

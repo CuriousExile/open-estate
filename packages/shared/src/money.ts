@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import { integer } from './schema/non-aborting';
 
 /** Fixed scale for all currencies and areas: values are stored as integer hundredths. */

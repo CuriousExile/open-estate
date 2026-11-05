@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import { LISTING_BOUNDS, ListingBase, piiFieldPaths } from './listing';
 
 // Import configuration files (design: "Konfigurationsmodelle"). Validated with these schemas at

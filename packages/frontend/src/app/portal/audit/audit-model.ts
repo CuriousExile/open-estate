@@ -1,7 +1,7 @@
 // Framework-free model and Management_API call of the agency's Audit_Log (Req 11.4, 11.5): the API
 // returns only entries of the caller's agency, newest first, filtered by actor, action and period.
 import { AuditEntry, AuditLogQuery, MANAGEMENT_BOUNDS, page } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 import type { ManagementCaller } from '../shared/management-caller';
 
 export type AuditRecord = z.output<typeof AuditEntry>;

@@ -1,5 +1,5 @@
 import { isValidLocaleTag } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 
 const LocaleTag = z.string().refine(isValidLocaleTag, { message: 'must be a valid BCP 47 locale' });
 

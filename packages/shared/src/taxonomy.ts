@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 import defaultTaxonomyJson from './config/taxonomy.json';
 
 // Property taxonomy (Req 15.1, 15.2, 15.4). The Zod schemas below only check the structure of

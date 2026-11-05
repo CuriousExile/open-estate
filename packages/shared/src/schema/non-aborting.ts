@@ -1,4 +1,4 @@
-import { z } from 'zod';
+import * as z from 'zod';
 
 // Non-aborting replacements for Zod checks that end validation of the whole object.
 //

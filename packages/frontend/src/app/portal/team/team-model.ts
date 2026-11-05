@@ -9,7 +9,7 @@ import {
   UpdateMemberRequest,
   type AgencyRole,
 } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 import { dryRunImpact, type ImpactLine, type ManagementCaller } from '../shared/management-caller';
 
 export const MEMBER_ROLES = AGENCY_ROLES;

@@ -13,7 +13,7 @@ import {
   MetricResult,
   page,
 } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 import type {
   HttpMethod,
   ManagementRequestOptions,

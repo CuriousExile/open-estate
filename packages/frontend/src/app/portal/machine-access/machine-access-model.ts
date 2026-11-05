@@ -11,7 +11,7 @@ import {
   page,
   type Permission,
 } from '@open-estate/shared';
-import { z } from 'zod';
+import * as z from 'zod';
 import { dryRunImpact, type ImpactLine, type ManagementCaller } from '../shared/management-caller';
 
 export type MachineAccess = z.output<typeof MachineAccessView>;

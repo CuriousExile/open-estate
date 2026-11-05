@@ -57,5 +57,20 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    // The `z` object (named or default export) bundles all of zod incl. every locale; the
+    // namespace import stays tree-shakeable for the frontend bundle. Type-only imports are fine.
+    files: ['packages/shared/src/**/*.ts', 'packages/frontend/src/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "ImportDeclaration[source.value='zod'][importKind!='type'] > :matches(ImportDefaultSpecifier, ImportSpecifier[imported.name='z'][importKind!='type'])",
+          message: "Use `import * as z from 'zod'` (tree-shakeable).",
+        },
+      ],
+    },
+  },
   prettier,
 );
