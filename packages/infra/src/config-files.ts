@@ -7,6 +7,7 @@ import {
   crawlerAllowlistSchema,
 } from '@open-estate/ingestion';
 import {
+  ExchangeRatesConfig,
   FlatTaxonomyConfig,
   NestedTaxonomyConfig,
   PiiAllowlistConfig,
@@ -69,6 +70,7 @@ export const CONFIG_FILE_VALIDATORS: Readonly<Record<string, ConfigFileValidator
   [READ_MODEL_CONFIG_FILES.taxonomy]: validateTaxonomyFile,
   [READ_MODEL_CONFIG_FILES.i18n]: schemaValidator(I18nConfig),
   [READ_MODEL_CONFIG_FILES.tourProviders]: schemaValidator(TourProvidersConfig),
+  [READ_MODEL_CONFIG_FILES.exchangeRates]: schemaValidator(ExchangeRatesConfig),
   [CONNECTOR_CONFIG_FILES.piiAllowlist]: schemaValidator(PiiAllowlistConfig),
   [CONNECTOR_CONFIG_FILES.crawlerAllowlist]: schemaValidator(crawlerAllowlistSchema),
   // Also drives the IngestionStack (schedules, timeouts, secrets), see `connectorsFromConfigFiles`.

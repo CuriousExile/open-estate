@@ -374,6 +374,13 @@ describe('DataStack', () => {
       DestinationBucketName: { Ref: Match.stringLikeRegexp('^ConfigBucket') },
       Prune: false,
     });
+    // One source per validated file: the six defaults (incl. exchange-rates.json) + i18n mirror.
+    const [deployment] = Object.values(
+      dev.data.findResources('Custom::CDKBucketDeployment', {
+        Properties: { DestinationBucketName: { Ref: Match.stringLikeRegexp('^ConfigBucket') } },
+      }),
+    ) as { Properties: { SourceObjectKeys: unknown[] } }[];
+    expect(deployment?.Properties.SourceObjectKeys).toHaveLength(7);
   });
 
   it('creates the SSM parameters with documented defaults (Req 9.3, 17.1)', () => {
@@ -448,6 +455,7 @@ describe('DataStack config validation at synth (Req 15.4)', () => {
     expect(files.map((f) => f.key)).toEqual([
       'connectors.json',
       'crawler-allowlist.json',
+      'exchange-rates.json',
       'i18n-config.json',
       'pii-allowlist.json',
       'taxonomy.json',
@@ -458,6 +466,8 @@ describe('DataStack config validation at synth (Req 15.4)', () => {
     expect(content('crawler-allowlist.json')).toEqual({ targets: [] });
     expect(content('pii-allowlist.json')).toEqual({ allowedFields: [] });
     expect(content('tour-providers.json')).toEqual({ providers: [] });
+    // Static sample rates (EUR base), maintained by hand.
+    expect(content('exchange-rates.json')).toMatchObject({ base: 'EUR' });
     expect(files.find((f) => f.key === 'i18n-config.json')?.content).toBe(
       readFileSync(DEFAULT_I18N_CONFIG_FILE, 'utf8'),
     );
@@ -538,6 +548,19 @@ describe('DataStack config validation at synth (Req 15.4)', () => {
 
   it('rejects a config directory that does not exist', () => {
     expect(() => loadConfigDirectory(path.join(dir, 'missing'))).toThrow(/cannot read directory/);
+  });
+
+  it('validates exchange-rates.json with the shared schema', () => {
+    write('taxonomy.json', { groups: [{ code: 'house', types: ['villa'] }] });
+    write('exchange-rates.json', { base: 'EUR', asOf: '2026-13-01', rates: { THB: -1 } });
+    const load = () => loadConfigDirectory(dir, mirror);
+    expect(load).toThrow(/exchange-rates\.json: asOf: /);
+    expect(load).toThrow(/exchange-rates\.json: rates\.THB: /);
+
+    const rates = { base: 'EUR', asOf: '2026-11-01', rates: { THB: 37.9 } };
+    write('exchange-rates.json', rates);
+    const file = load().find((f) => f.key === 'exchange-rates.json');
+    expect(JSON.parse(file?.content ?? '')).toEqual(rates);
   });
 });
 
@@ -721,8 +744,8 @@ describe('ApiStack', () => {
         {
           Action: ['s3:GetObject'],
           Resource: sorted(
-            ['taxonomy.json', 'i18n-config.json', 'tour-providers.json'].map((key) =>
-              join(dev.bucketArnRef, `/${key}`),
+            ['taxonomy.json', 'i18n-config.json', 'tour-providers.json', 'exchange-rates.json'].map(
+              (key) => join(dev.bucketArnRef, `/${key}`),
             ),
           ),
         },
