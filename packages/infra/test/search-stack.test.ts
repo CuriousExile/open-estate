@@ -3,22 +3,22 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
-import { AdminStack } from '../src/admin-stack';
 import { ApiStack } from '../src/api-stack';
-import { DEFAULT_CONFIG_DIR, resolveEnvironment, resolvePlatformSettings } from '../src/config';
-import { DataStack, frontendOriginParameterName } from '../src/data-stack';
 import {
-  FrontendStack,
-  frontendRuntimeSources,
-  tourProvidersFromConfigFiles,
-} from '../src/frontend-stack';
-import { connectorsFromConfigFiles, IngestionStack } from '../src/ingestion-stack';
+  DEFAULT_CONFIG_DIR,
+  ENV_CONTEXT_KEY,
+  resolveEnvironment,
+  resolvePlatformSettings,
+} from '../src/config';
+import { DataStack, frontendOriginParameterName } from '../src/data-stack';
+import { ManagementDataStack } from '../src/management-stack';
 import {
   INDEXER_INDEX_PERMISSIONS,
   OPENSEARCH_INDEX_NAME,
   READER_INDEX_PERMISSIONS,
   searchCollectionName,
 } from '../src/opensearch-access';
+import { buildPlatform } from '../src/platform';
 import { SearchStack } from '../src/search-stack';
 
 const CDK_CONTEXT = (
@@ -33,6 +33,9 @@ function synthApp(envName: string, context: Record<string, unknown> = {}) {
   const app = new App({ context: { ...CDK_CONTEXT, 'aws:cdk:bundling-stacks': [], ...context } });
   const settings = resolvePlatformSettings((key) => app.node.tryGetContext(key));
   const data = new DataStack(app, `${config.stackPrefix}-Data`, { environment: config, settings });
+  const managementData = new ManagementDataStack(app, `${config.stackPrefix}-ManagementData`, {
+    removalPolicy: config.removalPolicy,
+  });
   const search =
     settings.searchProvider === 'opensearch'
       ? new SearchStack(app, `${config.stackPrefix}-Search`, {
@@ -46,6 +49,7 @@ function synthApp(envName: string, context: Record<string, unknown> = {}) {
       listings: data.listingsTable,
       apiKeys: data.apiKeysTable,
       rateLimitCounters: data.rateLimitCountersTable,
+      agencies: managementData.agenciesTable,
     },
     config: { configBucket: data.configBucket, parameterNames: data.parameterNames },
     cors: { frontendOriginParameter: frontendOriginParameterName(envName), allowedOrigins: [] },
@@ -54,6 +58,7 @@ function synthApp(envName: string, context: Record<string, unknown> = {}) {
     searchProvider: settings.searchProvider,
     ...(search && { openSearch: search.target }),
     wafRateLimit: settings.wafRateLimit,
+    observability: settings.observability,
   });
   app.synth(); // fails on a dependency cycle
   return { app, data, search, api };
@@ -260,7 +265,7 @@ type CfnTemplate = {
 type Located = { stack: string; id: string; resource: CfnResource };
 
 /**
- * Data, Search (if enabled), Api, Ingestion, Admin and Frontend wired exactly like `app.ts`,
+ * The whole platform as wired by `app.ts` (`buildPlatform`),
  * synthesized into a temporary directory; returns the templates by stack name.
  */
 function synthFullApp(envName: string, searchProvider: 'dynamodb' | 'opensearch') {
@@ -279,71 +284,13 @@ function synthFullApp(envName: string, searchProvider: 'dynamodb' | 'opensearch'
       context: {
         ...CDK_CONTEXT,
         'aws:cdk:bundling-stacks': [],
+        [ENV_CONTEXT_KEY]: envName,
         configDir,
         frontendAssetDir: assetDir,
         searchProvider,
       },
     });
-    const settings = resolvePlatformSettings((key) => app.node.tryGetContext(key));
-    const frontendOriginParameter = frontendOriginParameterName(config.envName);
-    const data = new DataStack(app, `${config.stackPrefix}-Data`, {
-      environment: config,
-      settings,
-    });
-    const search =
-      settings.searchProvider === 'opensearch'
-        ? new SearchStack(app, `${config.stackPrefix}-Search`, {
-            envName: config.envName,
-            listings: data.listingsTable,
-            removalPolicy: config.removalPolicy,
-          })
-        : undefined;
-    const api = new ApiStack(app, `${config.stackPrefix}-Api`, {
-      tables: {
-        listings: data.listingsTable,
-        apiKeys: data.apiKeysTable,
-        rateLimitCounters: data.rateLimitCountersTable,
-      },
-      config: { configBucket: data.configBucket, parameterNames: data.parameterNames },
-      cors: { frontendOriginParameter, allowedOrigins: settings.corsAllowedOrigins },
-      stageName: config.stageName,
-      removalPolicy: config.removalPolicy,
-      searchProvider: settings.searchProvider,
-      ...(search && { openSearch: search.target }),
-      wafRateLimit: settings.wafRateLimit,
-    });
-    const ingestion = new IngestionStack(app, `${config.stackPrefix}-Ingestion`, {
-      tables: { listings: data.listingsTable, deletionBlocklist: data.deletionBlocklistTable },
-      configBucket: data.configBucket,
-      connectors: connectorsFromConfigFiles(data.configFiles),
-      removalPolicy: config.removalPolicy,
-    });
-    new AdminStack(app, `${config.stackPrefix}-Admin`, {
-      tables: {
-        listings: data.listingsTable,
-        apiKeys: data.apiKeysTable,
-        deletionRequests: data.deletionRequestsTable,
-        deletionBlocklist: data.deletionBlocklistTable,
-        auditLog: data.auditLogTable,
-      },
-      parameterNames: data.parameterNames,
-      reloadableFunctions: [
-        api.listingsFunction,
-        api.mcpFunction,
-        ...ingestion.connectors.map((connector) => connector.function),
-      ],
-      stageName: config.stageName,
-      removalPolicy: config.removalPolicy,
-    });
-    new FrontendStack(app, `${config.stackPrefix}-Frontend`, {
-      assetDir: settings.frontendAssetDir,
-      runtimeSources: frontendRuntimeSources(settings.i18nConfigFile),
-      apiUrl: api.api.url,
-      tourProviders: tourProvidersFromConfigFiles(data.configFiles),
-      frontendOriginParameter,
-      removalPolicy: config.removalPolicy,
-      priceClass: settings.frontendPriceClass,
-    });
+    buildPlatform(app);
     // Templates are read lazily from the outdir: load them before it is removed.
     const templates: Record<string, CfnTemplate> = Object.fromEntries(
       app.synth().stacks.map((s) => [s.stackName, s.template as CfnTemplate]),
@@ -432,13 +379,24 @@ function stackOutputRef(templates: Record<string, CfnTemplate>, stackName: strin
 /** AOSS names (collections and policies): lower-case letter first, `[a-z0-9-]`, 3–32 chars. */
 const AOSS_NAME = /^[a-z][a-z0-9-]{2,31}$/;
 
+/** Stacks of the default app (`buildPlatform`), sorted. */
+const PLATFORM_STACKS = [
+  'Admin',
+  'Api',
+  'Data',
+  'Frontend',
+  'Identity',
+  'Ingestion',
+  'Management',
+  'ManagementData',
+  'Monitoring',
+];
+
 describe.each(['dev', 'prod'])('default searchProvider (dynamodb), whole app in %s', (env) => {
   const { templates, prefix } = synthFullApp(env, 'dynamodb');
 
   it('has no SearchStack', () => {
-    expect(Object.keys(templates).sort()).toEqual(
-      ['Admin', 'Api', 'Data', 'Frontend', 'Ingestion'].map((s) => `${prefix}-${s}`),
-    );
+    expect(Object.keys(templates).sort()).toEqual(PLATFORM_STACKS.map((s) => `${prefix}-${s}`));
   });
 
   it.each(Object.keys(templates))(
@@ -469,9 +427,9 @@ describe.each(['dev', 'prod'])('searchProvider=opensearch, whole app in %s', (en
   const [collection] = resourcesOfType(templates, 'AWS::OpenSearchServerless::Collection');
   const collectionArn = { 'Fn::GetAtt': [collection?.id, 'Arn'] };
 
-  it('adds the SearchStack to the five default stacks', () => {
+  it('adds the SearchStack to the default stacks', () => {
     expect(Object.keys(templates).sort()).toEqual(
-      ['Admin', 'Api', 'Data', 'Frontend', 'Ingestion', 'Search'].map((s) => `${prefix}-${s}`),
+      [...PLATFORM_STACKS, 'Search'].sort().map((s) => `${prefix}-${s}`),
     );
   });
 

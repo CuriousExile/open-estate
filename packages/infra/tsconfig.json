@@ -15,6 +15,7 @@
     { "path": "../mcp" },
     { "path": "../ingestion" },
     { "path": "../admin" },
+    { "path": "../management" },
     { "path": "./scripts" }
   ]
 }

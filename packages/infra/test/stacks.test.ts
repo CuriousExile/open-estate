@@ -52,6 +52,7 @@ import {
   frontendRuntimeSources,
   tourProvidersFromConfigFiles,
 } from '../src/frontend-stack';
+import { ManagementDataStack } from '../src/management-stack';
 
 // Same feature flags as `cdk synth`, so the template matches what gets deployed.
 const CDK_CONTEXT = (
@@ -84,11 +85,15 @@ function synth(
   });
   const settings = resolvePlatformSettings((key) => app.node.tryGetContext(key));
   const data = new DataStack(app, `${config.stackPrefix}-Data`, { environment: config, settings });
+  const managementData = new ManagementDataStack(app, `${config.stackPrefix}-ManagementData`, {
+    removalPolicy: config.removalPolicy,
+  });
   const api = new ApiStack(app, `${config.stackPrefix}-Api`, {
     tables: {
       listings: data.listingsTable,
       apiKeys: data.apiKeysTable,
       rateLimitCounters: data.rateLimitCountersTable,
+      agencies: managementData.agenciesTable,
     },
     config: { configBucket: data.configBucket, parameterNames: data.parameterNames },
     cors: {
@@ -100,6 +105,7 @@ function synth(
     searchProvider: settings.searchProvider,
     wafRateLimit: settings.wafRateLimit,
     ...(openSearch && { openSearch }),
+    observability: settings.observability,
   });
   return {
     data: Template.fromStack(data),
@@ -111,6 +117,8 @@ function synth(
     apiKeysArnRef: api.resolve(data.apiKeysTable.tableArn) as unknown,
     countersNameRef: api.resolve(data.rateLimitCountersTable.tableName) as unknown,
     countersArnRef: api.resolve(data.rateLimitCountersTable.tableArn) as unknown,
+    agenciesNameRef: api.resolve(managementData.agenciesTable.tableName) as unknown,
+    agenciesArnRef: api.resolve(managementData.agenciesTable.tableArn) as unknown,
     bucketNameRef: api.resolve(data.configBucket.bucketName) as unknown,
     bucketArnRef: api.resolve(data.configBucket.bucketArn) as unknown,
   };
@@ -664,6 +672,7 @@ describe('ApiStack', () => {
           LISTINGS_TABLE_NAME: dev.tableNameRef,
           API_KEYS_TABLE_NAME: dev.apiKeysNameRef,
           RATE_LIMIT_COUNTERS_TABLE_NAME: dev.countersNameRef,
+          AGENCIES_TABLE_NAME: dev.agenciesNameRef,
           CONFIG_BUCKET: dev.bucketNameRef,
           DEFAULT_CURRENCY_SSM_PARAMETER: '/open-estate/dev/default-currency',
           SEARCH_PROVIDER_SSM_PARAMETER: '/open-estate/dev/search-provider',
@@ -688,7 +697,7 @@ describe('ApiStack', () => {
     expect(() => synth('dev', { searchProvider: 'opensearch' })).toThrow(/OpenSearch target/);
   });
 
-  it('grants exactly the read-model calls: Query on byId/byHash, GetItem, UpdateItem, config', () => {
+  it('grants exactly the read-model calls: Query on byId/byHash/byState, GetItem, UpdateItem, config', () => {
     // `minimizePolicies` sorts resources; compare them order-independently.
     const sorted = (resources: unknown[]) =>
       [...resources].sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
@@ -704,6 +713,7 @@ describe('ApiStack', () => {
           Resource: sorted([
             join(dev.tableArnRef, '/index/byId'),
             join(dev.apiKeysArnRef, '/index/byHash'),
+            join(dev.agenciesArnRef, '/index/byState'),
           ]),
         },
         { Action: ['dynamodb:GetItem'], Resource: [dev.tableArnRef] },
@@ -877,11 +887,15 @@ describe('CDK app wiring: no cycle between ApiStack and FrontendStack', () => {
       environment: config,
       settings,
     });
+    const managementData = new ManagementDataStack(app, `${config.stackPrefix}-ManagementData`, {
+      removalPolicy: config.removalPolicy,
+    });
     const api = new ApiStack(app, `${config.stackPrefix}-Api`, {
       tables: {
         listings: data.listingsTable,
         apiKeys: data.apiKeysTable,
         rateLimitCounters: data.rateLimitCountersTable,
+        agencies: managementData.agenciesTable,
       },
       config: { configBucket: data.configBucket, parameterNames: data.parameterNames },
       cors: { frontendOriginParameter, allowedOrigins: settings.corsAllowedOrigins },
@@ -889,6 +903,7 @@ describe('CDK app wiring: no cycle between ApiStack and FrontendStack', () => {
       removalPolicy: config.removalPolicy,
       searchProvider: settings.searchProvider,
       wafRateLimit: settings.wafRateLimit,
+      observability: settings.observability,
     });
     const frontend = new FrontendStack(app, `${config.stackPrefix}-Frontend`, {
       assetDir: settings.frontendAssetDir,
@@ -1136,6 +1151,7 @@ describe('resolvePlatformSettings', () => {
       frontendAssetDir: DEFAULT_FRONTEND_ASSET_DIR,
       frontendPriceClass: 'PriceClass_100',
       corsAllowedOrigins: [],
+      observability: { logLevel: 'INFO', metricsDisabled: false },
     });
   });
 
@@ -1147,6 +1163,43 @@ describe('resolvePlatformSettings', () => {
     ).toMatchObject({
       rateLimit: { requests: 10_000, windowSeconds: 3_600 },
       configDir: path.resolve('cfg'),
+    });
+  });
+
+  it('defaults observability to INFO with metrics enabled', () => {
+    const settings = resolvePlatformSettings(from({}));
+    expect(settings.observability).toEqual({ logLevel: 'INFO', metricsDisabled: false });
+  });
+
+  it('reads logLevel and metricsDisabled from context', () => {
+    const settings = resolvePlatformSettings(from({ logLevel: 'WARN', metricsDisabled: 'true' }));
+    expect(settings.observability).toEqual({ logLevel: 'WARN', metricsDisabled: true });
+  });
+
+  it('sets POWERTOOLS_LOG_LEVEL on the runtime Lambdas, default INFO without a disable flag', () => {
+    const { api } = synth('dev');
+    api.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: { Variables: Match.objectLike({ POWERTOOLS_LOG_LEVEL: 'INFO' }) },
+    });
+    for (const fn of Object.values(api.findResources('AWS::Lambda::Function'))) {
+      const vars = (fn.Properties as { Environment?: { Variables?: Record<string, unknown> } })
+        .Environment?.Variables;
+      if (vars && 'POWERTOOLS_LOG_LEVEL' in vars) {
+        // No metrics disable flag while metrics stay on (its mere presence suppresses EMF).
+        expect(vars).not.toHaveProperty('POWERTOOLS_METRICS_DISABLED');
+      }
+    }
+  });
+
+  it('lowers the log level and disables metrics on the runtime Lambdas from context', () => {
+    const { api } = synth('dev', { logLevel: 'SILENT', metricsDisabled: 'true' });
+    api.hasResourceProperties('AWS::Lambda::Function', {
+      Environment: {
+        Variables: Match.objectLike({
+          POWERTOOLS_LOG_LEVEL: 'SILENT',
+          POWERTOOLS_METRICS_DISABLED: 'true',
+        }),
+      },
     });
   });
 
@@ -1164,10 +1217,12 @@ describe('resolvePlatformSettings', () => {
           frontendAssetDir: '',
           frontendPriceClass: 'PriceClass_50',
           corsAllowedOrigins: '*',
+          logLevel: 'VERBOSE',
+          metricsDisabled: 'maybe',
         }),
       ),
     ).toThrow(
-      /"defaultCurrency".*\n.*"accessMode".*\n.*"rateLimit".*\n.*"searchProvider".*\n.*"configDir".*\n.*"i18nConfigFile".*\n.*"wafRateLimit".*\n.*"frontendAssetDir".*\n.*"frontendPriceClass".*\n.*"corsAllowedOrigins"/,
+      /"defaultCurrency".*\n.*"accessMode".*\n.*"rateLimit".*\n.*"searchProvider".*\n.*"configDir".*\n.*"i18nConfigFile".*\n.*"wafRateLimit".*\n.*"frontendAssetDir".*\n.*"frontendPriceClass".*\n.*"corsAllowedOrigins".*\n.*"logLevel".*\n.*"metricsDisabled"/,
     );
   });
 

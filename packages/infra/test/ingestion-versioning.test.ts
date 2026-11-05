@@ -7,7 +7,7 @@ import { Key } from 'aws-cdk-lib/aws-kms';
 import { Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { DEFAULT_METRICS_NAMESPACE } from '@open-estate/core';
 import { CONNECTOR_LAMBDA_ENV, type ConnectorsFile } from '@open-estate/ingestion';
-import { resolveEnvironment } from '../src/config';
+import { resolveEnvironment, DEFAULT_OBSERVABILITY_SETTINGS } from '../src/config';
 import { DataStack } from '../src/data-stack';
 import { IngestionStack, type ConnectorVersioningResources } from '../src/ingestion-stack';
 
@@ -59,6 +59,7 @@ function synth(withVersioning: boolean) {
     configBucket: data.configBucket,
     connectors: CONNECTORS,
     removalPolicy: environment.removalPolicy,
+    observability: DEFAULT_OBSERVABILITY_SETTINGS,
     ...(withVersioning && { versioning }),
   });
   const template = Template.fromStack(stack);

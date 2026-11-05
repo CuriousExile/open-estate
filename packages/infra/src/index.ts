@@ -7,6 +7,8 @@ export * from './data-stack';
 export * from './frontend-stack';
 export * from './identity-stack';
 export * from './ingestion-stack';
+export * from './management-stack';
 export * from './monitoring-stack';
 export * from './opensearch-access';
+export * from './platform';
 export * from './search-stack';

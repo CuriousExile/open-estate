@@ -7,7 +7,7 @@ import { AttributeType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Key } from 'aws-cdk-lib/aws-kms';
 import { Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
 import { AdminStack, type DeletionHistoryResources } from '../src/admin-stack';
-import { resolveEnvironment } from '../src/config';
+import { DEFAULT_OBSERVABILITY_SETTINGS, resolveEnvironment } from '../src/config';
 import { DataStack } from '../src/data-stack';
 
 // Task 8.1: the deletion task removes versions, Custom_Id keys, counters and snapshots besides
@@ -51,6 +51,7 @@ function synth(withHistory: boolean) {
     reloadableFunctions: [],
     stageName: environment.stageName,
     removalPolicy: environment.removalPolicy,
+    observability: DEFAULT_OBSERVABILITY_SETTINGS,
     ...(withHistory && { history }),
   });
   const template = Template.fromStack(admin);

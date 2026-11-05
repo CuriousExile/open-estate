@@ -77,6 +77,36 @@ export const SEARCH_PROVIDERS = ['dynamodb', 'opensearch'] as const;
 export type SearchProviderKind = (typeof SEARCH_PROVIDERS)[number];
 
 /**
+ * Log levels accepted by the AWS Lambda Powertools Logger (`POWERTOOLS_LOG_LEVEL`). `SILENT`
+ * suppresses application log lines; it does not stop the Lambda runtime's START/END/REPORT lines
+ * nor the EMF metric lines (those are controlled by {@link ObservabilitySettings.metricsDisabled}).
+ */
+export const LOG_LEVELS = ['DEBUG', 'INFO', 'WARN', 'ERROR', 'CRITICAL', 'SILENT'] as const;
+export type LogLevelName = (typeof LOG_LEVELS)[number];
+
+/** Powertools environment variable names set on every runtime function. */
+export const POWERTOOLS_LOG_LEVEL_ENV = 'POWERTOOLS_LOG_LEVEL';
+export const POWERTOOLS_METRICS_DISABLED_ENV = 'POWERTOOLS_METRICS_DISABLED';
+
+/**
+ * Logging and metrics knobs applied to every runtime Lambda (API, MCP, admin, connectors). They
+ * let a quiet dev/demo deployment cut CloudWatch cost without touching code: raise the level to
+ * drop application log lines, and/or disable EMF metrics. Disabling metrics also removes the data
+ * behind the latency alarms and dashboard, so keep it on for environments you monitor.
+ */
+export interface ObservabilitySettings {
+  /** Powertools log level; application lines below it are dropped. Default `INFO`. */
+  readonly logLevel: LogLevelName;
+  /** `true` suppresses EMF metric output (the per-request `RequestLatency` line). Default `false`. */
+  readonly metricsDisabled: boolean;
+}
+
+export const DEFAULT_OBSERVABILITY_SETTINGS: ObservabilitySettings = {
+  logLevel: 'INFO',
+  metricsDisabled: false,
+};
+
+/**
  * Initial values of the SSM parameters, the files uploaded to the config bucket and the WAF limit.
  * Each value can be overridden per deployment via CDK context, e.g. `-c defaultCurrency=THB`.
  */
@@ -103,6 +133,8 @@ export interface PlatformSettings {
    * FrontendStack (e.g. a custom domain or `http://localhost:4200`); normalized, no `*`.
    */
   readonly corsAllowedOrigins: readonly string[];
+  /** Logging and metrics knobs applied to every runtime Lambda; see {@link ObservabilitySettings}. */
+  readonly observability: ObservabilitySettings;
 }
 
 export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
@@ -116,6 +148,7 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   frontendAssetDir: DEFAULT_FRONTEND_ASSET_DIR,
   frontendPriceClass: PriceClass.PRICE_CLASS_100,
   corsAllowedOrigins: [],
+  observability: DEFAULT_OBSERVABILITY_SETTINGS,
 };
 
 /** CDK context keys overriding {@link DEFAULT_PLATFORM_SETTINGS}. */
@@ -136,6 +169,10 @@ export const SETTINGS_CONTEXT_KEYS = {
   frontendPriceClass: 'frontendPriceClass',
   /** Comma-separated origins, e.g. `-c corsAllowedOrigins=http://localhost:4200`. */
   corsAllowedOrigins: 'corsAllowedOrigins',
+  /** Powertools log level, e.g. `-c logLevel=WARN` (DEBUG, INFO, WARN, ERROR, CRITICAL, SILENT). */
+  logLevel: 'logLevel',
+  /** `-c metricsDisabled=true` suppresses the per-request EMF metric line. */
+  metricsDisabled: 'metricsDisabled',
 } as const;
 
 // Codes known to the ICU data of the running Node.js; the shared schema only checks the format.
@@ -178,6 +215,13 @@ function parseWafRateLimit(raw: string): Parsed<number> {
   return /^\d+$/.test(raw.trim()) && value >= WAF_RATE_LIMIT_MIN && value <= WAF_RATE_LIMIT_MAX
     ? { ok: true, value }
     : { ok: false, expected: `an integer ${WAF_RATE_LIMIT_MIN}..${WAF_RATE_LIMIT_MAX}` };
+}
+
+function parseBoolean(raw: string): Parsed<boolean> {
+  const value = raw.trim().toLowerCase();
+  if (value === 'true') return { ok: true, value: true };
+  if (value === 'false') return { ok: true, value: false };
+  return { ok: false, expected: 'true or false' };
 }
 
 function parseOrigins(raw: string): Parsed<readonly string[]> {
@@ -233,6 +277,14 @@ export function resolvePlatformSettings(getContext: (key: string) => unknown): P
       defaults.frontendPriceClass,
     ),
     corsAllowedOrigins: pick(keys.corsAllowedOrigins, parseOrigins, defaults.corsAllowedOrigins),
+    observability: {
+      logLevel: pick(keys.logLevel, parseEnum(LOG_LEVELS), defaults.observability.logLevel),
+      metricsDisabled: pick(
+        keys.metricsDisabled,
+        parseBoolean,
+        defaults.observability.metricsDisabled,
+      ),
+    },
   };
   if (errors.length > 0) {
     throw new Error(`Invalid context value(s):\n  - ${errors.join('\n  - ')}`);

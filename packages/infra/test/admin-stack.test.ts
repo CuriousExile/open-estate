@@ -19,6 +19,7 @@ import { ApiStack } from '../src/api-stack';
 import { DEFAULT_CONFIG_DIR, resolveEnvironment, resolvePlatformSettings } from '../src/config';
 import { DataStack, frontendOriginParameterName } from '../src/data-stack';
 import { connectorsFromConfigFiles, IngestionStack } from '../src/ingestion-stack';
+import { ManagementDataStack } from '../src/management-stack';
 
 const CDK_CONTEXT = (
   JSON.parse(readFileSync(path.join(__dirname, '../cdk.json'), 'utf8')) as {
@@ -64,12 +65,16 @@ function synthIn(envName: string, configDir: string | undefined) {
           configBucket: data.configBucket,
           connectors: connectorsFromConfigFiles(data.configFiles),
           removalPolicy: config.removalPolicy,
+          observability: settings.observability,
         });
   const api = new ApiStack(app, 'Api', {
     tables: {
       listings: data.listingsTable,
       apiKeys: data.apiKeysTable,
       rateLimitCounters: data.rateLimitCountersTable,
+      agencies: new ManagementDataStack(app, 'ManagementData', {
+        removalPolicy: config.removalPolicy,
+      }).agenciesTable,
     },
     config: { configBucket: data.configBucket, parameterNames: data.parameterNames },
     cors: {
@@ -80,6 +85,7 @@ function synthIn(envName: string, configDir: string | undefined) {
     removalPolicy: config.removalPolicy,
     searchProvider: settings.searchProvider,
     wafRateLimit: settings.wafRateLimit,
+    observability: settings.observability,
   });
   const reloadableFunctions = [
     api.listingsFunction,
@@ -98,6 +104,7 @@ function synthIn(envName: string, configDir: string | undefined) {
     reloadableFunctions,
     stageName: config.stageName,
     removalPolicy: config.removalPolicy,
+    observability: settings.observability,
   });
   const template = Template.fromStack(admin);
   // Cross-stack references resolve to their imports only after synthesis.

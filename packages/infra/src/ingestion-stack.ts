@@ -29,6 +29,8 @@ import {
   type ConnectorsFile,
 } from '@open-estate/ingestion';
 import { Construct } from 'constructs';
+import { observabilityEnvironment } from './api-stack';
+import type { ObservabilitySettings } from './config';
 import type { ConfigFile } from './config-files';
 
 // Same relative depth from `src/` (ts) and `dist/` (compiled js).
@@ -76,6 +78,8 @@ export interface IngestionStackProps extends StackProps {
   /** Registrations from `connectors.json`; one schedule, state machine and Lambda each. */
   readonly connectors: ConnectorsFile;
   readonly removalPolicy: RemovalPolicy;
+  /** Log level and metrics toggle applied to every connector Lambda. */
+  readonly observability: ObservabilitySettings;
 }
 
 /** Resources of one connector. */
@@ -148,6 +152,7 @@ export class IngestionStack extends Stack {
         [CONNECTOR_LAMBDA_ENV.connectorId]: config.id,
         // Same EMF namespace as the API and MCP Lambdas (platform monitoring, Req 14.1).
         POWERTOOLS_METRICS_NAMESPACE: DEFAULT_METRICS_NAMESPACE,
+        ...observabilityEnvironment(props.observability),
         ...versioningEnvironment(props.versioning),
       },
       bundling: {

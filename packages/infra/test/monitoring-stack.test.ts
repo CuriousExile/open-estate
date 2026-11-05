@@ -8,6 +8,7 @@ import { Match, Template } from 'aws-cdk-lib/assertions';
 import { ApiStack } from '../src/api-stack';
 import { resolveEnvironment, resolvePlatformSettings } from '../src/config';
 import { DataStack, frontendOriginParameterName } from '../src/data-stack';
+import { ManagementDataStack } from '../src/management-stack';
 import { LATENCY_ALARM, LATENCY_ALARM_SERIES, MonitoringStack } from '../src/monitoring-stack';
 import { SearchStack } from '../src/search-stack';
 
@@ -36,6 +37,9 @@ function synthApp(envName: string, context: Record<string, unknown> = {}) {
       listings: data.listingsTable,
       apiKeys: data.apiKeysTable,
       rateLimitCounters: data.rateLimitCountersTable,
+      agencies: new ManagementDataStack(app, `${config.stackPrefix}-ManagementData`, {
+        removalPolicy: config.removalPolicy,
+      }).agenciesTable,
     },
     config: { configBucket: data.configBucket, parameterNames: data.parameterNames },
     cors: { frontendOriginParameter: frontendOriginParameterName(envName), allowedOrigins: [] },
@@ -44,6 +48,7 @@ function synthApp(envName: string, context: Record<string, unknown> = {}) {
     searchProvider: settings.searchProvider,
     ...(search && { openSearch: search.target }),
     wafRateLimit: settings.wafRateLimit,
+    observability: settings.observability,
   });
   const monitoring = new MonitoringStack(app, `${config.stackPrefix}-Monitoring`, {
     api,

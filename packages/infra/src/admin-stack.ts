@@ -50,6 +50,7 @@ import {
   ssmParameterArn,
   type GatewayResponseMapping,
 } from './api-stack';
+import type { ObservabilitySettings } from './config';
 import type { SsmParameterNames } from './data-stack';
 
 // Same relative depth from `src/` (ts) and `dist/` (compiled js).
@@ -140,6 +141,8 @@ export interface AdminStackProps extends StackProps {
   readonly reloadableFunctions: readonly IFunction[];
   readonly stageName: string;
   readonly removalPolicy: RemovalPolicy;
+  /** Log level and metrics toggle applied to the admin, deletion-task and overdue-check Lambdas. */
+  readonly observability: ObservabilitySettings;
 }
 
 /**
@@ -189,6 +192,7 @@ export class AdminStack extends Stack {
       memorySize: 256,
       timeout: Duration.seconds(30),
       removalPolicy,
+      observability: props.observability,
     });
     grantDeletionTask(this.deletionTaskFunction, tables, props.history);
 
@@ -201,6 +205,7 @@ export class AdminStack extends Stack {
       memorySize: 256,
       timeout: Duration.seconds(10),
       removalPolicy,
+      observability: props.observability,
     });
     grantAdminApi(this.adminFunction, props, this.deletionStateMachine);
 
@@ -222,6 +227,7 @@ export class AdminStack extends Stack {
       timeout: Duration.minutes(5),
       removalPolicy,
       retryAttempts: 0,
+      observability: props.observability,
     });
     grantOverdueCheck(this.overdueCheckFunction, tables, this.overdueTopic);
 

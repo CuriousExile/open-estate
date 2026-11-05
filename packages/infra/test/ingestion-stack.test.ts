@@ -4,7 +4,12 @@ import * as path from 'node:path';
 import { App, Stack } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { CONNECTOR_LAMBDA_ENV, type ConnectorsFile } from '@open-estate/ingestion';
-import { DEFAULT_CONFIG_DIR, resolveEnvironment, resolvePlatformSettings } from '../src/config';
+import {
+  DEFAULT_CONFIG_DIR,
+  DEFAULT_OBSERVABILITY_SETTINGS,
+  resolveEnvironment,
+  resolvePlatformSettings,
+} from '../src/config';
 import { DataStack } from '../src/data-stack';
 import {
   connectorsFromConfigFiles,
@@ -61,6 +66,7 @@ function synth(connectors: unknown, envName = 'dev') {
       configBucket: data.configBucket,
       connectors: connectorsFromConfigFiles(data.configFiles),
       removalPolicy: config.removalPolicy,
+      observability: settings.observability,
     });
     return { stack, template: Template.fromStack(stack) };
   } finally {
@@ -156,6 +162,7 @@ describe('IngestionStack', () => {
       tables: { listings: data.listingsTable, deletionBlocklist: data.deletionBlocklistTable },
       configBucket: data.configBucket,
       removalPolicy: resolveEnvironment('dev').removalPolicy,
+      observability: DEFAULT_OBSERVABILITY_SETTINGS,
     };
     const tooLong = [{ ...CONNECTORS[1], timeoutSeconds: 901 }] as unknown as ConnectorsFile;
     expect(() => new IngestionStack(app, 'Ingestion', { ...props, connectors: tooLong })).toThrow(

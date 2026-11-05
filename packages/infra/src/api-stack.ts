@@ -21,6 +21,7 @@ import {
   LISTINGS_ROUTES,
 } from '@open-estate/api';
 import {
+  AGENCIES_BY_STATE_INDEX,
   CONFIG_BUCKET_ENV,
   DEFAULT_METRICS_NAMESPACE,
   LISTINGS_BY_ID_INDEX,
@@ -31,7 +32,14 @@ import {
 } from '@open-estate/core';
 import type { ErrorCode, ErrorResponse } from '@open-estate/shared';
 import type { Construct } from 'constructs';
-import { WAF_RATE_LIMIT_WINDOW_SECONDS, type SearchProviderKind } from './config';
+import {
+  DEFAULT_OBSERVABILITY_SETTINGS,
+  POWERTOOLS_LOG_LEVEL_ENV,
+  POWERTOOLS_METRICS_DISABLED_ENV,
+  WAF_RATE_LIMIT_WINDOW_SECONDS,
+  type ObservabilitySettings,
+  type SearchProviderKind,
+} from './config';
 import { API_KEYS_BY_HASH_INDEX, type SsmParameterKey, type SsmParameterNames } from './data-stack';
 import {
   addIndexAccessPolicy,
@@ -112,11 +120,13 @@ export interface ApiCorsProps {
   readonly allowedOrigins: readonly string[];
 }
 
-/** Tables of the read side (`initReadModel`): search/detail and the AccessGuard. */
+/** Tables of the read side (`initReadModel`): search/detail, the AccessGuard and suspensions. */
 export interface ReadModelTables {
   readonly listings: ITableV2;
   readonly apiKeys: ITableV2;
   readonly rateLimitCounters: ITableV2;
+  /** `Agencies` of the ManagementDataStack; GSI `byState` yields the suspended agencies (Req 1.9). */
+  readonly agencies: ITableV2;
 }
 
 /**
@@ -139,6 +149,8 @@ export interface ApiStackProps extends StackProps {
   readonly openSearch?: OpenSearchTarget;
   /** Requests per IP and {@link WAF_RATE_LIMIT_WINDOW_SECONDS} before WAF blocks. */
   readonly wafRateLimit: number;
+  /** Log level and metrics toggle applied to the Listings and MCP Lambdas. */
+  readonly observability: ObservabilitySettings;
 }
 
 /**
@@ -224,6 +236,7 @@ export class ApiStack extends Stack {
       memorySize: 512,
       timeout: LAMBDA_TIMEOUT,
       removalPolicy: props.removalPolicy,
+      observability: props.observability,
     });
     grantReadModel(this.listingsFunction, props);
     grantCorsConfig(this.listingsFunction, props.cors);
@@ -238,6 +251,7 @@ export class ApiStack extends Stack {
       memorySize: 768,
       timeout: MCP_LAMBDA_TIMEOUT,
       removalPolicy: props.removalPolicy,
+      observability: props.observability,
     });
     grantReadModel(this.mcpFunction, props);
     if (props.openSearch !== undefined) {
@@ -345,6 +359,20 @@ function readModelFunction(
 }
 
 /**
+ * Powertools log/metrics environment for a runtime function. The log level is always set so the
+ * deployed value is explicit; `POWERTOOLS_METRICS_DISABLED` is only set when metrics are off (its
+ * mere presence with `true` suppresses EMF). Defaults to INFO with metrics on.
+ */
+export function observabilityEnvironment(
+  observability: ObservabilitySettings = DEFAULT_OBSERVABILITY_SETTINGS,
+): Record<string, string> {
+  return {
+    [POWERTOOLS_LOG_LEVEL_ENV]: observability.logLevel,
+    ...(observability.metricsDisabled && { [POWERTOOLS_METRICS_DISABLED_ENV]: 'true' }),
+  };
+}
+
+/**
  * Bundled Node.js 22 Lambda (arm64, local esbuild, CJS, pinned AWS SDK bundled) with its own log
  * group (one month retention). Shared by the read side and the admin stack.
  */
@@ -361,6 +389,8 @@ export function bundledFunction(
     removalPolicy: RemovalPolicy;
     /** Retries of asynchronous invocations; Lambda default (2) if omitted. */
     retryAttempts?: number;
+    /** Powertools log level and metrics toggle; defaults (INFO, metrics on) if omitted. */
+    observability?: ObservabilitySettings;
   },
 ): NodejsFunction {
   const logGroup = new LogGroup(scope, `${id}Logs`, {
@@ -379,7 +409,10 @@ export function bundledFunction(
     timeout: options.timeout,
     logGroup,
     ...(options.retryAttempts !== undefined && { retryAttempts: options.retryAttempts }),
-    environment: { NODE_OPTIONS: '--enable-source-maps' },
+    environment: {
+      NODE_OPTIONS: '--enable-source-maps',
+      ...observabilityEnvironment(options.observability),
+    },
     bundling: {
       // Local esbuild (pinned devDependency), never Docker.
       forceDockerBundling: false,
@@ -473,18 +506,20 @@ export function addGatewayResponses(
 /**
  * Environment and least-privilege IAM for `initReadModel` (Listings and MCP Lambda): the table
  * names, SSM parameter names, config bucket and — with OpenSearch — endpoint and index. Grants only
- * the calls the read side makes: `Query` on `Listings/byId` and `ApiKeys/byHash`, `GetItem` on
- * `Listings`, `UpdateItem` on `RateLimitCounters`, the config reads of {@link grantConfigRead} and
- * — with OpenSearch — `aoss:APIAccessAll` on the collection.
+ * the calls the read side makes: `Query` on `Listings/byId`, `ApiKeys/byHash` and
+ * `Agencies/byState` (suspended agencies), `GetItem` on `Listings`, `UpdateItem` on
+ * `RateLimitCounters`, the config reads of {@link grantConfigRead} and — with OpenSearch —
+ * `aoss:APIAccessAll` on the collection.
  */
 export function grantReadModel(
   fn: NodejsFunction,
   props: Pick<ApiStackProps, 'tables' | 'config' | 'openSearch'>,
 ): void {
-  const { listings, apiKeys, rateLimitCounters } = props.tables;
+  const { listings, apiKeys, rateLimitCounters, agencies } = props.tables;
   fn.addEnvironment(READ_MODEL_ENV.listingsTable, listings.tableName);
   fn.addEnvironment(READ_MODEL_ENV.apiKeysTable, apiKeys.tableName);
   fn.addEnvironment(READ_MODEL_ENV.rateLimitCountersTable, rateLimitCounters.tableName);
+  fn.addEnvironment(READ_MODEL_ENV.agenciesTable, agencies.tableName);
   if (props.openSearch !== undefined) {
     // AWS_REGION is set by the Lambda runtime. The data access policy is added by the ApiStack.
     fn.addEnvironment(READ_MODEL_ENV.openSearchEndpoint, props.openSearch.endpoint);
@@ -496,7 +531,11 @@ export function grantReadModel(
   fn.addToRolePolicy(
     new PolicyStatement({
       actions: ['dynamodb:Query'],
-      resources: [index(listings, LISTINGS_BY_ID_INDEX), index(apiKeys, API_KEYS_BY_HASH_INDEX)],
+      resources: [
+        index(listings, LISTINGS_BY_ID_INDEX),
+        index(apiKeys, API_KEYS_BY_HASH_INDEX),
+        index(agencies, AGENCIES_BY_STATE_INDEX),
+      ],
     }),
   );
   fn.addToRolePolicy(

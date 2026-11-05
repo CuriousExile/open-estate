@@ -88,9 +88,12 @@ deleted with the stack). Replace `123456789012` and `eu-central-1` with your acc
    npm run deploy --workspace @open-estate/infra -- -c env=dev
    ```
 
-   This runs `cdk deploy --all` and creates, in dependency order, `OpenEstate-dev-Data`, `-Api`,
-   `-Monitoring`, `-Ingestion`, `-Admin` and `-Frontend` (plus `-Search` with
-   [OpenSearch](#optional-opensearch-search-provider)). CDK asks for confirmation before creating
+   This runs `cdk deploy --all` and creates, in dependency order, `OpenEstate-dev-Data`,
+   `-ManagementData`, `-Api`, `-Monitoring`, `-Ingestion`, `-Admin`, `-Frontend`, `-Identity` and
+   `-Management` (plus `-Search` with [OpenSearch](#optional-opensearch-search-provider)). The
+   `-Management` stack writes the frontend's `runtime-config.json` (Search_API URL plus the
+   portal's Cognito and Management_API settings); pass `-c initialPlatformAdminEmail=<address>` to
+   invite the first Plattform_Admin. CDK asks for confirmation before creating
    IAM roles and policies; for an unattended run append `--require-approval never`. The first
    deployment takes roughly 10–15 minutes, mostly for CloudFront.
 
@@ -301,6 +304,8 @@ workspace scripts.
 | `corsAllowedOrigins` | none                                         | `-c corsAllowedOrigins=http://localhost:4200`        | Extra browser origins besides the CloudFront origin (comma-separated, no path, no `*`)             |
 | `frontendAssetDir`   | `packages/frontend/dist/browser`             | `-c frontendAssetDir=../frontend/dist/browser`       | Built SPA to upload (must contain `index.html`)                                                     |
 | `frontendPriceClass` | `PriceClass_100`                             | `-c frontendPriceClass=PriceClass_All`               | CloudFront edge locations                                                                           |
+| `logLevel`           | `INFO`                                       | `-c logLevel=WARN`                                   | Powertools log level of every runtime Lambda (`DEBUG`, `INFO`, `WARN`, `ERROR`, `CRITICAL`, `SILENT`); raise it to cut CloudWatch Logs volume |
+| `metricsDisabled`    | `false`                                      | `-c metricsDisabled=true`                            | `true` stops the per-request `RequestLatency` EMF metric on every Lambda. Also removes the data behind the latency alarms and dashboard, so keep it off for monitored environments |
 
 The SSM parameters (`/open-estate/<env>/default-currency`, `access-mode`, `rate-limit`,
 `search-provider`, `config-bucket`) receive the context value when CloudFormation creates or

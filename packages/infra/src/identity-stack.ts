@@ -93,6 +93,19 @@ export function defaultCognitoDomainPrefix(envName: string): string {
   return `open-estate-${envName}-${Aws.ACCOUNT_ID}`;
 }
 
+/**
+ * Origins the portal's OIDC client calls from the browser, computed without a reference to the
+ * IdentityStack (for the CSP of the FrontendStack, which deploys first): the Cognito domain of
+ * `domainPrefix` (token endpoint; same URL as `UserPoolDomain.baseUrl()`) and the issuer host
+ * (discovery document, JWKS). Pseudo parameters resolve in the stack that uses them.
+ */
+export function cognitoPortalOrigins(domainPrefix: string): string[] {
+  return [
+    `https://${domainPrefix}.auth.${Aws.REGION}.amazoncognito.com`,
+    `https://cognito-idp.${Aws.REGION}.${Aws.URL_SUFFIX}`,
+  ];
+}
+
 export interface IdentityStackProps extends StackProps {
   readonly envName: string;
   /**

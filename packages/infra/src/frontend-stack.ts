@@ -62,6 +62,9 @@ export const NO_CACHE_CONTROL = 'no-cache';
 export const CSP_MAX_LENGTH = 1783;
 // Upper bound for the API origin token (`https://<id>.execute-api.<region>.amazonaws.com[.cn]`).
 const API_ORIGIN_MAX_LENGTH = 100;
+// Upper bound for a tokenized portal source, e.g. the Cognito domain
+// (`https://<prefix ≤ 63>.auth.<region>.amazoncognito.com`).
+const CONNECT_ORIGIN_MAX_LENGTH = 130;
 
 /** Sources of the runtime files, owned by the frontend package (`packages/frontend/public`). */
 export interface FrontendRuntimeSources {
@@ -220,7 +223,8 @@ export function tourProvidersFromConfigFiles(files: readonly ConfigFile[]): Tour
  * Content-Security-Policy of the SPA (design: "Sichere Tour-Einbettung"):
  * - `frame-src` exactly the `https://` hosts of the tour allowlist, `'none'` if empty (Req 16.6, 16.8);
  * - `img-src https:` for listing media of any https host (Req 16.1);
- * - `connect-src` adds the Search_API origin, which differs from the SPA's;
+ * - `connect-src` adds the Search_API origin, which differs from the SPA's, and the
+ *   {@link FrontendStackProps.portalConnectOrigins} of the Agentur_Portal (Management_API, Cognito);
  * - `style-src 'unsafe-inline'`: Angular injects component styles as `<style>` elements at runtime,
  *   and a static S3 origin cannot issue per-response nonces. Scripts stay `'self'` only; therefore
  *   the production build disables critical-CSS inlining (`angular.json` `inlineCritical: false`),
@@ -229,17 +233,20 @@ export function tourProvidersFromConfigFiles(files: readonly ConfigFile[]): Tour
 export function contentSecurityPolicy(options: {
   tourProviders: TourProvidersConfig;
   apiOrigin: string;
+  /** Further `connect-src` sources (origins or host wildcards); tokens allowed. */
+  connectOrigins?: readonly string[];
 }): string {
   const tourHosts = [...tourHostIndex(options.tourProviders).keys()]
     .sort()
     .map((host) => `https://${host}`);
+  const connectOrigins = options.connectOrigins ?? [];
   const directives: [string, string[]][] = [
     ['default-src', ["'self'"]],
     ['script-src', ["'self'"]],
     ['style-src', ["'self'", "'unsafe-inline'"]],
     ['img-src', ['https:']],
     ['font-src', ["'self'"]],
-    ['connect-src', ["'self'", options.apiOrigin]],
+    ['connect-src', ["'self'", options.apiOrigin, ...connectOrigins]],
     ['frame-src', tourHosts.length > 0 ? tourHosts : ["'none'"]],
     ['object-src', ["'none'"]],
     ['base-uri', ["'self'"]],
@@ -247,9 +254,13 @@ export function contentSecurityPolicy(options: {
     ['frame-ancestors', ["'none'"]],
   ];
   const csp = directives.map(([name, values]) => `${name} ${values.join(' ')}`).join('; ');
-  const length = Token.isUnresolved(options.apiOrigin)
-    ? csp.length - options.apiOrigin.length + API_ORIGIN_MAX_LENGTH
-    : csp.length;
+  // Unresolved tokens count with their upper bound instead of their placeholder length.
+  const estimate = (value: string, max: number) =>
+    Token.isUnresolved(value) ? max - value.length : 0;
+  const length =
+    csp.length +
+    estimate(options.apiOrigin, API_ORIGIN_MAX_LENGTH) +
+    connectOrigins.reduce((sum, origin) => sum + estimate(origin, CONNECT_ORIGIN_MAX_LENGTH), 0);
   if (length > CSP_MAX_LENGTH) {
     throw new FrontendConfigError([
       `Content-Security-Policy would be ~${length} characters (CloudFront limit ${CSP_MAX_LENGTH}); reduce the tour provider host names`,
@@ -294,6 +305,18 @@ export interface FrontendStackProps extends StackProps {
   readonly removalPolicy: RemovalPolicy;
   /** @default PriceClass.PRICE_CLASS_100 */
   readonly priceClass?: PriceClass;
+  /**
+   * `connect-src` sources of the Agentur_Portal: Management_API and Cognito (see
+   * `portalConnectOrigins` of the ManagementStack). They must not reference later stacks — the
+   * Identity- and ManagementStack deploy after this one.
+   */
+  readonly portalConnectOrigins?: readonly string[];
+  /**
+   * `false`: `runtime-config.json` is written by a later stack (the ManagementStack adds the
+   * `portal` block, which needs the Identity and Management outputs). Default `true`: this stack
+   * writes `{apiBaseUrl}`.
+   */
+  readonly writeRuntimeConfig?: boolean;
 }
 
 /**
@@ -301,7 +324,8 @@ export interface FrontendStackProps extends StackProps {
  * routing via CloudFront Function and a response headers policy with CSP and security headers.
  * Hashed build artifacts are cached for a year; `index.html` and the runtime files
  * ({@link FRONTEND_RUNTIME_FILES}) are `no-cache`, so branding, locales and translations change
- * without a rebuild (Req 8.2, 13.3). `runtime-config.json` is generated with the API URL; the
+ * without a rebuild (Req 8.2, 13.3). `runtime-config.json` is generated with the API URL (or, with
+ * `writeRuntimeConfig: false`, by the ManagementStack including the portal block); the
  * `public/` copy in the build output is only for local development.
  */
 export class FrontendStack extends Stack {
@@ -350,6 +374,7 @@ export class FrontendStack extends Stack {
     this.contentSecurityPolicy = contentSecurityPolicy({
       tourProviders: props.tourProviders,
       apiOrigin: urlOrigin(props.apiUrl),
+      connectOrigins: props.portalConnectOrigins ?? [],
     });
     const responseHeadersPolicy = new ResponseHeadersPolicy(this, 'SecurityHeaders', {
       comment: 'Open Estate SPA: CSP from the tour allowlist and security headers',
@@ -452,7 +477,9 @@ export class FrontendStack extends Stack {
     const runtimeFiles: ISource[] = [
       Source.data(FRONTEND_RUNTIME_FILES.index, readFileSync(indexFile, 'utf8')),
       ...runtime.files.map(({ key, content }) => Source.data(key, content)),
-      Source.jsonData(FRONTEND_RUNTIME_FILES.runtimeConfig, { apiBaseUrl: props.apiUrl }),
+      ...(props.writeRuntimeConfig === false
+        ? []
+        : [Source.jsonData(FRONTEND_RUNTIME_FILES.runtimeConfig, { apiBaseUrl: props.apiUrl })]),
     ];
     const noCache = new BucketDeployment(this, 'RuntimeFiles', {
       destinationBucket: this.bucket,
