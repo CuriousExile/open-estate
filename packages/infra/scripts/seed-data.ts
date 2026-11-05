@@ -1,11 +1,19 @@
 // Example listings for the walking skeleton (Req 12.1, 11.1). All data is fictitious: URLs point to
-// example.org, there is no contact data, and coordinates are approximate city centres.
+// example.org, there is no contact data, and coordinates are approximate city centres. Every title
+// is prefixed with `[DEMO]` and every description starts with an explicit demo marker so the sample
+// data is unmistakably recognisable as demo content wherever a listing is shown.
 import { Listing, type ListingInput } from '@open-estate/shared';
 
 export const SEED_SOURCE = 'seed';
 /** Fixed provenance values keep repeated seeding idempotent (same ids, same items). */
 export const SEED_RUN_ID = 'seed-v1';
 export const SEED_IMPORTED_AT = '2026-01-01T00:00:00Z';
+
+/** Prefix on every seed title; makes demo listings obvious in lists, detail views and the API. */
+export const DEMO_TITLE_PREFIX = '[DEMO]';
+/** Marker opening every seed description, in the listing's original language. */
+const DEMO_MARKER_DE = 'DEMO-Beispieldaten –';
+const DEMO_MARKER_EN = 'DEMO sample data –';
 
 const MATTERPORT = 'matterport';
 
@@ -192,6 +200,36 @@ export const SEED_LISTING_INPUTS: readonly ListingInput[] = [
     tours: [],
   },
   {
+    ...base('seed-th-pattaya-009'),
+    originalLocale: 'en',
+    title: 'Beachfront condo in Pattaya',
+    description: 'Example listing: sea view, walk to Jomtien Beach, shared rooftop pool.',
+    translations: [
+      {
+        locale: 'de',
+        title: 'Strandnahe Eigentumswohnung in Pattaya',
+        description:
+          'Beispiel-Listing: Meerblick, wenige Minuten zum Jomtien Beach, Dachpool zur Mitnutzung.',
+      },
+      {
+        locale: 'th',
+        title: 'คอนโดติดชายหาดในพัทยา',
+        description: 'ตัวอย่างประกาศ: วิวทะเล ใกล้หาดจอมเทียน สระว่ายน้ำบนดาดฟ้า',
+      },
+    ],
+    offers: [
+      { offerType: 'SALE', price: '4200000.00', currency: 'THB' },
+      { offerType: 'RENT', coldRent: '32000.00', currency: 'THB' },
+    ],
+    listingType: 'condominium',
+    rooms: 2,
+    area: '68',
+    address: { city: 'Pattaya', postalCode: '20150', country: 'TH' },
+    geo: { lat: 12.923, lon: 100.882 },
+    media: media('seed-th-pattaya-009', 4),
+    tours: tour('seed-th-pattaya-009'),
+  },
+  {
     ...base('seed-th-chiangmai-008'),
     originalLocale: 'en',
     title: 'Family house in Chiang Mai',
@@ -209,5 +247,32 @@ export const SEED_LISTING_INPUTS: readonly ListingInput[] = [
 
 /** Seed listings in the internal representation (minor units); throws if any input is invalid. */
 export function seedListings(): Listing[] {
-  return SEED_LISTING_INPUTS.map((input) => Listing.parse(input));
+  return SEED_LISTING_INPUTS.map((input) => Listing.parse(markAsDemo(input)));
+}
+
+/**
+ * Stamps a listing and all its translations as demo content: `[DEMO]` prefix on every title and a
+ * localized demo marker in front of every description. Idempotent — a title that is already
+ * prefixed is left unchanged — so repeated seeding keeps the same values. Keeping this in one place
+ * means any listing added to `SEED_LISTING_INPUTS` is marked automatically.
+ */
+export function markAsDemo(input: ListingInput): ListingInput {
+  const marker = (locale: string): string =>
+    locale.toLowerCase().startsWith('de') ? DEMO_MARKER_DE : DEMO_MARKER_EN;
+  const title = (value: string): string =>
+    value.startsWith(DEMO_TITLE_PREFIX) ? value : `${DEMO_TITLE_PREFIX} ${value}`;
+  const description = (value: string, locale: string): string =>
+    value.startsWith(DEMO_MARKER_DE) || value.startsWith(DEMO_MARKER_EN)
+      ? value
+      : `${marker(locale)} ${value}`;
+  return {
+    ...input,
+    title: title(input.title),
+    description: description(input.description, input.originalLocale),
+    translations: input.translations?.map((t) => ({
+      ...t,
+      title: title(t.title),
+      description: description(t.description, t.locale),
+    })),
+  };
 }

@@ -244,7 +244,7 @@ export function contentSecurityPolicy(options: {
     ['default-src', ["'self'"]],
     ['script-src', ["'self'"]],
     ['style-src', ["'self'", "'unsafe-inline'"]],
-    ['img-src', ['https:']],
+    ['img-src', ["'self'", 'https:']],
     ['font-src', ["'self'"]],
     ['connect-src', ["'self'", options.apiOrigin, ...connectOrigins]],
     ['frame-src', tourHosts.length > 0 ? tourHosts : ["'none'"]],

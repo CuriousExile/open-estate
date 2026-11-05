@@ -247,7 +247,7 @@ describe('FrontendStack', () => {
     const csp = cspOf(synth(MATTERPORT).template);
     expect(csp).toContain('frame-src https://mpembed.com https://my.matterport.com;');
     expect(csp).toContain("default-src 'self'");
-    expect(csp).toContain('img-src https:;');
+    expect(csp).toContain("img-src 'self' https:;");
     expect(csp).toContain(`connect-src 'self' ${API_ORIGIN};`);
     expect(csp).toContain("script-src 'self';");
   });
@@ -315,7 +315,7 @@ describe('FrontendStack response headers (Req 16.6)', () => {
       'default-src': ["'self'"],
       'script-src': ["'self'"],
       'style-src': ["'self'", "'unsafe-inline'"],
-      'img-src': ['https:'],
+      'img-src': ["'self'", 'https:'],
       'font-src': ["'self'"],
       'connect-src': ["'self'", API_ORIGIN],
       'frame-src': ['https://mpembed.com', 'https://my.matterport.com'],
