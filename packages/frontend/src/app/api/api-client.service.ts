@@ -1,6 +1,6 @@
 import { inject, Injectable, InjectionToken } from '@angular/core';
 import { TranslocoService } from '@jsverse/transloco';
-import type { LocalizedListing } from '@open-estate/shared';
+import type { LocalizedListing, LocationsDocument } from '@open-estate/shared';
 import { StartupState } from '../startup/startup-state';
 import {
   createApiClient,
@@ -40,6 +40,10 @@ export class ApiClientService {
 
   getMeta(options?: RequestOptions): Promise<ApiResult<unknown>> {
     return this.withClient((client) => client.getMeta(options));
+  }
+
+  getLocations(options?: RequestOptions): Promise<ApiResult<LocationsDocument>> {
+    return this.withClient((client) => client.getLocations(options));
   }
 
   private async withClient<T>(

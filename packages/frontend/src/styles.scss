@@ -14,7 +14,11 @@
   --color-error-strong: #b3261e; // on light surfaces (search bar)
 
   --font-display: 'Iowan Old Style', 'Palatino Linotype', Georgia, 'Times New Roman', serif;
-  --font-sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  // Distinctive grotesque/geometric sans stack — favours Avenir/Futura-like and modern system UI
+  // faces over the plain `system-ui` default so the UI does not look like a stock browser form.
+  --font-sans:
+    'Avenir Next', 'Avenir', 'Futura', 'Segoe UI Variable', 'Inter', 'SF Pro Text',
+    'Helvetica Neue', system-ui, -apple-system, Roboto, Arial, sans-serif;
   --label-letter-spacing: 0.16em;
 
   --radius-card: 1.5rem;
@@ -37,12 +41,57 @@ body {
 
 body {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 20% 0%, var(--brand-primary) 0%, transparent 60%), var(--color-bg);
+  /* Hero photo (brand green, gold lines, tropical villa + pool) behind a green wash that keeps
+     text legible. The wash is darker top and bottom where the header and content sit; the middle
+     stays open so the architecture reads through. `--hero-background` lets the ThemeService swap
+     the image per white-label deployment. */
+  background-color: var(--color-bg);
+  background-image:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg) 82%, transparent) 0%,
+      color-mix(in srgb, var(--color-bg) 42%, transparent) 38%,
+      color-mix(in srgb, var(--color-bg) 55%, transparent) 70%,
+      color-mix(in srgb, var(--color-bg) 92%, transparent) 100%
+    ),
+    var(--hero-background, url('/hero-background.png'));
+  background-repeat: no-repeat;
+  background-position:
+    center top,
+    center center;
+  background-size: cover, cover;
+  background-attachment: fixed, fixed;
   color: var(--color-text);
   font-family: var(--font-sans);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+}
+
+/* Mobile and tablets: the landscape photo would crop the buildings away, and fixed attachment is
+   unreliable on iOS. Scroll the image, shift toward the right side (villa + pool read best at
+   portrait), and strengthen the wash so the stacked content stays readable over a busier crop. */
+@media (max-width: 48rem) {
+  body {
+    background-image:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--color-bg) 88%, transparent) 0%,
+        color-mix(in srgb, var(--color-bg) 60%, transparent) 45%,
+        color-mix(in srgb, var(--color-bg) 92%, transparent) 100%
+      ),
+      var(--hero-background, url('/hero-background.png'));
+    background-position:
+      center top,
+      72% center;
+    background-attachment: scroll, scroll;
+  }
+}
+
+/* Honour reduced-motion / data-saver expectations: a static, non-fixed background. */
+@media (prefers-reduced-motion: reduce) {
+  body {
+    background-attachment: scroll, scroll;
+  }
 }
 
 .display {
@@ -96,8 +145,114 @@ body {
   font-size: 1.25rem;
 }
 
-.site-language {
+.site-controls {
   margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+// Shared dropdown look (header and search bar): a native <select> — keyboard, screen reader and
+// mobile pickers stay native — drawn as an outlined glass pill with a currentcolor chevron, so it
+// adapts to the dark header and the light search bar alike.
+.oe-select-field {
+  display: inline-flex;
+  min-width: 0;
+}
+
+.oe-select {
+  appearance: none;
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.5rem 2.25rem 0.5rem 1rem;
+  border: 1px solid var(--color-surface-border);
+  border-radius: var(--radius-pill);
+  background:
+    linear-gradient(45deg, transparent 50%, currentcolor 50%) right 1.1rem center / 0.35rem 0.35rem
+      no-repeat,
+    linear-gradient(135deg, currentcolor 50%, transparent 50%) right 0.75rem center / 0.35rem
+      0.35rem no-repeat,
+    var(--color-surface);
+  backdrop-filter: blur(var(--blur-glass));
+  color: inherit;
+  font: inherit;
+  font-size: 0.875rem;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+
+  &:hover {
+    border-color: var(--brand-secondary);
+  }
+
+  // Native option lists cannot be themed reliably; keep them dark-on-light and readable.
+  option {
+    color: var(--color-on-accent);
+    background: var(--color-text);
+  }
+
+  &[aria-invalid='true'] {
+    border-color: var(--color-error-strong);
+  }
+}
+
+// Inside the light search bar: same pill, outlined in the bar's text colour.
+.oe-select--inline {
+  width: 100%;
+  margin-top: 0.15rem;
+  padding-block: 0.3rem;
+  border-color: color-mix(in srgb, currentcolor 22%, transparent);
+  background-color: color-mix(in srgb, currentcolor 5%, transparent);
+}
+
+// Popup of the city combobox (WAI-ARIA listbox), styled like the light search bar.
+.oe-listbox {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 0.6rem);
+  left: -0.75rem;
+  width: max-content;
+  min-width: calc(100% + 1.5rem);
+  max-width: min(24rem, 90vw);
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  border: 1px solid color-mix(in srgb, var(--color-on-accent) 12%, transparent);
+  border-radius: 1rem;
+  background: var(--color-text);
+  color: var(--color-on-accent);
+  box-shadow: 0 1rem 2.5rem rgb(0 0 0 / 35%);
+}
+
+.oe-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.7rem;
+  cursor: pointer;
+
+  &[aria-selected='true'] {
+    background: var(--brand-secondary);
+  }
+}
+
+.oe-option-meta {
+  font-size: 0.75rem;
+  white-space: nowrap;
+  opacity: 0.7;
 }
 
 .shell {

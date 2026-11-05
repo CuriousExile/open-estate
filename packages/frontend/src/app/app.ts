@@ -1,13 +1,14 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { LanguageSelectComponent } from './locale/language-select.component';
+import { CountrySelectComponent } from './location/country-select.component';
 import { StartupState } from './startup/startup-state';
 import { ThemeService } from './theme/theme.service';
 
 /** Root component: the app shell after a successful start, otherwise only the startup error page. */
 @Component({
   selector: 'oe-root',
-  imports: [LanguageSelectComponent, RouterOutlet],
+  imports: [CountrySelectComponent, LanguageSelectComponent, RouterOutlet],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (errorMessage(); as error) {
@@ -20,7 +21,10 @@ import { ThemeService } from './theme/theme.service';
         <!-- Decorative: the brand name next to it carries the text. -->
         <img class="site-logo" [src]="logoUrl()" alt="" />
         <span class="site-name">{{ appTitle() }}</span>
-        <oe-language-select class="site-language" />
+        <div class="site-controls">
+          <oe-country-select />
+          <oe-language-select />
+        </div>
       </header>
       <main class="shell">
         <router-outlet />

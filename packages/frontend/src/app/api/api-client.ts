@@ -2,6 +2,7 @@
 // Kept free of Angular imports so it can be unit-tested with plain Jest.
 import {
   ERROR_CODES,
+  LocationsDocument,
   type ApiError,
   type ErrorCode,
   type LocalizedListing,
@@ -41,6 +42,8 @@ export interface SearchParams {
   areaMax?: string;
   city?: string;
   postalCode?: string;
+  /** ISO 3166-1 alpha-2 (header country selection). */
+  country?: string;
   group?: string;
   types?: readonly string[];
   hasTour?: boolean;
@@ -88,6 +91,8 @@ export interface ApiClient {
   getListing(id: string, options?: RequestOptions): Promise<ApiResult<LocalizedListing>>;
   /** Raw `/meta` (taxonomy, locales, tour providers); validated by its consumers. */
   getMeta(options?: RequestOptions): Promise<ApiResult<unknown>>;
+  /** `/locations`: countries and cities with public listings. */
+  getLocations(options?: RequestOptions): Promise<ApiResult<LocationsDocument>>;
 }
 
 type QueryValue = string | number | boolean | readonly string[] | undefined;
@@ -103,6 +108,7 @@ const SEARCH_PARAM_ORDER = [
   'areaMax',
   'city',
   'postalCode',
+  'country',
   'group',
   'types',
   'hasTour',
@@ -278,5 +284,10 @@ export function createApiClient(options: ApiClientOptions): ApiClient {
       ),
     getListing: (id, opts) => request(`/listings/${encodeURIComponent(id)}`, [], isListing, opts),
     getMeta: (opts) => request('/meta', [], anyJson, opts),
+    getLocations: (opts) => request('/locations', [], isLocations, opts),
   };
+}
+
+function isLocations(value: unknown): value is LocationsDocument {
+  return LocationsDocument.safeParse(value).success;
 }

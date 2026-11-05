@@ -111,6 +111,29 @@ describe('ApiClient requests', () => {
     );
   });
 
+  it('sends the country filter after postalCode', async () => {
+    const { fetch, calls } = fakeFetch(ok({ items: [] }));
+    await client(fetch).api.searchListings({ city: 'Pattaya', postalCode: '20150', country: 'TH' });
+    expect(calls[0]?.url).toBe(
+      'https://api.example.org/v1/listings?city=Pattaya&postalCode=20150&country=TH&lang=de-AT',
+    );
+  });
+
+  it('loads /locations and rejects a malformed document', async () => {
+    const doc = {
+      countries: [{ code: 'TH', count: 2 }],
+      cities: [{ name: 'Pattaya', country: 'TH', count: 2 }],
+    };
+    const { fetch, calls } = fakeFetch(ok(doc));
+    await expect(client(fetch).api.getLocations()).resolves.toEqual({ ok: true, value: doc });
+    expect(calls[0]?.url).toBe('https://api.example.org/v1/locations?lang=de-AT');
+    const bad = fakeFetch(ok({ countries: [{ code: 'th', count: 1 }], cities: [] }));
+    await expect(client(bad.fetch).api.getLocations()).resolves.toMatchObject({
+      ok: false,
+      error: { kind: 'invalid-response' },
+    });
+  });
+
   it('URL-encodes the listing id', async () => {
     const { fetch, calls } = fakeFetch(ok({ id: 'a/b c' }));
     const result = await client(fetch).api.getListing('a/b c');
