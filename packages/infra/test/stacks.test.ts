@@ -613,6 +613,14 @@ describe('ApiStack', () => {
     }
   });
 
+  it('emits RequestCount via EMF: no cloudwatch:PutMetricData grant on the API stack (Req 14.1)', () => {
+    for (const template of [dev.api, prod.api]) {
+      expect(JSON.stringify(template.findResources('AWS::IAM::Policy'))).not.toContain(
+        'cloudwatch:',
+      );
+    }
+  });
+
   it('gives the MCP Lambda the environment and IAM of the listings Lambda without CORS (Req 19.7)', () => {
     for (const template of [dev.api, prod.api]) {
       const env = (prefix: string) =>

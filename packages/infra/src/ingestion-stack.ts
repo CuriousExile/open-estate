@@ -19,6 +19,7 @@ import {
   TaskInput,
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import { DEFAULT_METRICS_NAMESPACE, snapshotKey } from '@open-estate/core';
 import {
   CONNECTOR_CONFIG_FILES,
   CONNECTOR_LAMBDA_ENV,
@@ -49,9 +50,26 @@ export function connectorsFromConfigFiles(files: readonly ConfigFile[]): Connect
   return file === undefined ? [] : connectorsFileSchema.parse(JSON.parse(file.content));
 }
 
+/**
+ * Stores of the `VersionedListingWriter` the import writes through (design: "Import-Pipeline",
+ * Req 12): version metadata, Custom_Id keys, counters and the content-addressed snapshots. Owned
+ * by the ManagementStack (task 12.2); the connector Lambda refuses to start without them.
+ */
+export interface ConnectorVersioningResources {
+  readonly listingVersions: ITableV2;
+  readonly listingKeys: ITableV2;
+  readonly metricCounters: ITableV2;
+  readonly snapshotBucket: IBucket;
+}
+
 export interface IngestionStackProps extends StackProps {
   readonly tables: { readonly listings: ITableV2; readonly deletionBlocklist: ITableV2 };
   readonly configBucket: IBucket;
+  /**
+   * Versioned write path; optional only until the ManagementStack (task 12.2) provides it in
+   * `app.ts`. Without it the functions get neither the variables nor the grants.
+   */
+  readonly versioning?: ConnectorVersioningResources;
   /** Registrations from `connectors.json`; one schedule, state machine and Lambda each. */
   readonly connectors: ConnectorsFile;
   readonly removalPolicy: RemovalPolicy;
@@ -125,6 +143,9 @@ export class IngestionStack extends Stack {
         [CONNECTOR_LAMBDA_ENV.deletionBlocklistTable]: props.tables.deletionBlocklist.tableName,
         [CONNECTOR_LAMBDA_ENV.configBucket]: props.configBucket.bucketName,
         [CONNECTOR_LAMBDA_ENV.connectorId]: config.id,
+        // Same EMF namespace as the API and MCP Lambdas (platform monitoring, Req 14.1).
+        POWERTOOLS_METRICS_NAMESPACE: DEFAULT_METRICS_NAMESPACE,
+        ...versioningEnvironment(props.versioning),
       },
       bundling: {
         // Local esbuild (pinned devDependency), never Docker.
@@ -254,4 +275,58 @@ function grantConnectorRun(
       }),
     );
   }
+  if (props.versioning !== undefined) grantVersionedWrite(fn, props.tables, props.versioning);
+}
+
+/** Variables of the versioned write path (empty without it). */
+function versioningEnvironment(
+  versioning: ConnectorVersioningResources | undefined,
+): Record<string, string> {
+  if (versioning === undefined) return {};
+  return {
+    [CONNECTOR_LAMBDA_ENV.listingVersionsTable]: versioning.listingVersions.tableName,
+    [CONNECTOR_LAMBDA_ENV.listingKeysTable]: versioning.listingKeys.tableName,
+    [CONNECTOR_LAMBDA_ENV.metricCountersTable]: versioning.metricCounters.tableName,
+    [CONNECTOR_LAMBDA_ENV.snapshotBucket]: versioning.snapshotBucket.bucketName,
+  };
+}
+
+/**
+ * Least privilege of the `VersionedListingWriter` in one transaction (Req 7.1, 12): `UpdateItem`
+ * on `Listings` (provenance touch of an unchanged import), `PutItem` and the conflict read
+ * (`GetItem`, `Query`) on `ListingVersions`, Custom_Id lookup, assignment and release on
+ * `ListingKeys`, the `ADD` on `MetricCounters` and `PutObject` of the snapshots (with
+ * `kms:GenerateDataKey` if the bucket uses a key). The Custom_Id blocklist check (`custom#…`) uses
+ * the `DeletionBlocklist` grant of {@link grantConnectorRun}. No `DeleteObject`, no `Scan`.
+ */
+function grantVersionedWrite(
+  fn: NodejsFunction,
+  tables: IngestionStackProps['tables'],
+  versioning: ConnectorVersioningResources,
+): void {
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:UpdateItem'],
+      resources: [tables.listings.tableArn],
+    }),
+  );
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:PutItem', 'dynamodb:GetItem', 'dynamodb:Query'],
+      resources: [versioning.listingVersions.tableArn],
+    }),
+  );
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:DeleteItem'],
+      resources: [versioning.listingKeys.tableArn],
+    }),
+  );
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:UpdateItem'],
+      resources: [versioning.metricCounters.tableArn],
+    }),
+  );
+  versioning.snapshotBucket.grantPut(fn, snapshotKey('*', '*'));
 }
