@@ -10,6 +10,9 @@ import {
   DELETION_REQUESTS_BY_STATUS_PK_ATTRIBUTE,
   DELETION_REQUESTS_BY_STATUS_SK_ATTRIBUTE,
   DELETION_REQUESTS_KEY_ATTRIBUTE,
+  type DeletionRequestStore,
+  type RequestIdPage,
+  type RequestIdPageRequest,
 } from '@open-estate/core';
 import {
   deletionRequestRecordSchema,
@@ -17,41 +20,7 @@ import {
   type DeletionRequestRecord,
 } from './deletion-model';
 
-/** `DeletionRequests` table (design: "DynamoDB-Tabellen"). */
-export interface DeletionRequestStore {
-  /** Creates a new request; an existing `requestId` is an error. */
-  create(record: DeletionRequestRecord): Promise<void>;
-  get(requestId: string): Promise<DeletionRequestRecord | null>;
-  /**
-   * `OPEN` → `EXECUTED` with `executedAt`. Idempotent: an already executed request is returned
-   * unchanged (its first `executedAt` stays). `null` if the request does not exist.
-   */
-  markExecuted(requestId: string, executedAt: string): Promise<DeletionRequestRecord | null>;
-  /**
-   * Ids of `OPEN` requests with `requestedAt` strictly before `requestedBefore` (ISO-8601 UTC),
-   * oldest first, at most `limit` per page (overdue check 14.7). May be stale: callers re-read.
-   */
-  listOpenRequestedBefore(
-    requestedBefore: string,
-    page: RequestIdPageRequest,
-  ): Promise<RequestIdPage>;
-  /**
-   * Sets `notifiedAt` once on an `OPEN` request; the status is not changed (Req 18.10). `false`
-   * if the request is missing, no longer `OPEN` or already notified.
-   */
-  markNotified(requestId: string, notifiedAt: string): Promise<boolean>;
-}
-
-export interface RequestIdPageRequest {
-  limit: number;
-  cursor?: string;
-}
-
-export interface RequestIdPage {
-  requestIds: string[];
-  /** Opaque; present if more ids may follow. */
-  nextCursor?: string;
-}
+export type { DeletionRequestStore, RequestIdPage, RequestIdPageRequest };
 
 const KEY = DELETION_REQUESTS_KEY_ATTRIBUTE;
 

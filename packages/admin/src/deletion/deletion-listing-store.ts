@@ -4,29 +4,17 @@ import {
   TransactWriteCommand,
   type DynamoDBDocumentClient,
 } from '@aws-sdk/lib-dynamodb';
-import { DELETION_REQUESTS_KEY_ATTRIBUTE, LISTINGS_BY_SOURCE_INDEX } from '@open-estate/core';
+import {
+  DELETION_REQUESTS_KEY_ATTRIBUTE,
+  LISTINGS_BY_SOURCE_INDEX,
+  type DeletionListingStore,
+  type TargetPageRequest,
+} from '@open-estate/core';
 import type { Listing } from '@open-estate/shared';
 import type { DeletionTarget, TargetPage } from './deletion-model';
 import type { InMemoryDeletionRequestStore } from './deletion-request-store';
 
-export interface TargetPageRequest {
-  limit: number;
-  cursor?: string;
-}
-
-/** The deletion workflow's view of the `Listings` table: key lookups and removal only. */
-export interface DeletionListingStore {
-  /** The listing with this id, or `null`. */
-  find(listingId: string): Promise<DeletionTarget | null>;
-  /** Listings of a source, ordered by id, at most `limit` per page. */
-  listBySource(source: string, page: TargetPageRequest): Promise<TargetPage>;
-  /**
-   * Removes the listing — media and tours are references inside the item and go with it
-   * (Req 18.4) — and counts it on the request, atomically. `false` if the listing no longer
-   * exists (already removed, e.g. by a re-run), in which case nothing is counted.
-   */
-  removeForRequest(listingId: string, requestId: string): Promise<boolean>;
-}
+export type { DeletionListingStore, TargetPageRequest };
 
 /** Key data of a stored listing; a `Map<string, Listing>` is accepted as backing store too. */
 export type StoredListingKey = Pick<Listing, 'id' | 'source'>;

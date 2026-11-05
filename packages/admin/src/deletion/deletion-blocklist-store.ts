@@ -1,16 +1,8 @@
 import { DeleteCommand, PutCommand, type DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { DELETION_BLOCKLIST_KEY_ATTRIBUTE } from '@open-estate/core';
+import { DELETION_BLOCKLIST_KEY_ATTRIBUTE, type DeletionBlocklistStore } from '@open-estate/core';
 import type { DeletionBlocklistEntry } from './deletion-model';
 
-/**
- * Write side of the `DeletionBlocklist` (Req 18.6); the import pipeline reads it (Req 18.7).
- */
-export interface DeletionBlocklistStore {
-  /** Adds the id. Idempotent: an existing entry is kept unchanged. */
-  block(entry: DeletionBlocklistEntry): Promise<void>;
-  /** Removes the id; `false` if it was not listed. */
-  unblock(listingId: string): Promise<boolean>;
-}
+export type { DeletionBlocklistStore };
 
 /**
  * Id set the in-memory store mirrors its changes into. `InMemoryDeletionBlocklist` of

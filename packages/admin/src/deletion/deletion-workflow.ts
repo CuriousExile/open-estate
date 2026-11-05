@@ -1,5 +1,5 @@
 import { StartExecutionCommand, type SFNClient } from '@aws-sdk/client-sfn';
-import { systemClock, type Clock } from '@open-estate/core';
+import { systemClock, type Clock, type DeletionWorkflowStarter } from '@open-estate/core';
 import type { AuditLog } from '../audit-log';
 import type { DeletionBlocklistStore } from './deletion-blocklist-store';
 import type { DeletionListingStore } from './deletion-listing-store';
@@ -140,10 +140,7 @@ export async function runDeletionWorkflow(
   return workflow.finalize({ requestId });
 }
 
-/** Starts the deletion workflow for a created `OPEN` request (design step 2). */
-export interface DeletionWorkflowStarter {
-  start(requestId: string): Promise<void>;
-}
+export type { DeletionWorkflowStarter };
 
 /** Runs the workflow to completion inside `start`; `started` records the request ids. */
 export class InProcessDeletionWorkflowStarter implements DeletionWorkflowStarter {
