@@ -458,7 +458,7 @@ interface Pending {
       }
       .secret {
         padding: 0.75rem 1rem;
-        border: 1px solid var(--brand-secondary);
+        border: 1px solid var(--color-accent);
         border-radius: 0.75rem;
       }
       .secret p {

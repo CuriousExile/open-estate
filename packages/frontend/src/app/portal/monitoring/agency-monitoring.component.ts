@@ -655,13 +655,13 @@ interface UsageState {
       padding: 0;
       border: none;
       background: none;
-      color: var(--brand-secondary);
+      color: var(--color-accent);
       font: inherit;
       text-decoration: underline;
       cursor: pointer;
     }
     a {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     .toggle {
       display: flex;

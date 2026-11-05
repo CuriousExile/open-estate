@@ -69,7 +69,7 @@ export type ConfirmDialogState =
       color: var(--color-text);
     }
     dialog::backdrop {
-      background: rgb(0 0 0 / 50%);
+      background: var(--color-scrim);
     }
     dialog[open] {
       display: grid;

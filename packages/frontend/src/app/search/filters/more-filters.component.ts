@@ -211,7 +211,7 @@ import {
       border-left: 1px solid var(--color-gold-soft);
       background: var(--color-popover);
       color: var(--color-text);
-      box-shadow: -1.5rem 0 4rem rgb(0 0 0 / 45%);
+      box-shadow: var(--shadow-sheet);
       backdrop-filter: blur(var(--blur-glass));
       transition:
         transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1),
@@ -230,7 +230,7 @@ import {
       }
     }
     .more::backdrop {
-      background: rgb(4 14 10 / 55%);
+      background: var(--color-scrim);
       backdrop-filter: blur(2px);
     }
     .sheet {

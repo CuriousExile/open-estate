@@ -101,7 +101,7 @@ import type { DiffRow } from './version-diff-model';
     ins {
       text-decoration: none;
       color: var(--color-text);
-      background: color-mix(in srgb, var(--brand-secondary) 22%, transparent);
+      background: color-mix(in srgb, var(--color-accent) 22%, transparent);
     }
     .muted {
       color: var(--color-text-muted);

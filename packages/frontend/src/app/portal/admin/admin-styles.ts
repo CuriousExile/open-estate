@@ -114,7 +114,7 @@ export const ADMIN_STYLES = `
   }
   .pill.primary {
     border-color: transparent;
-    background: var(--brand-secondary);
+    background: var(--color-accent);
     color: var(--color-on-accent);
   }
   .pill.danger {
@@ -126,7 +126,7 @@ export const ADMIN_STYLES = `
     cursor: default;
   }
   a {
-    color: var(--brand-secondary);
+    color: var(--color-accent);
   }
   .badge {
     padding: 0.1rem 0.55rem;
@@ -154,7 +154,7 @@ export const ADMIN_STYLES = `
   }
   .subnav a.active,
   .subnav a:hover {
-    color: var(--brand-secondary);
+    color: var(--color-accent);
   }
   .pager {
     display: flex;

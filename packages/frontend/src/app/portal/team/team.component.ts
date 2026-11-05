@@ -313,7 +313,7 @@ interface Notice {
       color: var(--color-error);
     }
     .success {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     .notice {
       display: flex;
@@ -334,7 +334,7 @@ interface Notice {
     }
     .pill.primary {
       border-color: transparent;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .pill:disabled {

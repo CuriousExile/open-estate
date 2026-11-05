@@ -734,7 +734,7 @@ const CONTACT_FIELDS = [
     }
     .pill.primary {
       border-color: transparent;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .pill:disabled {
@@ -753,7 +753,7 @@ const CONTACT_FIELDS = [
       margin: 0;
     }
     .notice.conflict {
-      border-color: var(--brand-secondary);
+      border-color: var(--color-accent);
     }
     .notice.error,
     .errors {

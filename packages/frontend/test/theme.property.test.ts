@@ -2,6 +2,7 @@
 import fc from 'fast-check';
 import {
   createProblemReporter,
+  deriveLightPalette,
   resolveTheme,
   THEME_DEFAULTS,
   THEME_TEXT_MAX_LENGTH,
@@ -38,9 +39,14 @@ type Group<T> =
 
 interface ConfigCase {
   logoUrl: Field;
-  colors: Group<{ primary: Field; secondary: Field }>;
+  colors: Group<{ primary: Field; secondary: Field; light: Group<Palette> }>;
   texts: Group<{ appTitle: Group<Array<[string, Field]>> }>;
   extra: Record<string, unknown>;
+}
+
+interface Palette {
+  primary: Field;
+  secondary: Field;
 }
 
 type RootCase =
@@ -184,6 +190,12 @@ const configCase: fc.Arbitrary<ConfigCase> = fc.record({
     fc.record({
       primary: field(validColor, invalidColor),
       secondary: field(validColor, invalidColor),
+      light: group(
+        fc.record({
+          primary: field(validColor, invalidColor),
+          secondary: field(validColor, invalidColor),
+        }),
+      ),
     }),
   ),
   texts: group(fc.record({ appTitle })),
@@ -222,12 +234,23 @@ function buildRaw(root: RootCase): unknown {
   const { config } = root;
   const raw: Record<string, unknown> = { ...config.extra };
   put(raw, 'logoUrl', config.logoUrl, noBuild);
-  put(raw, 'colors', config.colors, (f: { primary: Field; secondary: Field }) => {
-    const colors: Record<string, unknown> = {};
-    put(colors, 'primary', f.primary, noBuild);
-    put(colors, 'secondary', f.secondary, noBuild);
-    return colors;
-  });
+  put(
+    raw,
+    'colors',
+    config.colors,
+    (f: { primary: Field; secondary: Field; light: Group<Palette> }) => {
+      const colors: Record<string, unknown> = {};
+      put(colors, 'primary', f.primary, noBuild);
+      put(colors, 'secondary', f.secondary, noBuild);
+      put(colors, 'light', f.light, (l: Palette) => {
+        const light: Record<string, unknown> = {};
+        put(light, 'primary', l.primary, noBuild);
+        put(light, 'secondary', l.secondary, noBuild);
+        return light;
+      });
+      return colors;
+    },
+  );
   put(raw, 'texts', config.texts, (f: { appTitle: Group<Array<[string, Field]>> }) => {
     const texts: Record<string, unknown> = {};
     put(texts, 'appTitle', f.appTitle, (entries: Array<[string, Field]>) => {
@@ -267,6 +290,13 @@ function expectedResolution(root: RootCase, activeLocale: string, defaultLocale:
   const colors = open(config.colors, 'colors');
   const primary = colors && pick(colors.primary, 'colors.primary');
   const secondary = colors && pick(colors.secondary, 'colors.secondary');
+  const light = colors && open(colors.light, 'colors.light');
+  const lightPrimary = light && pick(light.primary, 'colors.light.primary');
+  const lightSecondary = light && pick(light.secondary, 'colors.light.secondary');
+  const brand = {
+    primary: primary ?? THEME_DEFAULTS.colors.primary,
+    secondary: secondary ?? THEME_DEFAULTS.colors.secondary,
+  };
   const texts = open(config.texts, 'texts');
   const entries = texts && open(texts.appTitle, 'texts.appTitle');
   const titles = new Map<string, string | undefined>(
@@ -276,8 +306,12 @@ function expectedResolution(root: RootCase, activeLocale: string, defaultLocale:
     theme: {
       logoUrl: logoUrl ?? THEME_DEFAULTS.logoUrl,
       colors: {
-        primary: primary ?? THEME_DEFAULTS.colors.primary,
-        secondary: secondary ?? THEME_DEFAULTS.colors.secondary,
+        ...brand,
+        // Missing light values are derived from the dark palette (unit-tested on their own).
+        light: deriveLightPalette(brand, {
+          ...(lightPrimary !== undefined && { primary: lightPrimary }),
+          ...(lightSecondary !== undefined && { secondary: lightSecondary }),
+        }),
       },
       texts: {
         appTitle:
@@ -305,12 +339,15 @@ describe('Property 30: Theme-Auflösung ist total', () => {
 
           // Complete model: exactly the documented keys, every value a non-empty string.
           expect(Object.keys(theme).sort()).toEqual(['colors', 'logoUrl', 'texts']);
-          expect(Object.keys(theme.colors).sort()).toEqual(['primary', 'secondary']);
+          expect(Object.keys(theme.colors).sort()).toEqual(['light', 'primary', 'secondary']);
+          expect(Object.keys(theme.colors.light).sort()).toEqual(['primary', 'secondary']);
           expect(Object.keys(theme.texts)).toEqual(['appTitle']);
           for (const value of [
             theme.logoUrl,
             theme.colors.primary,
             theme.colors.secondary,
+            theme.colors.light.primary,
+            theme.colors.light.secondary,
             theme.texts.appTitle,
           ]) {
             expect(typeof value).toBe('string');

@@ -91,7 +91,7 @@ export type RestoreDialogState =
       color: var(--color-text);
     }
     dialog::backdrop {
-      background: rgb(0 0 0 / 50%);
+      background: var(--color-scrim);
     }
     dialog[open] {
       display: grid;
@@ -124,8 +124,8 @@ export type RestoreDialogState =
       cursor: pointer;
     }
     .pill.primary {
-      border-color: var(--brand-primary);
-      background: var(--brand-primary);
+      border-color: var(--color-accent);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .pill:disabled {

@@ -53,7 +53,7 @@ import type { Confirmation } from './admin-model';
       background: var(--color-surface);
     }
     dialog::backdrop {
-      background: rgb(0 0 0 / 0.5);
+      background: var(--color-scrim);
     }
     h2 {
       margin: 0 0 0.75rem;

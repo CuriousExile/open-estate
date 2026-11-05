@@ -281,8 +281,8 @@ const TAB_KEYS: Record<WorkspaceTab, string> = {
       cursor: pointer;
     }
     .tab[aria-selected='true'] {
-      border-color: var(--brand-secondary);
-      color: var(--brand-secondary);
+      border-color: var(--color-accent);
+      color: var(--color-accent);
     }
     .panel {
       display: grid;
@@ -295,7 +295,7 @@ const TAB_KEYS: Record<WorkspaceTab, string> = {
       color: var(--color-error-strong);
     }
     a {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
   `,
 })

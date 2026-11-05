@@ -1,10 +1,20 @@
 // Framework-free theme resolution (design: ThemeService, theme-config.json; Req 8.1, 8.3–8.5, 8.7).
 // Kept free of Angular imports so it can be unit-tested with plain Jest.
 
+/** One colour pair of the white-label theme. */
+export interface ThemePalette {
+  primary: string;
+  secondary: string;
+}
+
 /** Fully resolved branding; every value is always set. */
 export interface ThemeModel {
   logoUrl: string;
-  colors: { primary: string; secondary: string };
+  /**
+   * `primary`/`secondary` are the dark palette (the original single palette); `light` the palette
+   * of the light theme, derived from them unless configured.
+   */
+  colors: ThemePalette & { light: ThemePalette };
   texts: { appTitle: string };
 }
 
@@ -20,12 +30,84 @@ export interface ResolvedTheme {
 }
 
 /**
+ * Background of the light theme (`--color-page` in styles.scss). A derived light palette keeps at
+ * least {@link LIGHT_CONTRAST_MIN} against it (WCAG AA for normal text).
+ */
+export const LIGHT_PAGE_BACKGROUND = '#F4EFE6';
+export const LIGHT_CONTRAST_MIN = 4.5;
+
+/** `#RGB` / `#RRGGBB` → `[r, g, b]` (0–255); the input is a validated hex colour. */
+function rgb(hex: string): [number, number, number] {
+  const digits = hex.length === 4 ? [...hex.slice(1)].map((d) => d + d).join('') : hex.slice(1);
+  return [0, 2, 4].map((i) => parseInt(digits.slice(i, i + 2), 16)) as [number, number, number];
+}
+
+function toHex([r, g, b]: readonly number[]): string {
+  return `#${[r, g, b]
+    .map((c) =>
+      Math.round(c ?? 0)
+        .toString(16)
+        .padStart(2, '0'),
+    )
+    .join('')}`.toUpperCase();
+}
+
+/** WCAG 2 relative luminance. */
+function luminance(hex: string): number {
+  const [r, g, b] = rgb(hex).map((c) => {
+    const s = c / 255;
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+  }) as [number, number, number];
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+/** WCAG 2 contrast ratio of two hex colours (1–21). */
+export function contrastRatio(a: string, b: string): number {
+  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
+  return (hi + 0.05) / (lo + 0.05);
+}
+
+/** `color`, darkened in 5 % steps towards black until it reaches `min` contrast on `background`. */
+function darkenFor(color: string, background: string, min: number): string {
+  if (contrastRatio(color, background) >= min) return color;
+  const base = rgb(color);
+  for (let step = 1; step <= 20; step++) {
+    const darker = toHex(base.map((c) => c * (1 - step * 0.05)));
+    if (contrastRatio(darker, background) >= min) return darker;
+  }
+  return '#000000';
+}
+
+/**
+ * Light palette from the brand colours (used for every value `colors.light` leaves out): the
+ * primary colour carries text, links and fills on the light background, so it is darkened until it
+ * reaches AA contrast there; the secondary colour is the text on primary fills, white if it lacks
+ * contrast on the (derived) primary.
+ */
+export function deriveLightPalette(
+  brand: ThemePalette,
+  light: Partial<ThemePalette> = {},
+): ThemePalette {
+  const primary =
+    light.primary ?? darkenFor(brand.primary, LIGHT_PAGE_BACKGROUND, LIGHT_CONTRAST_MIN);
+  const secondary =
+    light.secondary ??
+    (contrastRatio(brand.secondary, primary) >= LIGHT_CONTRAST_MIN ? brand.secondary : '#FFFFFF');
+  return { primary, secondary };
+}
+
+/**
  * Documented defaults, used for every missing or invalid value (Req 8.3, 8.4).
  * Source for the theme-config documentation (Req 8.6).
  */
 export const THEME_DEFAULTS: Readonly<ThemeModel> = Object.freeze({
   logoUrl: 'logo.svg',
-  colors: Object.freeze({ primary: '#12352B', secondary: '#A7E3C4' }),
+  colors: Object.freeze({
+    primary: '#12352B',
+    secondary: '#A7E3C4',
+    // = deriveLightPalette of the two above (the deep green already passes on the light page).
+    light: Object.freeze({ primary: '#12352B', secondary: '#A7E3C4' }),
+  }),
   texts: Object.freeze({ appTitle: 'Open Estate' }),
 });
 
@@ -141,16 +223,26 @@ export function resolveTheme(
   else if (raw !== undefined) resolver.problems.push({ path: '$', reason: 'expected object' });
 
   const colors = resolver.object(root, 'colors', 'colors');
+  const light = resolver.object(colors, 'light', 'colors.light');
   const texts = resolver.object(root, 'texts', 'texts');
+  const brand: ThemePalette = {
+    primary:
+      resolver.value(colors, 'primary', 'colors.primary', checkColor) ??
+      THEME_DEFAULTS.colors.primary,
+    secondary:
+      resolver.value(colors, 'secondary', 'colors.secondary', checkColor) ??
+      THEME_DEFAULTS.colors.secondary,
+  };
+  const lightPrimary = resolver.value(light, 'primary', 'colors.light.primary', checkColor);
+  const lightSecondary = resolver.value(light, 'secondary', 'colors.light.secondary', checkColor);
   const theme: ThemeModel = {
     logoUrl: resolver.value(root, 'logoUrl', 'logoUrl', checkLogoUrl) ?? THEME_DEFAULTS.logoUrl,
     colors: {
-      primary:
-        resolver.value(colors, 'primary', 'colors.primary', checkColor) ??
-        THEME_DEFAULTS.colors.primary,
-      secondary:
-        resolver.value(colors, 'secondary', 'colors.secondary', checkColor) ??
-        THEME_DEFAULTS.colors.secondary,
+      ...brand,
+      light: deriveLightPalette(brand, {
+        ...(lightPrimary !== undefined && { primary: lightPrimary }),
+        ...(lightSecondary !== undefined && { secondary: lightSecondary }),
+      }),
     },
     texts: {
       appTitle:
@@ -161,11 +253,17 @@ export function resolveTheme(
   return { theme, problems: resolver.problems };
 }
 
-/** CSS custom properties set on `document.documentElement` (names match `styles.scss`). */
+/**
+ * CSS custom properties set on `document.documentElement` (names match `styles.scss`): the dark
+ * palette as `--brand-*` (unchanged names), the light palette as `--brand-light-*`. styles.scss
+ * maps them to the semantic tokens of each theme (`--color-accent`, …).
+ */
 export function themeCssProperties(theme: ThemeModel): ReadonlyArray<readonly [string, string]> {
   return [
     ['--brand-primary', theme.colors.primary],
     ['--brand-secondary', theme.colors.secondary],
+    ['--brand-light-primary', theme.colors.light.primary],
+    ['--brand-light-secondary', theme.colors.light.secondary],
   ];
 }
 

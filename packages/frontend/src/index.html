@@ -6,6 +6,25 @@
     <title></title>
     <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark light" />
+    <!-- Light/dark theme before the first paint (rules: src/app/theme/theme-preference.ts). The CSP
+         allows exactly this script by its hash (FrontendStack); keep it free of dynamic parts. -->
+    <script>
+      (function (d) {
+        var p;
+        try {
+          p = localStorage.getItem('open-estate.theme');
+        } catch (e) {}
+        var t =
+          p === 'light' || p === 'dark'
+            ? p
+            : window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches
+              ? 'dark'
+              : 'light';
+        d.setAttribute('data-theme', t);
+        d.style.colorScheme = t;
+      })(document.documentElement);
+    </script>
   </head>
   <body>
     <oe-root></oe-root>

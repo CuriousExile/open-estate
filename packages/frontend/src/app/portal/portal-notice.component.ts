@@ -55,7 +55,7 @@ const isReason = (value: string | undefined): value is Reason =>
       align-items: center;
     }
     a {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     .pill {
       padding: 0.4rem 1.1rem;

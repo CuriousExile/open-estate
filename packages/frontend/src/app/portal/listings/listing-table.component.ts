@@ -386,7 +386,7 @@ import {
     }
     .pill.primary {
       border-color: transparent;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .pill:disabled {
@@ -433,7 +433,7 @@ import {
       font-weight: 500;
     }
     a {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     .badge {
       padding: 0.15rem 0.6rem;
@@ -443,7 +443,7 @@ import {
     }
     .badge.active {
       border-color: transparent;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .empty,

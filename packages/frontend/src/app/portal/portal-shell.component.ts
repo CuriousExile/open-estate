@@ -65,7 +65,7 @@ import { PortalSession } from '../auth/portal-session.service';
     }
     a.active,
     a:hover {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     .portal-user {
       display: flex;

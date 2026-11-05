@@ -129,10 +129,10 @@ import { changeTypeKey, channelKey, statusKey } from './workspace-model';
       background: var(--color-surface-border);
     }
     li.import::before {
-      background: var(--brand-primary);
+      background: var(--color-accent);
     }
     li.current {
-      border-color: var(--brand-secondary);
+      border-color: var(--color-accent);
     }
     p {
       margin: 0;
@@ -152,12 +152,12 @@ import { changeTypeKey, channelKey, statusKey } from './workspace-model';
     .badge {
       padding: 0.05rem 0.5rem;
       border-radius: var(--radius-pill);
-      background: var(--brand-primary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
       font-size: 0.8rem;
     }
     .current-badge {
-      background: var(--brand-secondary);
+      background: var(--color-accent);
     }
     .muted {
       color: var(--color-text-muted);
@@ -170,7 +170,7 @@ import { changeTypeKey, channelKey, statusKey } from './workspace-model';
     code.overwritten {
       padding: 0 0.3rem;
       border-radius: 0.25rem;
-      background: color-mix(in srgb, var(--brand-primary) 22%, transparent);
+      background: color-mix(in srgb, var(--color-accent) 22%, transparent);
     }
     .overwritten-note {
       font-size: 0.9rem;

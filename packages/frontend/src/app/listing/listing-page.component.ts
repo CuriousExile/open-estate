@@ -53,7 +53,7 @@ import { toListingPageState, type ListingPageState } from './listing-page-model'
       margin: 0;
     }
     a {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
   `,
 })

@@ -335,7 +335,7 @@ interface IssuedSecret {
     }
     .secret {
       padding: 1rem 1.25rem;
-      border: 1px solid var(--brand-secondary);
+      border: 1px solid var(--color-accent);
       border-radius: var(--radius-card);
     }
     .secret-row,
@@ -404,7 +404,7 @@ interface IssuedSecret {
       color: var(--color-error);
     }
     .success {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     .notice {
       display: flex;
@@ -424,7 +424,7 @@ interface IssuedSecret {
     }
     .pill.primary {
       border-color: transparent;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .pill:disabled {
@@ -472,7 +472,7 @@ interface IssuedSecret {
     }
     .badge.active {
       border-color: transparent;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .visually-hidden {

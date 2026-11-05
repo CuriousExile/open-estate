@@ -104,7 +104,7 @@ import { toDiffRows } from './diff-view-model';
       text-decoration: line-through;
     }
     ins {
-      background: color-mix(in srgb, var(--brand-secondary) 28%, transparent);
+      background: color-mix(in srgb, var(--color-accent) 28%, transparent);
     }
     .empty {
       margin: 0;

@@ -276,7 +276,7 @@ import {
     }
     .pill.primary {
       border-color: transparent;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .pill:disabled {

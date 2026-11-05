@@ -203,22 +203,22 @@ let nextId = 0;
       vertical-align: middle;
     }
     .series-0 {
-      --series: var(--brand-secondary);
+      --series: var(--color-accent);
     }
     .series-1 {
-      --series: #f2c46d;
+      --series: var(--chart-1);
     }
     .series-2 {
-      --series: #8ab4f8;
+      --series: var(--chart-2);
     }
     .series-3 {
-      --series: #f28b82;
+      --series: var(--chart-3);
     }
     .series-4 {
-      --series: #c58af9;
+      --series: var(--chart-4);
     }
     .series-5 {
-      --series: #e8eaed;
+      --series: var(--chart-5);
     }
     .line {
       stroke: var(--series);
@@ -249,7 +249,7 @@ let nextId = 0;
     }
     summary {
       cursor: pointer;
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
   `,
 })

@@ -97,17 +97,17 @@ import { channelKey } from './workspace-model';
       font-weight: normal;
     }
     tr.overwritten {
-      background: color-mix(in srgb, var(--brand-primary) 16%, transparent);
+      background: color-mix(in srgb, var(--color-accent) 16%, transparent);
     }
     tr.overwritten th[scope='row'] {
-      border-left: 3px solid var(--brand-primary);
+      border-left: 3px solid var(--color-accent);
     }
     .badge {
       display: inline-block;
       margin-left: 0.5rem;
       padding: 0.05rem 0.5rem;
       border-radius: var(--radius-pill);
-      background: var(--brand-primary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
       font-size: 0.8rem;
     }
