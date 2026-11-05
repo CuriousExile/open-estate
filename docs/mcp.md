@@ -14,6 +14,12 @@ All three tools are read-only (`readOnlyHint: true`, `destructiveHint: false`). 
 validation and search code as the API, so the same arguments give the same results and the same
 error codes.
 
+`search_listings` takes every parameter of [`GET /listings`](api.md#get-listings) as a typed JSON
+value, including the optional `country` filter (ISO 3166-1 alpha-2 in upper case, for example
+`{ "country": "TH", "city": "Pattaya" }`). Without `country`, listings of all countries match. The
+countries and cities that currently have listings are in [`GET /locations`](api.md#get-locations);
+there is no MCP tool for them.
+
 The JSON-RPC examples on this page come from the real handler. The test
 `packages/mcp/test/docs-examples.test.ts` sends each documented request to the handler and compares
 the documented response.
@@ -261,7 +267,7 @@ parameter, as in the [parameter table](api.md#get-listings).
     "tools": [
       {
         "name": "search_listings",
-        "description": "Search real estate listings by offer type, price, rooms, area, location, property group or types and virtual tour. Amounts are decimal strings in the currency unit, area in m². Results are ordered and paged like GET /listings; pass nextPageToken as pageToken to fetch the next page. `lang` selects the language of title and description.",
+        "description": "Search real estate listings by offer type, price, rooms, area, location (city, postal code, country as ISO 3166-1 alpha-2), property group or types and virtual tour. Amounts are decimal strings in the currency unit, area in m². Results are ordered and paged like GET /listings; pass nextPageToken as pageToken to fetch the next page. `lang` selects the language of title and description.",
         "inputSchema": {
           "type": "object",
           "properties": {

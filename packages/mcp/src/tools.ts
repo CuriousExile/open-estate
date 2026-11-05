@@ -68,7 +68,8 @@ export function toolDefinitions(schemas: Schemas): Tool[] {
     {
       name: 'search_listings',
       description:
-        'Search real estate listings by offer type, price, rooms, area, location, property ' +
+        'Search real estate listings by offer type, price, rooms, area, location (city, postal ' +
+        'code, country as ISO 3166-1 alpha-2), property ' +
         'group or types and virtual tour. Amounts are decimal strings in the currency unit, ' +
         'area in m². Results are ordered and paged like GET /listings; pass nextPageToken as ' +
         'pageToken to fetch the next page. `lang` selects the language of title and description.',

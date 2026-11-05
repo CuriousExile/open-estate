@@ -212,6 +212,23 @@ describe('tools/list schemas equal the OpenAPI parameters (Req 19.2)', () => {
     expect(asArray.json.result?.['isError']).toBeUndefined();
     expect(asString.json.result).toEqual(asArray.json.result);
   });
+
+  it('search_listings filters by country and rejects a lower-case code', async () => {
+    const { rpc } = setup();
+    const call = async (country: unknown) =>
+      (await rpc(1, 'tools/call', { name: 'search_listings', arguments: { country } })).json
+        .result as { isError?: boolean; structuredContent: Record<string, unknown> };
+    const { country } = exampleListing('id-000').address;
+    const other = country === 'TH' ? 'DE' : 'TH';
+
+    expect((await call(country)).structuredContent['items']).toHaveLength(1);
+    expect((await call(other)).structuredContent['items']).toEqual([]);
+    const invalid = await call(country.toLowerCase());
+    expect(invalid.isError).toBe(true);
+    expect(invalid.structuredContent).toEqual({
+      errors: [expect.objectContaining({ code: 'INVALID_PARAMETER', field: 'country' })],
+    });
+  });
 });
 
 describe('initialize handshake in stateless JSON mode', () => {
