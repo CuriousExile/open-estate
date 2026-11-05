@@ -13,6 +13,7 @@ import type { IFunction } from 'aws-cdk-lib/aws-lambda';
 import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
 import { Alias } from 'aws-cdk-lib/aws-kms';
 import { LogGroup, RetentionDays } from 'aws-cdk-lib/aws-logs';
+import type { IBucket } from 'aws-cdk-lib/aws-s3';
 import { CfnSchedule } from 'aws-cdk-lib/aws-scheduler';
 import { Topic } from 'aws-cdk-lib/aws-sns';
 import {
@@ -31,10 +32,15 @@ import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
 import {
   ADMIN_ENV,
   DELETION_ENV,
+  DELETION_HISTORY_ENV,
   OVERDUE_CHECK_ENV,
   type DeletionTaskEvent,
 } from '@open-estate/admin';
-import { DELETION_REQUESTS_BY_STATUS_INDEX, LISTINGS_BY_SOURCE_INDEX } from '@open-estate/core';
+import {
+  DELETION_REQUESTS_BY_STATUS_INDEX,
+  LISTINGS_BY_SOURCE_INDEX,
+  snapshotPrefix,
+} from '@open-estate/core';
 import type { ErrorCode } from '@open-estate/shared';
 import type { Construct } from 'constructs';
 import {
@@ -105,8 +111,26 @@ export interface AdminTables {
   readonly auditLog: ITableV2;
 }
 
+/**
+ * Stores of the version history a deletion request removes besides the listing (design:
+ * "Löschprozess-Erweiterung", Req 9.2, 9.3): versions, Custom_Id keys, counters and snapshots.
+ * Owned by the ManagementStack (task 12.2); `ConnectorVersioningResources` satisfies it.
+ */
+export interface DeletionHistoryResources {
+  readonly listingVersions: ITableV2;
+  readonly listingKeys: ITableV2;
+  readonly metricCounters: ITableV2;
+  readonly snapshotBucket: IBucket;
+}
+
 export interface AdminStackProps extends StackProps {
   readonly tables: AdminTables;
+  /**
+   * Version history removed by the deletion task; optional only until the ManagementStack (task
+   * 12.2) provides it in `app.ts`. Without it the task gets neither the variables nor the grants
+   * and refuses to start (`CONFIG_MISSING`) rather than leave versions behind.
+   */
+  readonly history?: DeletionHistoryResources;
   /** SSM names of `access-mode` and `rate-limit`, written by the admin API (Req 17.8). */
   readonly parameterNames: Pick<SsmParameterNames, 'accessMode' | 'rateLimit'>;
   /**
@@ -140,6 +164,8 @@ export interface AdminStackProps extends StackProps {
  *
  * The `userArn` is the one the Admin-API records as `requestedBy`; for assumed roles that is
  * `arn:aws:sts::<account>:assumed-role/<role>/<session>`, so the session name must be stable.
+ * Every notification also carries `requesterId` (= `requestedBy`, for requests of a
+ * Plattform_Admin via the Management_API the user id); filter on it to cover both kinds.
  */
 export class AdminStack extends Stack {
   readonly api: RestApi;
@@ -164,7 +190,7 @@ export class AdminStack extends Stack {
       timeout: Duration.seconds(30),
       removalPolicy,
     });
-    grantDeletionTask(this.deletionTaskFunction, tables);
+    grantDeletionTask(this.deletionTaskFunction, tables, props.history);
 
     this.deletionStateMachine = this.deletionWorkflow(removalPolicy);
 
@@ -448,10 +474,15 @@ function grantAdminApi(fn: NodejsFunction, props: AdminStackProps, workflow: Sta
 
 /**
  * Deletion task: `DeletionRequests` Get and Update (`markExecuted`, `removedCount` in the
- * transaction); `Listings` Get, `bySource` Query and Delete (transaction); `DeletionBlocklist`
- * Put (conditional); `AuditLog` Put.
+ * transaction, incomplete listings); `Listings` Get, `bySource` Query and Delete (transaction);
+ * `DeletionBlocklist` Put (conditional); `AuditLog` Put. With `history` additionally
+ * {@link grantHistoryRemoval}.
  */
-function grantDeletionTask(fn: NodejsFunction, tables: AdminTables): void {
+function grantDeletionTask(
+  fn: NodejsFunction,
+  tables: AdminTables,
+  history: DeletionHistoryResources | undefined,
+): void {
   const { listings, deletionRequests, deletionBlocklist, auditLog } = tables;
   setEnvironment(fn, DELETION_ENV, {
     listingsTable: listings.tableName,
@@ -465,7 +496,44 @@ function grantDeletionTask(fn: NodejsFunction, tables: AdminTables): void {
   allow(fn, ['dynamodb:Query'], [indexArn(listings, LISTINGS_BY_SOURCE_INDEX)]);
   allow(fn, ['dynamodb:PutItem'], [deletionBlocklist.tableArn]);
   allow(fn, ['dynamodb:PutItem'], [auditLog.tableArn]);
+  if (history !== undefined) grantHistoryRemoval(fn, tables, history);
 }
+
+/**
+ * Removal of the version history (Req 9.2, 9.3): `ListingVersions` Query and `BatchWriteItem`
+ * (deletes only — the purge sends no puts); `ListingKeys` Delete and `MetricCounters` Update in
+ * the removal transaction; `DeletionBlocklist` Update (id and Custom_Id key blocked in one
+ * transaction with `if_not_exists`); `ListBucket` restricted to the snapshot prefix and
+ * `DeleteObject` on it. No `GetObject`/`PutObject`: the task never reads or writes content.
+ */
+function grantHistoryRemoval(
+  fn: NodejsFunction,
+  tables: AdminTables,
+  history: DeletionHistoryResources,
+): void {
+  setEnvironment(fn, DELETION_HISTORY_ENV, {
+    listingVersionsTable: history.listingVersions.tableName,
+    listingKeysTable: history.listingKeys.tableName,
+    metricCountersTable: history.metricCounters.tableName,
+    snapshotBucket: history.snapshotBucket.bucketName,
+  });
+
+  allow(fn, ['dynamodb:Query', 'dynamodb:BatchWriteItem'], [history.listingVersions.tableArn]);
+  allow(fn, ['dynamodb:DeleteItem'], [history.listingKeys.tableArn]);
+  allow(fn, ['dynamodb:UpdateItem'], [history.metricCounters.tableArn]);
+  allow(fn, ['dynamodb:UpdateItem'], [tables.deletionBlocklist.tableArn]);
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['s3:ListBucket'],
+      resources: [history.snapshotBucket.bucketArn],
+      conditions: { StringLike: { 's3:prefix': [SNAPSHOT_PREFIX_PATTERN] } },
+    }),
+  );
+  allow(fn, ['s3:DeleteObject'], [history.snapshotBucket.arnForObjects(SNAPSHOT_PREFIX_PATTERN)]);
+}
+
+/** All snapshot prefixes `listings/{id}/` (`snapshotPrefix` of core). */
+const SNAPSHOT_PREFIX_PATTERN = `${snapshotPrefix('*')}*`;
 
 /**
  * Overdue check: `byStatus` Query, `DeletionRequests` Get and Update (`markNotified`);
