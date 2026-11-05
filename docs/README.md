@@ -4,6 +4,8 @@ Guides (planned work: see [ROADMAP](../ROADMAP.md)):
 
 - [`installation.md`](installation.md) — prerequisites, step-by-step deployment to AWS, seed data,
   configuration overrides, troubleshooting
+- [`local-demo.md`](local-demo.md) — run the whole platform locally without AWS (`npm run dev`):
+  in-memory stores, demo data, local login, demo script. DEV ONLY, insecure
 - [`api.md`](api.md) — Search API: base URL, access modes and API keys, rate limiting, languages,
   filters, pagination, error codes, request/response examples per endpoint
 - [`mcp.md`](mcp.md) — MCP server for AI agents: tools, transport, errors, JSON-RPC examples,

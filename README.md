@@ -63,6 +63,7 @@ packages/
   frontend/    # Angular white-label app
   infra/       # AWS CDK app, seed data
   loadtest/    # Load tests
+  devserver/   # DEV ONLY: local demo server (in-memory, local login), not deployed
 docs/          # Installation, API, MCP, connector and configuration guides
 ```
 
@@ -82,6 +83,9 @@ npx cdk bootstrap aws://<account>/<region>   # once per account and region
 npm run deploy --workspace @open-estate/infra -- -c env=dev
 npm run seed --workspace @open-estate/infra -- --env dev   # sample listings
 ```
+
+No AWS account at hand? `npm run dev` starts an in-memory local demo with sample data and a local
+login (DEV ONLY): [docs/local-demo.md](docs/local-demo.md).
 
 ## Legal notice on crawling
 

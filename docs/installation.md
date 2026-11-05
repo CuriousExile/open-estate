@@ -4,6 +4,9 @@ This guide deploys OpenEstate into an AWS account with the AWS CDK, loads the sa
 covers the failures you are most likely to hit. All commands run from the repository root unless a
 step says otherwise.
 
+To try the platform in the browser **without AWS**, run the in-memory local demo instead:
+`npm run dev` — see [local-demo.md](local-demo.md).
+
 - [Prerequisites](#prerequisites)
 - [Deploy step by step](#deploy-step-by-step)
 - [Optional: OpenSearch search provider](#optional-opensearch-search-provider)

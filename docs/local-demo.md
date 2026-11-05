@@ -1,0 +1,132 @@
+# Local demo without AWS
+
+> **DEV ONLY — insecure.** The local demo has a login page **without passwords** (anyone who can
+> reach it can sign in as any demo user), keeps all data in memory and is meant for demos and UI
+> work on your own machine. It binds to `127.0.0.1` only. Never deploy or expose it.
+
+`npm run dev` runs the whole platform on your machine: Search API, MCP server and Management API
+(with all portal and admin routes) on in-memory stores with seeded demo data, a local OpenID
+Connect provider in place of Cognito, and the Angular SPA via `ng serve`.
+
+## Run it
+
+Requires Node.js `^22.22.3` or `^24.15.0` (Angular CLI) and an `npm ci`.
+
+```bash
+npm ci
+npm run dev          # builds packages/devserver, starts the dev server and ng serve
+```
+
+Open <http://127.0.0.1:4200>. Stop with `Ctrl+C` (stops both processes). State is lost on
+every restart; each start seeds the same demo data again.
+
+`npm run dev:server` starts only the dev server (no Angular, works on Node 20). Environment
+variables: `DEV_PORT` (default `4310`), `DEV_HOST` (loopback addresses only),
+`DEV_FRONTEND_ORIGIN` (default `http://127.0.0.1:4200`), `DEV_QUIET=1` (no request log). The
+SPA's dev configuration ([`packages/frontend/dev/`](../packages/frontend/dev/)) assumes the default
+ports.
+
+| What                 | URL                                                               |
+| -------------------- | ----------------------------------------------------------------- |
+| Frontend (SPA)       | <http://127.0.0.1:4200> (portal: `/portal`)                       |
+| Search API           | `http://127.0.0.1:4310/api` — e.g. `/api/listings`, `/api/openapi.json` |
+| MCP endpoint         | `http://127.0.0.1:4310/mcp` (`POST`, Streamable HTTP)             |
+| Management API       | `http://127.0.0.1:4310/management` — e.g. `/management/openapi.json` |
+| OIDC issuer          | `http://127.0.0.1:4310/oidc` (`/.well-known/openid-configuration`) |
+| Overview             | `http://127.0.0.1:4310/` (JSON with URLs and users)               |
+
+The SPA reaches `/api` and `/management` through the `ng serve` proxy
+(`packages/frontend/dev/proxy.local.json`); its `runtime-config.json` comes from
+`packages/frontend/dev/` via the `local` build configuration, the deployed
+`public/runtime-config.json` stays untouched.
+
+## Demo users and login
+
+Open `/portal`. The SPA redirects to the local login page (Authorization Code + PKCE, like with
+Cognito); pick a user — there is no password.
+
+| User                                 | Role           | Agency                         |
+| ------------------------------------ | -------------- | ------------------------------ |
+| `paula.platform@example.org`         | PLATFORM_ADMIN | — (admin mode)                 |
+| `anna.admin@nordlicht.example.org`   | AGENCY_ADMIN   | Nordlicht Immobilien (active)  |
+| `max.member@nordlicht.example.org`   | AGENCY_MEMBER  | Nordlicht Immobilien (active)  |
+| `sepp.admin@alpenblick.example.org`  | AGENCY_ADMIN   | Alpenblick Makler (suspended → `403 AGENCY_SUSPENDED`) |
+
+Members added in the team view appear on the login page immediately. The start-up output also
+prints the credential of the seeded machine access `CRM-Sync (Demo)` of Nordlicht
+(`Authorization: Bearer oem_…`), e.g. for `curl` calls against the Management API.
+
+## What is seeded
+
+- 2 agencies, 4 users (above), the taxonomy, tour providers and PII allow-list of
+  `packages/shared/src/config/`, locales of `packages/frontend/public/i18n-config.json`.
+- 15 listings (sale and rent, Germany and Austria): manual portal listings with Custom_Ids, a
+  price reduction, a restored version and a status toggle; 4 listings of the CRM connector
+  `nordlicht-crm` (origin `IMPORT`) with import versions and a portal edit on top (field
+  provenance mixes `IMPORT` and `PORTAL`); drafts (`INACTIVE`) and the 3 listings of the suspended
+  agency are not public.
+- 4 connector runs over the last three weeks (rejections with field names, one `FAILURE`), two
+  machine accesses (one revoked), usage counters (detail views, search impressions) for the last
+  14 days and the corresponding audit log.
+
+## How it works
+
+`packages/devserver` (a private workspace package, not part of any Lambda bundle or CDK stack)
+wires the real routers and use cases of `api`, `mcp`, `management`, `admin` and `ingestion` on the
+in-memory stores of `core`, and translates Node HTTP requests into API Gateway proxy events. All
+three APIs share one state:
+
+| In AWS                                | Locally                                                        |
+| ------------------------------------- | -------------------------------------------------------------- |
+| DynamoDB tables, S3 snapshots         | in-memory stores of `core` (`InMemory*`)                       |
+| DynamoDB Streams → indexer → index    | search reads a projection of the current listings (immediate)  |
+| Cognito User Pool, `aws-jwt-verify`   | local OIDC provider, RS256 key per process, dev token verifier |
+| CloudWatch Logs → UsageAggregator     | usage lines are counted in-process                             |
+| CloudWatch metrics and alarms         | **synthetic** series and alarms (deterministic fake values)    |
+| Step Functions deletion workflow      | runs in-process                                                |
+| `POST /platform/reload`               | reports three simulated functions as reloaded                  |
+| Connectors (crawler, DB, API)         | not runnable; the seeded runs come from a built-in demo feed   |
+
+Rate limits are high (10,000 requests per minute) and access caches are 5 s instead of 60 s, so
+suspensions and role changes show up quickly.
+
+## Demo script (about 10 minutes)
+
+1. **Public search** — <http://127.0.0.1:4200>: search for `Hamburg` or filter *For rent*; switch
+   the language to Deutsch. The listings of the suspended agency and the drafts do not appear.
+2. **Listing detail** — open a result (`/listings/{id}`): offers, key facts, original listing link.
+   Images are placeholders on `example.org` and are hidden.
+3. **Portal login** — open <http://127.0.0.1:4200/portal>, pick **Anna Albers**. (After the login
+   the SPA may land on the public search; open `/portal` again.)
+4. **Create a listing** — *Listings → New listing*, fill in title, offer, type, rooms, area, city.
+   It is created `INACTIVE` and is not searchable yet.
+5. **Activate** — set the status to *Active*; search for its city in the public search: it appears
+   immediately.
+6. **Edit** — change the price; the workspace shows version 3.
+7. **History** — open `NL-BER-001` (Berlin-Mitte): history with portal versions of two users,
+   the diff between versions, *Restore* an older version. `CRM-4711` (Winterhude) shows the field
+   provenance: offers from the import, title from the portal.
+8. **Monitoring** — listings by status, changes per channel, connector runs (*Show rejections*),
+   usage charts.
+9. **Team and machine access** — add a member by e-mail (it shows up on the login page); create a
+   machine access and copy the one-time secret; the revoked old access is listed.
+10. **Admin mode** — sign out, sign in as **Paula Plattform**, *Administration*: agencies (open
+    Nordlicht → *Suspend agency …*: the confirmation shows the affected listings and users from the
+    dry run; cancel), *Platform monitoring*
+    (alarms, endpoints — synthetic; choose *Last 30 days* for the agency activity), *Operations*
+    (deletion request dry run, API keys, access mode, reload).
+11. **MCP** — call a tool with `curl`:
+
+    ```bash
+    curl -s http://127.0.0.1:4310/mcp \
+      -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+           "params":{"name":"search_listings","arguments":{"city":"Berlin"}}}'
+    ```
+
+## Limitations
+
+- No persistence, no real connectors or crawler, no e-mail invitations (invited users just exist).
+- Platform latency, request and alarm figures are synthetic and unrelated to local traffic.
+- The OIDC provider implements only what the SPA uses (discovery, JWKS, authorize, token with
+  code and refresh token, logout redirect). It is not a conforming identity provider.
