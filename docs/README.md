@@ -10,6 +10,8 @@ Guides (planned work: see [ROADMAP](../ROADMAP.md)):
   client configuration (Claude Code, Claude Desktop, `mcp-remote`, TypeScript SDK)
 - [`management-api.md`](management-api.md) — Management API: authentication, permission matrix
   per role and machine access, end-to-end machine-access example, import modes
+- [`known-issues.md`](known-issues.md) — open concerns and known gaps of the listing management, to
+  review before a release
 - [`connectors.md`](connectors.md) — built-in connectors, writing and registering a connector
   (`connectors.json`), secrets, PII allowlist, crawler compliance, run log, troubleshooting
 - [`configuration.md`](configuration.md) — theming (`theme-config.json` values, formats, defaults),
