@@ -29,8 +29,12 @@ import {
   parseSearchProviderKind,
   type SearchProviderKind,
 } from '../search/search-provider-factory';
+import type { SearchProvider } from '../search/search-provider';
 import { createSearchService, type SearchService } from '../search/search-service';
-import { createCachedSuspendedAgencies } from '../search/suspended-agencies';
+import {
+  createCachedSuspendedAgencies,
+  type SuspendedAgencies,
+} from '../search/suspended-agencies';
 import { NO_USAGE, type UsageRecorder } from '../usage/usage-line';
 
 // Lambda init of the read side shared by the public adapters (design: "ConfigProvider",
@@ -241,7 +245,6 @@ export async function initReadModel(
   });
 
   // One cache shared by search and detail, so both see the same suspension state.
-  const usage = sources.usage ?? NO_USAGE;
   const suspendedAgencies = createCachedSuspendedAgencies({
     store: new DynamoDbAgencyStore({
       client: dynamo,
@@ -249,6 +252,40 @@ export async function initReadModel(
     }),
   });
 
+  return createReadModel({
+    guard,
+    provider,
+    taxonomy,
+    locales,
+    defaultCurrency,
+    tourProviders,
+    suspendedAgencies,
+    ...(sources.usage !== undefined && { usage: sources.usage }),
+  });
+}
+
+/** Already loaded configuration and backends of a {@link ReadModel}. */
+export interface ReadModelParts {
+  guard: AccessGuard;
+  provider: SearchProvider;
+  taxonomy: Taxonomy;
+  locales: LocaleConfig;
+  defaultCurrency: string;
+  tourProviders: TourProvidersConfig;
+  /** Shared by search and detail, so both see the same suspension state. */
+  suspendedAgencies: SuspendedAgencies;
+  /** Defaults to none. */
+  usage?: UsageRecorder;
+}
+
+/**
+ * Builds schemas and services over already loaded parts. Used by {@link initReadModel}; other
+ * callers (tests, the local dev server) inject their own guard, provider and agency source.
+ */
+export function createReadModel(parts: ReadModelParts): ReadModel {
+  const { guard, provider, taxonomy, locales, defaultCurrency, tourProviders } = parts;
+  const { suspendedAgencies } = parts;
+  const usage = parts.usage ?? NO_USAGE;
   return {
     guard,
     schemas: buildSchemas(taxonomy, locales),

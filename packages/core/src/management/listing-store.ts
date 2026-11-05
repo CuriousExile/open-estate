@@ -217,6 +217,14 @@ export class InMemoryManagedListingStore
   all(): ManagedListingItem[] {
     return [...this.items.values()].map((item) => structuredClone(item));
   }
+
+  /**
+   * Removes the listing outside a transaction (in-process deletion of local runs); `false` if no
+   * listing has this id.
+   */
+  remove(id: string): boolean {
+    return this.items.delete(id);
+  }
 }
 
 export interface DynamoDbManagedListingStoreOptions {

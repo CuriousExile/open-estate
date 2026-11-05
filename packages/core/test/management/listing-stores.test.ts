@@ -142,6 +142,15 @@ describe('listing store fakes with transaction semantics', () => {
     expect(await store.get('unknown')).toBeNull();
   });
 
+  it('removes a listing outside a transaction (in-process deletion)', async () => {
+    const store = new InMemoryManagedListingStore();
+    await tx.transact([store.putOp(toManagedListingItem(listing, management()), null)]);
+    expect(store.remove('lst-1')).toBe(true);
+    expect(await store.get('lst-1')).toBeNull();
+    expect(store.all()).toEqual([]);
+    expect(store.remove('lst-1')).toBe(false);
+  });
+
   it('never overwrites a version and pages versions newest first', async () => {
     const store = new InMemoryListingVersionStore();
     for (const n of [1, 2, 3]) expect((await tx.transact([store.putOp(version(n))])).ok).toBe(true);
