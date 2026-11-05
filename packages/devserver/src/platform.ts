@@ -168,6 +168,7 @@ export function createDevPlatform(options: DevPlatformOptions) {
     locales: config.locales,
     defaultCurrency: config.defaultCurrency,
     tourProviders: config.tourProviders,
+    exchangeRates: config.exchangeRates,
     suspendedAgencies: createCachedSuspendedAgencies({
       store: agencies,
       clock,

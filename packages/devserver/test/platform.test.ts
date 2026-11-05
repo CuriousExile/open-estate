@@ -139,6 +139,30 @@ describe('local demo platform', () => {
     expect(thai.items.every((item) => item.title.startsWith('[DEMO]'))).toBe(true);
   });
 
+  it('prices the Thai demo listings in THB and converts price filters with the demo rates', async () => {
+    const thai = (await search('&country=TH')) as unknown as {
+      items: { offers: { currency: string }[] }[];
+    };
+    const currencies = thai.items.flatMap((item) => item.offers.map((offer) => offer.currency));
+    expect(new Set(currencies)).toEqual(new Set(['THB']));
+
+    const meta = await platform.handlers.search(request('GET', '/api/meta'));
+    const rates = (JSON.parse(meta.body) as { exchangeRates?: { base: string; rates: object } })
+      .exchangeRates;
+    expect(rates?.base).toBe('EUR');
+    expect(Object.keys(rates?.rates ?? {})).toEqual(
+      expect.arrayContaining(['THB', 'USD', 'GBP', 'CHF']),
+    );
+
+    // Pattaya: 4,200,000 THB ≈ 110,800 EUR. Without conversion an EUR filter never matches it.
+    const strict = await search('&country=TH&offerType=SALE&priceMax=200000');
+    expect(strict.items).toHaveLength(0);
+    const converted = await search(
+      '&country=TH&offerType=SALE&priceMax=200000&currency=EUR&convertCurrency=true',
+    );
+    expect(converted.items).toHaveLength(1);
+  });
+
   it('serves the OpenAPI document of the Management_API publicly', async () => {
     const res = await platform.handlers.management(request('GET', '/management/openapi.json'));
     expect(res.statusCode).toBe(200);

@@ -109,11 +109,11 @@ export const BROKEN_DEMO_IMAGE = { url: `${DEMO_MEDIA_ORIGIN}/photos/lost-in-the
 /** Extra photo added to Berlin-Mitte during seeding (a later version of the listing). */
 export const BERLIN_MITTE_EXTRA_IMAGE = demoArt('interior-golden-sand');
 
-const sale = (price: string) => ({ offerType: 'SALE', price, currency: 'EUR' });
-const rent = (coldRent: string, additionalCosts?: string) => ({
+const sale = (price: string, currency = 'EUR') => ({ offerType: 'SALE', price, currency });
+const rent = (coldRent: string, additionalCosts?: string, currency = 'EUR') => ({
   offerType: 'RENT',
   coldRent,
-  currency: 'EUR',
+  currency,
   ...(additionalCosts !== undefined && {
     additionalCosts,
     warmRent: (Number(coldRent) + Number(additionalCosts)).toFixed(2),
@@ -403,7 +403,8 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
           description: 'ชั้นสูง สระว่ายน้ำและฟิตเนสส่วนกลาง ใกล้รถไฟฟ้า BTS',
         },
       ],
-      offers: [rent('45000.00')],
+      // Thai listings are priced in baht, like packages/infra/scripts/seed-data.ts.
+      offers: [rent('45000.00', undefined, 'THB')],
       listingType: 'condominium',
       rooms: 1.5,
       area: '54.2',
@@ -435,7 +436,7 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
           description: 'วิวทะเล ใกล้หาดจอมเทียน สระว่ายน้ำบนดาดฟ้า',
         },
       ],
-      offers: [sale('4200000.00'), rent('32000.00')],
+      offers: [sale('4200000.00', 'THB'), rent('32000.00', undefined, 'THB')],
       listingType: 'condominium',
       rooms: 2,
       area: '68',

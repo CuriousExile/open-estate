@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { I18nConfig } from '@open-estate/core';
 import {
   assertValidTaxonomy,
+  ExchangeRatesConfig,
   PiiAllowlistConfig,
   TaxonomyConfig,
   TourProvidersConfig,
@@ -22,6 +23,7 @@ export const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 export const DEFAULT_CONFIG_FILES = {
   taxonomy: 'packages/shared/src/config/taxonomy.json',
   tourProviders: 'packages/shared/src/config/tour-providers.json',
+  exchangeRates: 'packages/shared/src/config/exchange-rates.json',
   piiAllowlist: 'packages/shared/src/config/pii-allowlist.json',
   i18n: 'packages/frontend/public/i18n-config.json',
 } as const;
@@ -30,6 +32,8 @@ export interface ContentConfig {
   taxonomy: Taxonomy;
   locales: LocaleConfig;
   tourProviders: TourProvidersConfig;
+  /** Static demo exchange rates (EUR base; THB, USD, GBP, CHF). */
+  exchangeRates: ExchangeRatesConfig;
   piiAllowlist: PiiAllowlistConfig;
   defaultCurrency: string;
 }
@@ -49,6 +53,7 @@ export function loadContentConfig(root: string = REPO_ROOT): ContentConfig {
     taxonomy: assertValidTaxonomy(readJson(root, files.taxonomy, TaxonomyConfig)),
     locales: readJson(root, files.i18n, I18nConfig),
     tourProviders: readJson(root, files.tourProviders, TourProvidersConfig),
+    exchangeRates: readJson(root, files.exchangeRates, ExchangeRatesConfig),
     piiAllowlist: readJson(root, files.piiAllowlist, PiiAllowlistConfig),
     defaultCurrency: 'EUR',
   };
