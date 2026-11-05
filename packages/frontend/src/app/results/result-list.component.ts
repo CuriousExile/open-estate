@@ -19,6 +19,7 @@ import type { SearchParams } from '../api/api-client';
 import { ApiClientService } from '../api/api-client.service';
 import { CodeLabelPipe } from '../locale/code-label.pipe';
 import { LocaleService } from '../locale/locale.service';
+import { ImageCarouselComponent } from '../ui/image-carousel/image-carousel.component';
 import {
   createResultLoader,
   currentPage,
@@ -36,7 +37,7 @@ import {
  */
 @Component({
   selector: 'oe-result-list',
-  imports: [TranslocoPipe, CodeLabelPipe],
+  imports: [CodeLabelPipe, ImageCarouselComponent, TranslocoPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (state().searched) {
@@ -62,6 +63,13 @@ import {
           <ol class="grid">
             @for (row of rows(); track row.id) {
               <li class="card glass">
+                <oe-image-carousel
+                  class="media"
+                  [media]="row.listing.media"
+                  [title]="row.title"
+                  [clickable]="true"
+                  (activate)="select.emit(row.listing)"
+                />
                 <p class="label tags">
                   @if (row.offerType; as offerType) {
                     <span>{{ offerType | codeLabel: 'offerType' | transloco }}</span>
@@ -181,7 +189,12 @@ import {
       position: relative;
       align-content: start;
       gap: 0.5rem;
-      padding: 1.25rem 1.5rem 1.5rem;
+      padding: 0 1.5rem 1.5rem;
+    }
+    /* Image flush with the card's top and sides. */
+    .media {
+      margin: -1px -1.5rem 0.5rem;
+      border-radius: var(--radius-card) var(--radius-card) 0 0;
     }
     .card:hover,
     .card:focus-within {

@@ -1096,3 +1096,209 @@ oe-search-form.is-compact {
 .shell-results {
   display: block;
 }
+
+// ---------------------------------------------------------------------------------------------
+// Image carousel and image placeholder (oe-image-carousel, oe-image-placeholder): shared here so
+// component styles stay within the per-component budget.
+// ---------------------------------------------------------------------------------------------
+
+oe-image-carousel {
+  display: block;
+}
+
+.oe-carousel {
+  position: relative;
+  // Above the card's full-size link overlay, so swipes and the buttons reach the carousel.
+  z-index: 1;
+  overflow: hidden;
+  border-radius: inherit;
+  background: #0f2a20;
+}
+
+.oe-carousel-viewport {
+  aspect-ratio: 16 / 10;
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+
+  &.is-clickable {
+    cursor: pointer;
+  }
+
+  .oe-carousel--wide & {
+    aspect-ratio: 16 / 9;
+  }
+}
+
+.oe-carousel-track {
+  display: flex;
+  height: 100%;
+  transition: transform 0.4s var(--ease-out);
+
+  &.is-dragging {
+    transition: none;
+  }
+}
+
+.oe-carousel-slide {
+  flex: 0 0 100%;
+  height: 100%;
+  // Shown while an image loads.
+  background: linear-gradient(135deg, #133a2c, #0c2219);
+
+  img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    transition: opacity 0.35s ease;
+
+    &.is-ready {
+      opacity: 1;
+    }
+  }
+}
+
+.oe-carousel-nav {
+  position: absolute;
+  top: 50%;
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  margin-top: -1.125rem;
+  padding: 0;
+  border: 1px solid var(--color-gold-soft);
+  border-radius: 50%;
+  background: var(--color-popover);
+  color: var(--color-text);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    border-color 0.2s ease;
+
+  svg {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+  }
+
+  &:hover {
+    border-color: var(--color-gold);
+  }
+
+  &--prev {
+    left: 0.6rem;
+  }
+
+  &--next {
+    right: 0.6rem;
+  }
+}
+
+.oe-carousel-counter {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  margin: 0;
+  padding: 0.1rem 0.6rem;
+  border-radius: var(--radius-pill);
+  background: var(--color-popover);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  pointer-events: none;
+}
+
+.oe-carousel-dots {
+  position: absolute;
+  inset: auto 0 0.55rem;
+  display: flex;
+  justify-content: center;
+  gap: 0.15rem;
+}
+
+.oe-carousel-dot {
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+
+  &::before {
+    content: '';
+    display: block;
+    width: 0.45rem;
+    height: 0.45rem;
+    margin: auto;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 55%);
+    box-shadow: 0 0 0 1px rgb(0 0 0 / 25%);
+    transition:
+      background-color 0.2s ease,
+      transform 0.2s ease;
+  }
+
+  &.is-active::before {
+    background: var(--color-gold);
+    transform: scale(1.25);
+  }
+}
+
+.oe-carousel:hover .oe-carousel-nav,
+.oe-carousel:focus-within .oe-carousel-nav {
+  opacity: 1;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .oe-carousel-nav {
+    opacity: 0.92;
+  }
+}
+
+oe-image-placeholder {
+  display: block;
+  height: 100%;
+}
+
+.oe-placeholder {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.35rem;
+  height: 100%;
+  padding: 1rem;
+  background:
+    radial-gradient(ellipse 70% 60% at 50% 45%, rgb(216 183 104 / 10%), transparent 70%),
+    linear-gradient(160deg, #15392b, #0b2219);
+  color: var(--color-gold);
+  text-align: center;
+
+  svg {
+    width: clamp(3.5rem, 22%, 7rem);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  span {
+    font-size: 0.75rem;
+    letter-spacing: var(--label-letter-spacing);
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .oe-carousel-track,
+  .oe-carousel-slide img,
+  .oe-carousel-nav,
+  .oe-carousel-dot::before {
+    transition: none;
+  }
+}

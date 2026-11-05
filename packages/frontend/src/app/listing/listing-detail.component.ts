@@ -13,19 +13,19 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import type { LocalizedListing } from '@open-estate/shared';
 import { CodeLabelPipe } from '../locale/code-label.pipe';
 import { LocaleService } from '../locale/locale.service';
+import { ImageCarouselComponent } from '../ui/image-carousel/image-carousel.component';
 import { toListingDetail } from './listing-detail-model';
-import { MediaGalleryComponent } from './media-gallery.component';
 import { TourEmbedComponent } from './tour-embed.component';
 
 /**
  * Full details of a listing chosen in the result list (design: ListingDetailComponent; Req 7.5,
- * 12.13): all fields, every offer with all stored amounts, images via MediaGalleryComponent,
- * 3D tours of allowlisted hosts via TourEmbedComponent (Req 16.6, 16.7).
- * `close` (button or Escape) asks the parent to return to the result list.
+ * 12.13): all public fields, every offer with all stored amounts, images via the shared image
+ * carousel (placeholder if there are none), 3D tours of allowlisted hosts via TourEmbedComponent
+ * (Req 16.6, 16.7). `close` (button or Escape) asks the parent to return to the result list.
  */
 @Component({
   selector: 'oe-listing-detail',
-  imports: [CodeLabelPipe, MediaGalleryComponent, TourEmbedComponent, TranslocoPipe],
+  imports: [CodeLabelPipe, ImageCarouselComponent, TourEmbedComponent, TranslocoPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   host: { '(keydown.escape)': 'close.emit()' },
   template: `
@@ -57,12 +57,16 @@ import { TourEmbedComponent } from './tour-embed.component';
         <p class="muted">{{ d.postalCode }} {{ d.city }}</p>
       </header>
 
-      @if (d.media.length > 0) {
-        <section aria-labelledby="detail-media">
-          <h3 id="detail-media" class="label">{{ 'detail.media.heading' | transloco }}</h3>
-          <oe-media-gallery [media]="d.media" [title]="d.title" />
-        </section>
-      }
+      <section aria-labelledby="detail-media">
+        <h3 id="detail-media" class="visually-hidden">{{ 'detail.media.heading' | transloco }}</h3>
+        <oe-image-carousel
+          class="media"
+          [media]="d.media"
+          [title]="d.title"
+          [wide]="true"
+          [eager]="true"
+        />
+      </section>
 
       <section class="glass" aria-labelledby="detail-offers">
         <h3 id="detail-offers" class="label">{{ 'detail.offers' | transloco }}</h3>
@@ -166,6 +170,12 @@ import { TourEmbedComponent } from './tour-embed.component';
       display: flex;
       flex-wrap: wrap;
       gap: 0.25rem 1rem;
+    }
+    .media {
+      max-width: 50rem;
+      border-radius: var(--radius-card);
+      border: 1px solid var(--color-surface-border);
+      overflow: hidden;
     }
     .muted {
       color: var(--color-text-muted);
