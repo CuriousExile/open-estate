@@ -24,7 +24,15 @@ export interface ManagedListingStore<Op> {
    * null requires a new listing, otherwise the stored `version` must equal it (Req 4.8).
    */
   putOp(item: ManagedListingItem, expectedVersion: number | null): Op;
+  /**
+   * Sets only `lastImportedAt`/`lastRunId` (label `listing.touch`) if the stored `version` still
+   * equals `expectedVersion`: an import run that delivers the listing unchanged (Req 4.16, 7.3).
+   */
+  touchProvenanceOp(id: string, expectedVersion: number, provenance: ProvenanceTouch): Op;
 }
+
+/** Provenance fields refreshed by an unchanged import (no new version). */
+export type ProvenanceTouch = Pick<Listing, 'lastImportedAt' | 'lastRunId'>;
 
 /** Fake with transaction semantics via `InMemoryTransactor`. */
 export class InMemoryManagedListingStore implements ManagedListingStore<InMemoryOp> {
@@ -48,6 +56,19 @@ export class InMemoryManagedListingStore implements ManagedListingStore<InMemory
       },
       apply: () => {
         this.items.set(item.id, stored);
+      },
+    };
+  }
+
+  touchProvenanceOp(id: string, expectedVersion: number, provenance: ProvenanceTouch): InMemoryOp {
+    const { lastImportedAt, lastRunId } = provenance;
+    return {
+      label: 'listing.touch',
+      target: `Listings#${id}`,
+      check: () => this.items.get(id)?.version === expectedVersion,
+      apply: () => {
+        const current = this.items.get(id);
+        if (current !== undefined) this.items.set(id, { ...current, lastImportedAt, lastRunId });
       },
     };
   }
@@ -97,6 +118,30 @@ export class DynamoDbManagedListingStore implements ManagedListingStore<DynamoDb
                 ExpressionAttributeNames: { '#version': 'version' },
                 ExpressionAttributeValues: { ':expectedVersion': expectedVersion },
               }),
+        },
+      },
+    };
+  }
+
+  touchProvenanceOp(id: string, expectedVersion: number, provenance: ProvenanceTouch): DynamoDbOp {
+    return {
+      label: 'listing.touch',
+      item: {
+        Update: {
+          TableName: this.tableName,
+          Key: { id },
+          UpdateExpression: 'SET #lastImportedAt = :lastImportedAt, #lastRunId = :lastRunId',
+          ConditionExpression: '#version = :expectedVersion',
+          ExpressionAttributeNames: {
+            '#lastImportedAt': 'lastImportedAt',
+            '#lastRunId': 'lastRunId',
+            '#version': 'version',
+          },
+          ExpressionAttributeValues: {
+            ':lastImportedAt': provenance.lastImportedAt,
+            ':lastRunId': provenance.lastRunId,
+            ':expectedVersion': expectedVersion,
+          },
         },
       },
     };
