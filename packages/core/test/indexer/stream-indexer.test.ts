@@ -60,6 +60,7 @@ function record(
   eventName: 'INSERT' | 'MODIFY' | 'REMOVE',
   id: string,
   newImage?: Record<string, unknown>,
+  oldImage?: Record<string, unknown>,
 ): DynamoDBRecord {
   seq += 1;
   return {
@@ -69,6 +70,7 @@ function record(
       SequenceNumber: String(seq).padStart(6, '0'),
       StreamViewType: 'NEW_AND_OLD_IMAGES',
       ...(newImage ? { NewImage: image(newImage) } : {}),
+      ...(oldImage ? { OldImage: image(oldImage) } : {}),
     },
   };
 }
@@ -76,6 +78,9 @@ function record(
 const upsert = (eventName: 'INSERT' | 'MODIFY', l: Listing) =>
   record(eventName, l.id, { ...toListingItem(l) });
 const remove = (id: string) => record('REMOVE', id);
+/** `MODIFY` with both images, e.g. a status change or an import that only set `lastImportedAt`. */
+const modify = (before: Record<string, unknown>, after: Record<string, unknown>) =>
+  record('MODIFY', String(after['id']), after, before);
 const batch = (...records: DynamoDBRecord[]): DynamoDBStreamEvent => ({ Records: records });
 const seqOf = (...records: DynamoDBRecord[]) =>
   records.map((r) => ({ itemIdentifier: r.dynamodb?.SequenceNumber }));
@@ -173,14 +178,73 @@ describe('indexStreamBatch', () => {
     });
   });
 
-  it('maps a failed id to its last record, not to superseded ones', async () => {
+  it('maps a failed id to its first record, so a replay compares against the acknowledged state', async () => {
     const { writer, run } = setup();
     writer.failIds = new Set(['a']);
-    const records = [upsert('INSERT', listing('a')), remove('b'), upsert('MODIFY', listing('a'))];
+    const records = [remove('b'), upsert('INSERT', listing('a')), upsert('MODIFY', listing('a'))];
 
     const result = await run(batch(...records));
 
-    expect(result.batchItemFailures).toEqual(seqOf(records[2] as DynamoDBRecord));
+    expect(result.batchItemFailures).toEqual(seqOf(...records.slice(1)));
+  });
+
+  it('MODIFY without gsiPk (INACTIVE) deletes the document; reactivation upserts it (Req 6.3, 6.5)', async () => {
+    const { writer, run } = setup();
+    const a = listing('a');
+    const active = { ...toListingItem(a, { status: 'ACTIVE', agencyId: 'agency-1' }) };
+    const inactive = { ...toListingItem(a, { status: 'INACTIVE', agencyId: 'agency-1' }) };
+    await run(batch(record('INSERT', 'a', active)));
+    expect(writer.docs.get('a')).toEqual(toOpenSearchDocument(a, 'agency-1'));
+
+    await expect(run(batch(modify(active, inactive)))).resolves.toEqual({ batchItemFailures: [] });
+    expect(writer.docs.has('a')).toBe(false);
+    expect(writer.deleteCalls).toEqual([['a']]);
+
+    await run(batch(modify(inactive, active)));
+    expect(writer.docs.get('a')).toEqual(toOpenSearchDocument(a, 'agency-1'));
+  });
+
+  it('INSERT of an INACTIVE listing is not indexed', async () => {
+    const { writer, run } = setup();
+    const item = { ...toListingItem(listing('a'), { status: 'INACTIVE' }) };
+
+    await expect(run(batch(record('INSERT', 'a', item)))).resolves.toEqual({
+      batchItemFailures: [],
+    });
+
+    expect(writer.upsertCalls).toEqual([]);
+    expect(writer.docs.has('a')).toBe(false);
+  });
+
+  it('skips MODIFY records whose search document is unchanged', async () => {
+    const { writer, run, logs } = setup();
+    const item = { ...toListingItem(listing('a')) };
+    const hidden = { ...toListingItem(listing('b'), { status: 'INACTIVE' }) };
+
+    const result = await run(
+      batch(
+        modify(item, { ...item, lastImportedAt: '2026-01-02T10:00:00Z' }),
+        modify(hidden, { ...hidden, lastImportedAt: '2026-01-02T10:00:00Z' }),
+      ),
+    );
+
+    expect(result).toEqual({ batchItemFailures: [] });
+    expect(writer.upsertCalls).toEqual([]);
+    expect(writer.deleteCalls).toEqual([]);
+    expect(logs.at(-1)).toMatchObject({ upserts: 0, deletes: 0, skipped: 2 });
+  });
+
+  it('compares against the state before the batch, not an intermediate one', async () => {
+    const { writer, run } = setup();
+    const v1 = { ...toListingItem(listing('a')) };
+    const changed = listing('a');
+    changed.title = 'v2';
+    const v2 = { ...toListingItem(changed) };
+    const touched = { ...changed, lastImportedAt: '2026-01-02T10:00:00Z' };
+
+    await run(batch(modify(v1, v2), modify(v2, { ...toListingItem(touched) })));
+
+    expect(writer.docs.get('a')).toEqual(toOpenSearchDocument(touched));
   });
 
   it('treats a failed bulk request as failure of all its documents', async () => {
@@ -237,6 +301,7 @@ describe('indexStreamBatch', () => {
       records: 2,
       upserts: 1,
       deletes: 1,
+      skipped: 0,
       failedRecords: 0,
     });
   });

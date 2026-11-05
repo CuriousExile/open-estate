@@ -96,6 +96,14 @@ describe('managed Listings item', () => {
     expect(fromManagedListingItem(item)).toEqual({ listing, management: management() });
   });
 
+  it('drops gsiPk for INACTIVE listings and copies agencyId into the search fields', () => {
+    const inactive = management({ status: 'INACTIVE' });
+    const item = toManagedListingItem(listing, inactive);
+    expect(item).not.toHaveProperty(LISTINGS_BY_ID_PK_ATTRIBUTE);
+    expect(item).toEqual({ ...toListingItem(listing, inactive), ...inactive });
+    expect(item.agencyId).toBe(inactive.agencyId);
+  });
+
   it('omits absent optional attributes', () => {
     const rest = management();
     delete rest.agencyId;

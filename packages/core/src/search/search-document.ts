@@ -2,7 +2,9 @@ import type { Listing } from '@open-estate/shared';
 
 // Flat search document (design: "Indexierungs-Strategie und Ordnung"). Every provider indexes the
 // same fields, derived from the listing when it is written. Group and `hasTour` are deliberately
-// not stored: both are resolved at query time against the currently loaded configuration.
+// not stored: both are resolved at query time against the currently loaded configuration. The same
+// holds for agency suspension: the document only carries the owning `agencyId`, the set of
+// suspended agencies is applied at query time (design: "Öffentliche Sichtbarkeit").
 
 export interface SearchDocument {
   id: string;
@@ -23,6 +25,8 @@ export interface SearchDocument {
   areaMinor: number;
   /** Distinct lowercase tour URL hostnames, sorted. */
   tourHosts: string[];
+  /** Owning agency (management data); absent for listings without agency, e.g. seeded ones. */
+  agencyId?: string;
 }
 
 /**
@@ -42,8 +46,8 @@ export function hostOf(url: string): string | undefined {
   }
 }
 
-/** Derives the flat search document from an internal listing (pure). */
-export function toSearchDocument(listing: Listing): SearchDocument {
+/** Derives the flat search document from an internal listing and its owning agency (pure). */
+export function toSearchDocument(listing: Listing, agencyId?: string): SearchDocument {
   const doc: SearchDocument = {
     id: listing.id,
     cityNorm: normalizeCity(listing.address.city),
@@ -54,6 +58,7 @@ export function toSearchDocument(listing: Listing): SearchDocument {
     areaMinor: listing.area,
     tourHosts: [...new Set(listing.tours.flatMap((t) => hostOf(t.url) ?? []))].sort(),
   };
+  if (agencyId !== undefined) doc.agencyId = agencyId;
   // At most one offer per type (Req 12.14); SALE + RENT listings fill both field pairs.
   for (const offer of listing.offers) {
     if (offer.offerType === 'SALE') {

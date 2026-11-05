@@ -26,6 +26,15 @@ describe('toSearchDocument', () => {
     });
   });
 
+  it('carries the owning agency only when one is given', () => {
+    const l = exampleListing('a');
+    expect(toSearchDocument(l, 'agency-1')).toEqual({
+      ...toSearchDocument(l),
+      agencyId: 'agency-1',
+    });
+    expect(toSearchDocument(l)).not.toHaveProperty('agencyId');
+  });
+
   it('uses the cold rent of a RENT offer and leaves the sale fields unset', () => {
     const doc = toSearchDocument(
       exampleListing('r', {

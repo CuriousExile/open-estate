@@ -51,7 +51,7 @@ function pageOf(all: readonly Listing[]) {
 
 describe('OPENSEARCH_INDEX_MAPPING / toOpenSearchDocument', () => {
   it('maps every flat search field and keeps the listing non-indexed', () => {
-    const doc = toOpenSearchDocument(listing('a'));
+    const doc = toOpenSearchDocument(listing('a'), 'agency-1');
     const { listing: stored, ...flat } = OPENSEARCH_INDEX_MAPPING.properties;
     expect(stored).toEqual({ type: 'object', enabled: false });
     for (const field of Object.keys(doc).filter((k) => k !== 'listing')) {
@@ -60,6 +60,7 @@ describe('OPENSEARCH_INDEX_MAPPING / toOpenSearchDocument', () => {
     expect(OPENSEARCH_INDEX_MAPPING.properties.id.type).toBe('keyword');
     expect(OPENSEARCH_INDEX_MAPPING.properties.tourHosts.type).toBe('keyword');
     expect(OPENSEARCH_INDEX_MAPPING.properties.roomsHalf.type).toBe('integer');
+    expect(OPENSEARCH_INDEX_MAPPING.properties.agencyId.type).toBe('keyword');
   });
 
   it('stores flat document + listing and round-trips to the listing', () => {

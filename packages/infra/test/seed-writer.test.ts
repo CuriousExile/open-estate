@@ -57,7 +57,13 @@ describe('writeListings', () => {
       batches()
         .flat()
         .map((r) => r.PutRequest?.Item),
-    ).toEqual(listings.map(toListingItem));
+    ).toEqual(listings.map((l) => toListingItem(l)));
+    // Seeded listings have no management data and must stay public (sparse `byId` key set).
+    expect(
+      batches()
+        .flat()
+        .every((r) => r.PutRequest?.Item?.['gsiPk'] === 'L'),
+    ).toBe(true);
   });
 
   it('retries UnprocessedItems with backoff until all are written', async () => {

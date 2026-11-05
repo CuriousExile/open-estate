@@ -18,9 +18,13 @@ import { toSearchDocument, type SearchDocument } from './search-document';
 // Key layout of the `Listings` table shared by infra (DataStack), writers (seed, indexer) and the
 // DynamoDB provider (design: "Indexierungs-Strategie und Ordnung").
 
-/** GSI that orders all listings by `id`: constant partition key, sort key `id`, projection ALL. */
+/**
+ * Sparse GSI that orders the publicly visible listings by `id`: constant partition key, sort key
+ * `id`, projection ALL. Only `ACTIVE` listings carry the partition key, so inactive ones are
+ * neither found by the DynamoDB provider nor indexed (design: "Öffentliche Sichtbarkeit").
+ */
 export const LISTINGS_BY_ID_INDEX = 'byId';
-/** Partition key attribute of {@link LISTINGS_BY_ID_INDEX}; every listing item must carry it. */
+/** Partition key attribute of {@link LISTINGS_BY_ID_INDEX}; set only on `ACTIVE` listings. */
 export const LISTINGS_BY_ID_PK_ATTRIBUTE = 'gsiPk';
 /** Constant value of {@link LISTINGS_BY_ID_PK_ATTRIBUTE}. */
 export const LISTINGS_BY_ID_PK_VALUE = 'L';
@@ -32,9 +36,12 @@ export const LISTINGS_BY_ID_PK_VALUE = 'L';
  */
 export const LISTINGS_BY_SOURCE_INDEX = 'bySource';
 
-/** Stored item: internal listing + flat search fields + `byId` partition key. */
+/** Stored item: internal listing + flat search fields + `byId` partition key (`ACTIVE` only). */
 export type ListingItem = Listing &
-  SearchDocument & { [LISTINGS_BY_ID_PK_ATTRIBUTE]: typeof LISTINGS_BY_ID_PK_VALUE };
+  SearchDocument & { [LISTINGS_BY_ID_PK_ATTRIBUTE]?: typeof LISTINGS_BY_ID_PK_VALUE };
+
+/** Management data that decides the public visibility of an item (status, owning agency). */
+export type ListingVisibility = Pick<ListingManagement, 'status' | 'agencyId'>;
 
 // Top-level keys present in both shapes. They must carry identical values; today that holds by
 // construction (`id`, `listingType` are copied verbatim). Adding a further overlapping key breaks
@@ -43,13 +50,27 @@ type SharedKeys = keyof Listing & keyof SearchDocument;
 const sharedKeysAreKnown: [SharedKeys] extends ['id' | 'listingType'] ? true : never = true;
 void sharedKeysAreKnown;
 
-/** Single source for the item layout of the `Listings` table (seed writer, indexer, provider). */
-export function toListingItem(listing: Listing): ListingItem {
+/**
+ * Single source for the item layout of the `Listings` table (seed writer, indexer, provider).
+ * Without management data (seeded and legacy imported listings) the listing is `ACTIVE` without
+ * agency and therefore public.
+ */
+export function toListingItem(
+  listing: Listing,
+  visibility: ListingVisibility = { status: 'ACTIVE' },
+): ListingItem {
   return {
     ...listing,
-    ...toSearchDocument(listing),
-    [LISTINGS_BY_ID_PK_ATTRIBUTE]: LISTINGS_BY_ID_PK_VALUE,
+    ...toSearchDocument(listing, visibility.agencyId),
+    ...(visibility.status === 'ACTIVE'
+      ? { [LISTINGS_BY_ID_PK_ATTRIBUTE]: LISTINGS_BY_ID_PK_VALUE }
+      : {}),
   };
+}
+
+/** Whether a stored item is in the sparse {@link LISTINGS_BY_ID_INDEX}, i.e. `ACTIVE`. */
+export function isIndexedListingItem(item: Record<string, unknown>): boolean {
+  return item[LISTINGS_BY_ID_PK_ATTRIBUTE] === LISTINGS_BY_ID_PK_VALUE;
 }
 
 const LISTING_KEYS: ReadonlySet<string> = new Set(Object.keys(ListingBase.shape));
@@ -101,13 +122,18 @@ export const listingManagementSchema = z.object({
 export type ManagedListingItem = ListingItem & ListingManagement;
 
 // Management attributes must not collide with listing or search attributes, otherwise one would
-// overwrite the other in the flat item (compile-time check like `sharedKeysAreKnown`).
-const managementKeysAreDisjoint: [keyof ListingManagement & keyof ListingItem] extends [never]
+// overwrite the other in the flat item (compile-time check like `sharedKeysAreKnown`). The only
+// overlap is `agencyId`: the search document copies it verbatim from the management data
+// (`toManagedListingItem` passes it to `toListingItem`), so both carry the same value.
+const managementKeysAreDisjoint: [keyof ListingManagement & keyof ListingItem] extends ['agencyId']
   ? true
   : never = true;
 void managementKeysAreDisjoint;
 
-/** Item layout of a managed listing; `gsiPk` and search fields come from {@link toListingItem}. */
+/**
+ * Item layout of a managed listing; `gsiPk` (only when `ACTIVE`) and search fields come from
+ * {@link toListingItem}.
+ */
 export function toManagedListingItem(
   listing: Listing,
   management: ListingManagement,
@@ -116,7 +142,7 @@ export function toManagedListingItem(
   // Absent optional attributes are omitted instead of being written as `undefined`.
   if (attributes.agencyId === undefined) delete attributes.agencyId;
   if (attributes.customId === undefined) delete attributes.customId;
-  return { ...toListingItem(listing), ...(attributes as ListingManagement) };
+  return { ...toListingItem(listing, management), ...(attributes as ListingManagement) };
 }
 
 /**

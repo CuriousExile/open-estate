@@ -158,7 +158,7 @@ describeWithOpenSearch(`OpenSearch provider and indexer against OpenSearch ${suf
               client as unknown as OpenSearchIndexClientLike,
               index,
             );
-            expect(await writer.upsert(listings.map(toOpenSearchDocument))).toEqual([]);
+            expect(await writer.upsert(listings.map((l) => toOpenSearchDocument(l)))).toEqual([]);
             await refresh(index);
             const os = provider(index);
 

@@ -61,7 +61,7 @@ function tableSend(pages: readonly Listing[][]): Send {
     if (command instanceof QueryCommand) {
       const index = Number(command.input.ExclusiveStartKey?.['page'] ?? 0);
       return {
-        Items: (pages[index] ?? []).map(toListingItem),
+        Items: (pages[index] ?? []).map((l) => toListingItem(l)),
         ...(index < pages.length - 1 && { LastEvaluatedKey: { page: index + 1 } }),
       };
     }

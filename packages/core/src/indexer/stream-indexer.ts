@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util';
 import type { AttributeValue as SdkAttributeValue } from '@aws-sdk/client-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import type { Listing } from '@open-estate/shared';
@@ -8,7 +9,7 @@ import type {
   DynamoDBStreamEvent,
 } from 'aws-lambda';
 import { z } from 'zod';
-import { fromListingItem } from '../search/listings-table';
+import { fromListingItem, isIndexedListingItem } from '../search/listings-table';
 import type { IndexDocument, IndexWriteFailure, SearchIndexWriter } from './search-index-writer';
 
 // Mirrors the `Listings` table into the search index (design: "Indexierungs-Strategie und
@@ -21,6 +22,18 @@ import type { IndexDocument, IndexWriteFailure, SearchIndexWriter } from './sear
 // listing the tail explicitly keeps the contract independent of that detail and never
 // acknowledges a record that is ordered after an unapplied one. Replaying the tail is safe because
 // every write is an idempotent full-state upsert or delete.
+//
+// Visibility (design: "Öffentliche Sichtbarkeit"; Req 4.15, 6.3, 6.5): only items carrying the
+// sparse `byId` key (`ACTIVE` listings) are indexed. An image without it is applied like `REMOVE`,
+// so deactivation deletes the document and reactivation upserts it again.
+//
+// Unchanged documents: when the state before the batch (old image of the id's first record) maps
+// to the same operation as the final state — same document apart from the provenance touch
+// `lastImportedAt`/`lastRunId`, or hidden both times — the id is skipped. An import run without
+// content change thus causes no reindex; the index keeps the previous provenance values until the
+// next real change (design: "Öffentliche Sichtbarkeit"). Because the comparison is anchored at
+// the id's first record, a failure is reported from that record, so a replay compares against the
+// last acknowledged state instead of a never-applied intermediate one.
 
 /** Log entry without listing content: ids, counts and error categories only. */
 export type IndexerLogEntry =
@@ -29,6 +42,7 @@ export type IndexerLogEntry =
       readonly records: number;
       readonly upserts: number;
       readonly deletes: number;
+      readonly skipped: number;
       readonly failedRecords: number;
     }
   | {
@@ -41,7 +55,7 @@ export type IndexerLogEntry =
 export interface StreamIndexerDeps<D extends IndexDocument> {
   readonly writer: SearchIndexWriter<D>;
   /** Single source of the index document (Task 18.1: `toOpenSearchDocument`). */
-  readonly toDocument: (listing: Listing) => D;
+  readonly toDocument: (listing: Listing, agencyId?: string) => D;
   readonly log?: (entry: IndexerLogEntry) => void;
 }
 
@@ -69,12 +83,22 @@ const StoredListingFields = z.object({
     )
     .min(1),
   tours: z.array(z.object({ url: z.string() })),
+  agencyId: z.string().min(1).optional(),
 });
 
 type Operation<D> =
   | { readonly kind: 'upsert'; readonly position: number; readonly doc: D }
   | { readonly kind: 'delete'; readonly position: number; readonly id: string }
+  | { readonly kind: 'skip'; readonly position: number }
   | { readonly kind: 'invalid'; readonly position: number; readonly errorType: string };
+
+/** Index state an item image maps to: its document, hidden (not indexed) or not derivable. */
+type ImageState<D> =
+  | { readonly kind: 'upsert'; readonly doc: D; readonly compared: unknown }
+  | { readonly kind: 'delete' }
+  | { readonly kind: 'invalid'; readonly errorType: string };
+
+type ToDocument<D> = (listing: Listing, agencyId?: string) => D;
 
 function keyId(record: DynamoDBRecord): string | undefined {
   return record.dynamodb?.Keys?.['id']?.S;
@@ -85,26 +109,78 @@ function toItem(image: Record<string, AttributeValue>): Record<string, unknown> 
   return unmarshall(image as Record<string, SdkAttributeValue>);
 }
 
-function toOperation<D extends IndexDocument>(
-  record: DynamoDBRecord,
-  position: number,
+function imageState<D extends IndexDocument>(
+  image: Record<string, AttributeValue>,
   id: string,
-  toDocument: (listing: Listing) => D,
-): Operation<D> {
-  if (record.eventName === 'REMOVE') return { kind: 'delete', position, id };
-  const image = record.dynamodb?.NewImage;
-  if ((record.eventName !== 'INSERT' && record.eventName !== 'MODIFY') || !image) {
-    return { kind: 'invalid', position, errorType: INVALID_RECORD };
-  }
+  toDocument: ToDocument<D>,
+): ImageState<D> {
   try {
     const item = toItem(image);
-    if (item['id'] !== id || !StoredListingFields.safeParse(item).success) {
-      return { kind: 'invalid', position, errorType: INVALID_IMAGE };
-    }
-    return { kind: 'upsert', position, doc: toDocument(fromListingItem(item)) };
+    if (item['id'] !== id) return { kind: 'invalid', errorType: INVALID_IMAGE };
+    // Not in the sparse `byId` index (status not `ACTIVE`): not publicly visible.
+    if (!isIndexedListingItem(item)) return { kind: 'delete' };
+    const parsed = StoredListingFields.safeParse(item);
+    if (!parsed.success) return { kind: 'invalid', errorType: INVALID_IMAGE };
+    const listing = fromListingItem(item);
+    // The document is a pure function of listing and agency, so comparing its inputs suffices.
+    const compared = { ...listing, lastImportedAt: undefined, lastRunId: undefined };
+    return {
+      kind: 'upsert',
+      doc: toDocument(listing, parsed.data.agencyId),
+      compared: { listing: compared, agencyId: parsed.data.agencyId },
+    };
   } catch {
-    return { kind: 'invalid', position, errorType: INVALID_IMAGE };
+    return { kind: 'invalid', errorType: INVALID_IMAGE };
   }
+}
+
+/** Final state of the id after its last record. */
+function finalState<D extends IndexDocument>(
+  record: DynamoDBRecord,
+  id: string,
+  toDocument: ToDocument<D>,
+): ImageState<D> {
+  if (record.eventName === 'REMOVE') return { kind: 'delete' };
+  const image = record.dynamodb?.NewImage;
+  if ((record.eventName !== 'INSERT' && record.eventName !== 'MODIFY') || !image) {
+    return { kind: 'invalid', errorType: INVALID_RECORD };
+  }
+  return imageState(image, id, toDocument);
+}
+
+/** State before the batch: old image of the id's first `MODIFY`/`REMOVE` record, if any. */
+function previousState<D extends IndexDocument>(
+  record: DynamoDBRecord,
+  id: string,
+  toDocument: ToDocument<D>,
+): ImageState<D> | undefined {
+  const image = record.dynamodb?.OldImage;
+  if ((record.eventName !== 'MODIFY' && record.eventName !== 'REMOVE') || !image) return undefined;
+  return imageState(image, id, toDocument);
+}
+
+function sameState<D>(a: ImageState<D> | undefined, b: ImageState<D>): boolean {
+  if (a === undefined || a.kind === 'invalid' || a.kind !== b.kind) return false;
+  return (
+    a.kind === 'delete' || isDeepStrictEqual(a.compared, (b as { compared: unknown }).compared)
+  );
+}
+
+function toOperation<D extends IndexDocument>(
+  records: readonly DynamoDBRecord[],
+  positions: { readonly first: number; readonly last: number },
+  id: string,
+  toDocument: ToDocument<D>,
+): Operation<D> {
+  const position = positions.first;
+  const state = finalState(records[positions.last] as DynamoDBRecord, id, toDocument);
+  if (state.kind === 'invalid') return { kind: 'invalid', position, errorType: state.errorType };
+  if (sameState(previousState(records[position] as DynamoDBRecord, id, toDocument), state)) {
+    return { kind: 'skip', position };
+  }
+  return state.kind === 'upsert'
+    ? { kind: 'upsert', position, doc: state.doc }
+    : { kind: 'delete', position, id };
 }
 
 async function guarded(
@@ -130,19 +206,17 @@ export async function indexStreamBatch<D extends IndexDocument>(
   const records = event.Records;
 
   // Last record per id wins; records without a key cannot be applied at all.
-  const lastPosition = new Map<string, number>();
+  const positions = new Map<string, { first: number; last: number }>();
   const unkeyed: Operation<D>[] = [];
   records.forEach((record, position) => {
     const id = keyId(record);
     if (id === undefined) unkeyed.push({ kind: 'invalid', position, errorType: INVALID_RECORD });
-    else lastPosition.set(id, position);
+    else positions.set(id, { first: positions.get(id)?.first ?? position, last: position });
   });
 
   const operations = [
     ...unkeyed,
-    ...[...lastPosition].map(([id, position]) =>
-      toOperation(records[position] as DynamoDBRecord, position, id, deps.toDocument),
-    ),
+    ...[...positions].map(([id, p]) => toOperation(records, p, id, deps.toDocument)),
   ];
 
   const upserts = operations.flatMap((op) => (op.kind === 'upsert' ? [op.doc] : []));
@@ -159,7 +233,7 @@ export async function indexStreamBatch<D extends IndexDocument>(
     op.kind === 'invalid' ? [op] : [],
   );
   for (const failure of [...upsertFailures, ...deleteFailures]) {
-    const position = lastPosition.get(failure.id);
+    const position = positions.get(failure.id)?.first;
     if (position !== undefined) failures.push({ position, errorType: failure.errorType });
   }
   failures.sort((a, b) => a.position - b.position);
@@ -188,6 +262,7 @@ export async function indexStreamBatch<D extends IndexDocument>(
     records: records.length,
     upserts: upserts.length,
     deletes: deletes.length,
+    skipped: operations.filter((op) => op.kind === 'skip').length,
     failedRecords: batchItemFailures.length,
   });
   return { batchItemFailures };

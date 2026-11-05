@@ -35,6 +35,7 @@ export const OPENSEARCH_INDEX_MAPPING = {
     roomsHalf: { type: 'integer' },
     areaMinor: { type: 'long' },
     tourHosts: { type: 'keyword' },
+    agencyId: { type: 'keyword' },
     // Stored in `_source` only; returned as-is so that no second lookup is needed.
     listing: { type: 'object', enabled: false },
   },
@@ -44,8 +45,8 @@ export const OPENSEARCH_INDEX_MAPPING = {
 export type OpenSearchDocument = SearchDocument & { listing: Listing };
 
 /** Single source for the document layout in the OpenSearch index (indexer, provider). */
-export function toOpenSearchDocument(listing: Listing): OpenSearchDocument {
-  return { ...toSearchDocument(listing), listing };
+export function toOpenSearchDocument(listing: Listing, agencyId?: string): OpenSearchDocument {
+  return { ...toSearchDocument(listing, agencyId), listing };
 }
 
 /** Inverse of {@link toOpenSearchDocument}; not re-validated (see `fromListingItem`). */

@@ -27,7 +27,7 @@ function queryPages(pages: Listing[][]): Send {
       const index = Number(command.input.ExclusiveStartKey?.['page'] ?? 0);
       const isLast = index >= pages.length - 1;
       return {
-        Items: (pages[index] ?? []).map(toListingItem),
+        Items: (pages[index] ?? []).map((l) => toListingItem(l)),
         ...(isLast ? {} : { LastEvaluatedKey: { page: index + 1 } }),
       };
     }
@@ -60,6 +60,18 @@ describe('toListingItem / fromListingItem', () => {
     });
     expect(item).toMatchObject(l);
     expect(fromListingItem({ ...item })).toEqual(l);
+  });
+
+  it('sets the sparse byId key only for ACTIVE listings and stores the agency (Req 6.3, 6.5)', () => {
+    const l = listing('a');
+    const inactive = toListingItem(l, { status: 'INACTIVE', agencyId: 'agency-1' });
+    expect(inactive).not.toHaveProperty(LISTINGS_BY_ID_PK_ATTRIBUTE);
+    expect(inactive).toEqual({ ...l, ...toSearchDocument(l, 'agency-1') });
+    expect(toListingItem(l, { status: 'ACTIVE', agencyId: 'agency-1' })).toEqual({
+      ...inactive,
+      [LISTINGS_BY_ID_PK_ATTRIBUTE]: LISTINGS_BY_ID_PK_VALUE,
+    });
+    expect(fromListingItem({ ...inactive })).toEqual(l);
   });
 });
 
