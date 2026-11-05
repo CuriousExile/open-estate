@@ -6,6 +6,7 @@ export * from './errors';
 export * from './locale';
 export * from './locale-selection';
 export * from './management';
+export * from './merge';
 export * from './money';
 export * from './permissions';
 export * from './provenance';
