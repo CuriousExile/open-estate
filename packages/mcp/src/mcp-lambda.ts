@@ -1,4 +1,5 @@
 import {
+  createStdoutUsageRecorder,
   describeInitFailure,
   initReadModel,
   isConfigFailure,
@@ -54,7 +55,10 @@ export function mcpEndpoint(event: Pick<McpRequest, 'body' | 'isBase64Encoded'>)
     : MCP_PROTOCOL_ENDPOINT;
 }
 
-/** Records `RequestLatency` (`interface=mcp`) for every response of `handler` (Req 11.4). */
+/**
+ * Records `RequestLatency` and `RequestCount` (`interface=mcp`) for every response of `handler`
+ * (Req 11.4, 14.1).
+ */
 export function instrumentMcpHandler(
   handler: McpHandler,
   metrics: Metrics = defaultMetrics,
@@ -63,6 +67,7 @@ export function instrumentMcpHandler(
     metrics,
     interface: 'mcp',
     endpoint: mcpEndpoint,
+    statusCode: (response) => response.statusCode,
     logger,
   });
 }
@@ -85,8 +90,12 @@ export function createMcpHandlerFromEnv(
   sources: ReadModelSources = {},
   metrics: Metrics = defaultMetrics,
 ): McpHandler {
+  const withUsage: ReadModelSources = {
+    ...sources,
+    usage: sources.usage ?? createStdoutUsageRecorder(),
+  };
   const start = (): Promise<McpHandler> => {
-    const init = initMcpHandler(env, sources);
+    const init = initMcpHandler(env, withUsage);
     init.catch((error: unknown) =>
       logger.error('POST /mcp: init failed', describeInitFailure(error)),
     );

@@ -20,6 +20,7 @@ import {
   type SearchProvider,
   type SearchResult,
   type StoredListing,
+  withOwners,
 } from './search-provider';
 import { ServiceUnavailableError } from './service-unavailable-error';
 
@@ -164,7 +165,7 @@ export class DynamoDbSearchProvider implements SearchProvider {
     const input = buildSearchQueryInput(q, this.tableName);
 
     const matches = await this.withDeadline(async (abortSignal) => {
-      const found: Listing[] = [];
+      const found: StoredListing[] = [];
       let exclusiveStartKey: Record<string, unknown> | undefined;
       do {
         abortSignal.throwIfAborted();
@@ -172,15 +173,26 @@ export class DynamoDbSearchProvider implements SearchProvider {
           new QueryCommand({ ...input, ExclusiveStartKey: exclusiveStartKey }),
           { abortSignal },
         );
-        found.push(...(page.Items ?? []).map(fromListingItem));
+        found.push(
+          ...(page.Items ?? []).map((item) => ({
+            listing: fromListingItem(item),
+            visibility: visibilityOf(item),
+          })),
+        );
         exclusiveStartKey = page.LastEvaluatedKey;
       } while (exclusiveStartKey !== undefined && found.length <= pageSize);
       return found;
     });
 
-    if (matches.length <= pageSize) return { items: matches };
-    const items = matches.slice(0, pageSize);
-    return { items, next: { lastId: (items[pageSize - 1] as Listing).id } };
+    const owners = new Map(matches.map((m) => [m.listing.id, m.visibility.agencyId]));
+    const listings = matches.map(({ listing }) => listing);
+    if (listings.length <= pageSize) {
+      return withOwners({ items: listings }, (id) => owners.get(id));
+    }
+    const items = listings.slice(0, pageSize);
+    return withOwners({ items, next: { lastId: (items[pageSize - 1] as Listing).id } }, (id) =>
+      owners.get(id),
+    );
   }
 
   async getById(id: string): Promise<StoredListing | null> {

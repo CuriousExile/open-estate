@@ -130,7 +130,7 @@ describe('buildOpenSearchSearchBody', () => {
       query: { bool: { filter: [] } },
       sort: [{ id: 'asc' }],
       track_total_hits: false,
-      _source: ['listing'],
+      _source: ['listing', 'agencyId'],
     });
     expect(buildOpenSearchSearchBody({})?.size).toBe(DEFAULT_PAGE_SIZE + 1);
   });

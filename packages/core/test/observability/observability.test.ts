@@ -8,6 +8,7 @@ import {
   OPENSEARCH_REQUEST_DEADLINE_MS,
   REDACTED,
   redactLogValue,
+  requestStatusClasses,
   withRequestLatency,
 } from '@open-estate/core';
 import { PII_FIELD_PATHS } from '@open-estate/shared';
@@ -200,5 +201,68 @@ describe('withRequestLatency (Req 11.4)', () => {
     })(undefined);
 
     expect(points()).toEqual([expect.objectContaining({ namespace: DEFAULT_METRICS_NAMESPACE })]);
+  });
+});
+
+describe('RequestCount (Req 14.1)', () => {
+  it.each([
+    [200, ['2xx']],
+    [304, ['2xx']],
+    [400, ['4xx']],
+    [404, ['4xx']],
+    [429, ['4xx', '429']],
+    [500, ['5xx']],
+    [503, ['5xx']],
+    [undefined, ['5xx']],
+  ])('maps status %s to %j', (status, classes) => {
+    expect(requestStatusClasses(status)).toEqual(classes);
+  });
+
+  it('is emitted with interface, endpoint and statusClass when statusCode is given', async () => {
+    const { metrics, points, countPoints } = captureEmf();
+    const handler = withRequestLatency(async (statusCode: number) => ({ statusCode }), {
+      metrics,
+      interface: 'management',
+      endpoint: () => 'listings',
+      statusCode: (r) => r.statusCode,
+    });
+
+    await handler(201);
+    await handler(429);
+
+    expect(points()).toHaveLength(2);
+    expect(countPoints()).toEqual([
+      {
+        namespace: 'OpenEstateTest',
+        dimensionSets: [['interface', 'endpoint', 'statusClass']],
+        interface: 'management',
+        endpoint: 'listings',
+        statusClass: '2xx',
+        count: 1,
+        unit: 'Count',
+      },
+      expect.objectContaining({ statusClass: '4xx', count: 1 }),
+      expect.objectContaining({ statusClass: '429', count: 1 }),
+    ]);
+  });
+
+  it('counts a thrown error as 5xx and emits nothing without statusCode', async () => {
+    const { metrics, countPoints } = captureEmf();
+    const failing = withRequestLatency(() => Promise.reject(new Error('boom')), {
+      metrics,
+      interface: 'api',
+      endpoint: () => 'search',
+      statusCode: () => 200,
+    });
+    await expect(failing(undefined)).rejects.toThrow('boom');
+    await withRequestLatency(async () => undefined, {
+      metrics,
+      interface: 'api',
+      endpoint: () => 'meta',
+    })(undefined);
+
+    expect(countPoints()).toEqual([
+      expect.objectContaining({ endpoint: 'search', statusClass: '5xx' }),
+    ]);
   });
 });

@@ -65,6 +65,24 @@ export interface SearchResult {
   items: Listing[];
   /** Set iff more matching listings follow (Req 1.7). */
   next?: NextPage;
+  /**
+   * Owning agency per listing id of `items`, only for listings with agency; omitted when no item
+   * has one. Not part of any response: used for usage counting (Req 13.4).
+   */
+  owners?: Readonly<Record<string, string>>;
+}
+
+/** `owners` of a result page from its stored listings ({@link SearchResult.owners}). */
+export function withOwners(
+  result: SearchResult,
+  agencyOf: (id: string) => string | undefined,
+): SearchResult {
+  const owners: Record<string, string> = {};
+  for (const { id } of result.items) {
+    const agencyId = agencyOf(id);
+    if (agencyId !== undefined) owners[id] = agencyId;
+  }
+  return Object.keys(owners).length === 0 ? result : { ...result, owners };
 }
 
 /**

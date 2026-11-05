@@ -8,6 +8,7 @@ import {
   type SearchProvider,
   type SearchResult,
   type StoredListing,
+  withOwners,
 } from './search-provider';
 import { ServiceUnavailableError } from './service-unavailable-error';
 
@@ -69,7 +70,8 @@ export interface OpenSearchSearchBody {
   sort: [{ id: 'asc' }];
   search_after?: [string];
   track_total_hits: false;
-  _source: ['listing'];
+  // `agencyId` for usage counting (`SearchResult.owners`, Req 13.4).
+  _source: ['listing', 'agencyId'];
 }
 
 function range(field: Field, r: IntRange | undefined, out: OpenSearchFilterClause[]): void {
@@ -128,7 +130,7 @@ export function buildOpenSearchSearchBody(q: ResolvedQuery): OpenSearchSearchBod
     sort: [{ id: 'asc' }],
     ...(q.after !== undefined ? { search_after: [q.after] as [string] } : {}),
     track_total_hits: false,
-    _source: ['listing'],
+    _source: ['listing', 'agencyId'],
   };
 }
 
@@ -205,10 +207,16 @@ export class OpenSearchSearchProvider implements SearchProvider {
     const body = buildOpenSearchSearchBody(q);
     if (body === null) return { items: [] };
     const pageSize = effectivePageSize(q.pageSize);
-    const matches = (await this.query({ ...body })).map(({ listing }) => listing);
-    if (matches.length <= pageSize) return { items: matches };
+    const found = await this.query({ ...body });
+    const owners = new Map(found.map((m) => [m.listing.id, m.visibility.agencyId]));
+    const matches = found.map(({ listing }) => listing);
+    if (matches.length <= pageSize) {
+      return withOwners({ items: matches }, (id) => owners.get(id));
+    }
     const items = matches.slice(0, pageSize);
-    return { items, next: { lastId: (items[pageSize - 1] as Listing).id } };
+    return withOwners({ items, next: { lastId: (items[pageSize - 1] as Listing).id } }, (id) =>
+      owners.get(id),
+    );
   }
 
   async getById(id: string): Promise<StoredListing | null> {

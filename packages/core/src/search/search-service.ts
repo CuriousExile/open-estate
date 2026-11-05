@@ -17,6 +17,7 @@ import { localize } from './localize';
 import { normalizeCity } from './search-document';
 import type { IntRange, OfferCondition, ResolvedQuery, SearchProvider } from './search-provider';
 import { NO_SUSPENDED_AGENCIES, type SuspendedAgencies } from './suspended-agencies';
+import { NO_USAGE, type UsageRecorder } from '../usage/usage-line';
 
 // SearchService (design: "Domänenkern", "Indexierungs-Strategie und Ordnung"). Expected request
 // errors (`INVALID_PAGE_TOKEN`) are returned as `Result`, like `parseSearchQuery` and the
@@ -48,6 +49,8 @@ export interface SearchServiceDeps {
    * (no `Agencies` table, e.g. local development).
    */
   suspendedAgencies?: SuspendedAgencies;
+  /** Search impressions of every successful page (Req 13.4); defaults to none. */
+  usage?: UsageRecorder;
 }
 
 /**
@@ -72,6 +75,7 @@ const toHalf = (rooms: number | undefined): number | undefined =>
 export function createSearchService(deps: SearchServiceDeps): SearchService {
   const { provider, taxonomy, defaultCurrency } = deps;
   const suspendedAgencies = deps.suspendedAgencies ?? NO_SUSPENDED_AGENCIES;
+  const usage = deps.usage ?? NO_USAGE;
   const allowedTourHosts = [
     ...new Set(
       deps.tourProviders.providers.flatMap((p) => p.hostnames.map((h) => h.toLowerCase())),
@@ -131,6 +135,13 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       const suspended = await suspendedAgencies.current();
       const result = await provider.search(resolve(query, after, suspended));
       const items = result.items.map((listing) => localize(listing, prefs, taxonomy));
+      usage.record(
+        'impression',
+        result.items.map(({ id }) => {
+          const agencyId = result.owners?.[id];
+          return agencyId === undefined ? { id } : { id, agencyId };
+        }),
+      );
       return ok({
         items,
         ...(result.next && {

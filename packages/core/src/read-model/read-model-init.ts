@@ -31,6 +31,7 @@ import {
 } from '../search/search-provider-factory';
 import { createSearchService, type SearchService } from '../search/search-service';
 import { createCachedSuspendedAgencies } from '../search/suspended-agencies';
+import { NO_USAGE, type UsageRecorder } from '../usage/usage-line';
 
 // Lambda init of the read side shared by the public adapters (design: "ConfigProvider",
 // "Taxonomy", "Konfigurationsmodelle"): config, taxonomy, locales and tour allow-list are loaded
@@ -97,6 +98,8 @@ export const I18nConfig = z
 
 export interface ReadModelSources extends ConfigSources {
   dynamo?: DynamoDBDocumentClient;
+  /** Usage lines of search and detail (Req 13.4); defaults to none. */
+  usage?: UsageRecorder;
 }
 
 /** Everything a read adapter (API, MCP) needs; built once per Lambda instance. */
@@ -238,6 +241,7 @@ export async function initReadModel(
   });
 
   // One cache shared by search and detail, so both see the same suspension state.
+  const usage = sources.usage ?? NO_USAGE;
   const suspendedAgencies = createCachedSuspendedAgencies({
     store: new DynamoDbAgencyStore({
       client: dynamo,
@@ -258,8 +262,9 @@ export async function initReadModel(
       tourProviders,
       defaultCurrency,
       suspendedAgencies,
+      usage,
     }),
-    listings: createListingService({ provider, taxonomy, suspendedAgencies }),
+    listings: createListingService({ provider, taxonomy, suspendedAgencies, usage }),
   };
 }
 

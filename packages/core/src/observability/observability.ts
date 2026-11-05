@@ -24,8 +24,17 @@ export const DEFAULT_METRICS_NAMESPACE = 'OpenEstate';
 /** Latency of one request in ms; p95 per endpoint is the operating signal (Req 11.4). */
 export const REQUEST_LATENCY_METRIC = 'RequestLatency';
 
-/** `interface` dimension of `RequestLatency`. */
-export type RequestInterface = 'api' | 'mcp';
+/**
+ * Requests per `interface`, `endpoint` and `statusClass` (Req 14.1, design: "Plattform-Kennzahlen").
+ * Read by the `api.requests` / `api.responses` resolvers (`MONITORED_REQUEST_COUNT_METRIC`).
+ */
+export const REQUEST_COUNT_METRIC = 'RequestCount';
+
+/** `statusClass` dimension of `RequestCount`; `429` is emitted in addition to `4xx`. */
+export type RequestStatusClass = '2xx' | '4xx' | '429' | '5xx';
+
+/** `interface` dimension of `RequestLatency` and `RequestCount`. */
+export type RequestInterface = 'api' | 'mcp' | 'management';
 
 /** Dimensions of `RequestLatency`; `endpoint` must come from a fixed set (low cardinality). */
 export interface RequestLatencyDimensions {
@@ -102,9 +111,41 @@ export function recordRequestLatency(
 }
 
 /**
+ * Status classes of an HTTP status (`undefined` = thrown error): `5xx` for ≥ 500 and thrown
+ * errors, `4xx` for 400–499 plus `429` for 429, `2xx` for everything below 400.
+ */
+export function requestStatusClasses(statusCode: number | undefined): RequestStatusClass[] {
+  if (statusCode === undefined || statusCode >= 500) return ['5xx'];
+  if (statusCode === 429) return ['4xx', '429'];
+  if (statusCode >= 400) return ['4xx'];
+  return ['2xx'];
+}
+
+/**
+ * Emits `RequestCount = 1` per status class of `statusCode` (two data points for 429), each
+ * flushed immediately with the dimensions `interface`, `endpoint`, `statusClass`.
+ */
+export function recordRequestCount(
+  metrics: Metrics,
+  dimensions: RequestLatencyDimensions,
+  statusCode: number | undefined,
+): void {
+  for (const statusClass of requestStatusClasses(statusCode)) {
+    metrics.addDimensions({
+      interface: dimensions.interface,
+      endpoint: dimensions.endpoint,
+      statusClass,
+    });
+    metrics.addMetric(REQUEST_COUNT_METRIC, MetricUnit.Count, 1);
+    metrics.publishStoredMetrics();
+  }
+}
+
+/**
  * Wraps a request handler: measures from call to settle and records `RequestLatency` for every
- * outcome — success, 4xx, 429, 503 and thrown errors (the error is rethrown). A failing metrics
- * sink never fails the request.
+ * outcome — success, 4xx, 429, 503 and thrown errors (the error is rethrown). With `statusCode`,
+ * `RequestCount` is recorded as well (thrown errors count as `5xx`). A failing metrics sink never
+ * fails the request.
  */
 export function withRequestLatency<E, R>(
   handler: (event: E) => Promise<R>,
@@ -113,6 +154,8 @@ export function withRequestLatency<E, R>(
     interface: RequestInterface;
     /** Maps the event to its endpoint dimension; must return a value from a fixed set. */
     endpoint: (event: E) => string;
+    /** HTTP status of a response; enables `RequestCount`. */
+    statusCode?: (result: R) => number;
     logger?: Logger;
     now?: () => number;
   },
@@ -120,15 +163,18 @@ export function withRequestLatency<E, R>(
   const now = options.now ?? (() => performance.now());
   return async (event) => {
     const start = now();
+    let status: number | undefined;
     try {
-      return await handler(event);
+      const result = await handler(event);
+      status = options.statusCode?.(result);
+      return result;
     } finally {
       try {
-        recordRequestLatency(
-          options.metrics,
-          { interface: options.interface, endpoint: options.endpoint(event) },
-          Math.max(0, now() - start),
-        );
+        const dimensions = { interface: options.interface, endpoint: options.endpoint(event) };
+        recordRequestLatency(options.metrics, dimensions, Math.max(0, now() - start));
+        if (options.statusCode !== undefined) {
+          recordRequestCount(options.metrics, dimensions, status);
+        }
       } catch (cause) {
         options.logger?.warn('RequestLatency: publish failed', { error: cause });
       }

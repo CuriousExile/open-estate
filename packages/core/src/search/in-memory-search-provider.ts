@@ -9,6 +9,7 @@ import {
   type SearchProvider,
   type SearchResult,
   type StoredListing,
+  withOwners,
 } from './search-provider';
 
 interface Entry {
@@ -47,7 +48,7 @@ export class InMemorySearchProvider implements SearchProvider {
       .filter(({ visibility, doc }) => visibility.status === 'ACTIVE' && matchesQuery(doc, q))
       .map(({ listing }) => listing)
       .sort(compareById);
-    return paginate(matches, q);
+    return withOwners(paginate(matches, q), (id) => this.entries.get(id)?.visibility.agencyId);
   }
 
   async getById(id: string): Promise<StoredListing | null> {

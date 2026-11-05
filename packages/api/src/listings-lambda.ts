@@ -1,5 +1,6 @@
 import { SSMClient } from '@aws-sdk/client-ssm';
 import {
+  createStdoutUsageRecorder,
   describeInitFailure,
   initReadModel,
   isConfigFailure,
@@ -64,7 +65,10 @@ export function listingsEndpoint(event: Pick<ListingsRequest, 'resource'>): List
   );
 }
 
-/** Records `RequestLatency` (`interface=api`) for every response of `handler` (Req 11.4). */
+/**
+ * Records `RequestLatency` and `RequestCount` (`interface=api`) for every response of `handler`
+ * (Req 11.4, 14.1).
+ */
 export function instrumentListingsHandler(
   handler: ListingsHandler,
   metrics: Metrics = defaultMetrics,
@@ -73,6 +77,7 @@ export function instrumentListingsHandler(
     metrics,
     interface: 'api',
     endpoint: listingsEndpoint,
+    statusCode: (response) => response.statusCode,
     logger,
   });
 }
@@ -127,8 +132,12 @@ export function createListingsHandlerFromEnv(
   sources: ListingsInitSources = {},
   metrics: Metrics = defaultMetrics,
 ): ListingsHandler {
-  // One SSM client for the read model and the CORS allowlist.
-  const shared: ListingsInitSources = { ...sources, ssm: sources.ssm ?? new SSMClient({}) };
+  // One SSM client for the read model and the CORS allowlist; usage lines go to stdout (Req 13.4).
+  const shared: ListingsInitSources = {
+    ...sources,
+    ssm: sources.ssm ?? new SSMClient({}),
+    usage: sources.usage ?? createStdoutUsageRecorder(),
+  };
   const handler = retryingInit('Search API: init failed', () => initListingsHandler(env, shared));
   const cors = retryingInit('Search API: CORS init failed', async () => {
     const policy = await loadCorsPolicy(env, shared);
