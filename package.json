@@ -29,6 +29,7 @@
     "clean": "tsc -b --clean",
     "lint": "eslint . && prettier --check . && npm run check:config",
     "check:config": "node scripts/check-hardcoded-config.mjs",
+    "docs:permissions": "tsc -b packages/shared && node scripts/generate-permission-matrix.mjs",
     "format": "prettier --write .",
     "test": "jest",
     "typecheck:tests": "tsc -p tsconfig.test.json && tsc -p packages/infra/tsconfig.test.json && tsc -p packages/frontend/tsconfig.test.json",
