@@ -19,7 +19,10 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import type { LocalizedListing } from '@open-estate/shared';
 import type { SearchParams } from '../api/api-client';
 import { ApiClientService } from '../api/api-client.service';
+import { withPriceCurrency } from '../currency/currency-model';
+import { CurrencyService } from '../currency/currency.service';
 import { ListingDetailComponent } from '../listing/listing-detail.component';
+import { convertPriceInput } from '../listing/listing-format';
 import { LocationService } from '../location/location.service';
 import { withCountry } from '../location/location-model';
 import { ResultListComponent } from '../results/result-list.component';
@@ -29,6 +32,8 @@ import { EXTRA_FILTERS } from './filters/extra-filters';
 import { validateWithFilters } from './filters/filter-registry';
 import { SearchFormComponent, type SearchFormState } from './search-form.component';
 import {
+  CURRENCY_QUERY_PARAM,
+  currencyFromQuery,
   formValuesFromQuery,
   LISTING_QUERY_PARAM,
   listingIdFromQuery,
@@ -63,9 +68,17 @@ import {
     </ng-template>
 
     @if (searched()) {
-      <!-- Hidden, not removed, while a detail is open: loaded pages survive. -->
+      <!-- Hidden, not removed, while a detail is open: loaded pages survive. The result list
+           (with the image carousel) is a lazy chunk, so the start page stays small. -->
       <div [hidden]="selectedId() !== undefined">
-        <oe-result-list class="shell-results" [params]="searchParams()" (select)="open($event)" />
+        @defer {
+          <oe-result-list
+            #results
+            class="shell-results"
+            [params]="searchParams()"
+            (select)="open($event)"
+          />
+        }
       </div>
       @if (selectedListing(); as listing) {
         @defer {
@@ -91,8 +104,9 @@ export class SearchPageComponent {
   private readonly route = inject(ActivatedRoute);
   private readonly layout = inject(ShellLayout);
   private readonly locations = inject(LocationService);
+  private readonly currency = inject(CurrencyService);
   private readonly meta = inject(StartupState).meta();
-  private readonly resultList = viewChild(ResultListComponent);
+  private readonly resultList = viewChild<ResultListComponent>('results');
   private readonly headerContent = viewChild.required<TemplateRef<unknown>>('headerContent');
 
   private readonly query = toSignal(this.route.queryParams, { initialValue: {} });
@@ -122,15 +136,22 @@ export class SearchPageComponent {
 
   /** Bumped when the same search is submitted again, so it runs again. */
   private readonly rerun = signal(0);
+  /** Currency of the price bounds in the URL; the price filter currency if the URL has none. */
+  private readonly urlCurrency = computed(() => currencyFromQuery(this.query()));
   /**
-   * What the result list sends to Search_API: the URL's search plus the country of the header.
-   * Changing the country re-runs the search; an invalid URL search sends nothing.
+   * What the result list sends to Search_API: the URL's search plus the country of the header and
+   * the price currency (with conversion, if rates are configured). Changing the country re-runs the
+   * search; an invalid URL search sends nothing.
    */
   protected readonly searchParams = computed(() => {
     this.rerun();
     const result = this.urlSearch()?.result;
     const params = result !== undefined && 'params' in result ? { ...result.params } : undefined;
-    return withCountry(params, this.locations.country());
+    return withPriceCurrency(
+      withCountry(params, this.locations.country()),
+      this.urlCurrency() ?? this.currency.priceCurrency(),
+      this.currency.rates(),
+    );
   });
   /** Id of the listing opened from the results (`listing=` in the URL). */
   private readonly selectedId = computed(() => listingIdFromQuery(this.query()));
@@ -177,6 +198,28 @@ export class SearchPageComponent {
       afterNextRender(() => this.resultList()?.focusListing(closed), { injector: this.injector });
     });
     afterNextRender(() => this.layout.headerContent.set(this.headerContent()));
+    // Price bounds in another currency than the price fields (display currency switched, shared
+    // link): convert them into the current one, so fields, URL and filter agree.
+    effect(() => {
+      const target = this.currency.priceCurrency();
+      const from = this.urlCurrency();
+      const values = this.urlValues();
+      if (from === undefined || from === target || values === undefined) return;
+      const rates = untracked(this.currency.rates);
+      const convert = (value: string) => convertPriceInput(value, from, target, rates);
+      untracked(() =>
+        this.router.navigate([], {
+          relativeTo: this.route,
+          queryParams: {
+            priceMin: convert(values.priceMin) || null,
+            priceMax: convert(values.priceMax) || null,
+            [CURRENCY_QUERY_PARAM]: target,
+          },
+          queryParamsHandling: 'merge',
+          replaceUrl: true,
+        }),
+      );
+    });
     inject(DestroyRef).onDestroy(() => {
       this.layout.headerContent.set(undefined);
       this.layout.mode.set('page');
@@ -185,7 +228,7 @@ export class SearchPageComponent {
 
   /** A valid submit: put the search into the URL (the URL drives the results). */
   protected onSearch(params: SearchParams): void {
-    const queryParams = searchQueryParams(params);
+    const queryParams = searchQueryParams(params, this.currency.priceCurrency());
     const target = this.router.createUrlTree([], { relativeTo: this.route, queryParams });
     if (this.router.serializeUrl(target) === this.router.url) {
       this.rerun.update((n) => n + 1);

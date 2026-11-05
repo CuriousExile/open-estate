@@ -17,6 +17,7 @@ import { TranslocoPipe } from '@jsverse/transloco';
 import type { LocalizedListing } from '@open-estate/shared';
 import type { SearchParams } from '../api/api-client';
 import { ApiClientService } from '../api/api-client.service';
+import { CurrencyService } from '../currency/currency.service';
 import { CodeLabelPipe } from '../locale/code-label.pipe';
 import { LocaleService } from '../locale/locale.service';
 import { ImageCarouselComponent } from '../ui/image-carousel/image-carousel.component';
@@ -91,6 +92,13 @@ import {
                   <p class="price">
                     <span class="label">{{ 'results.price.' + row.offerType | transloco }}</span>
                     {{ price }}
+                    @if (row.priceOriginal; as original) {
+                      <span
+                        class="oe-price-original"
+                        [title]="'currency.convertedHint' | transloco: convertedHint()"
+                        >{{ 'currency.originalAmount' | transloco: { amount: original } }}</span
+                      >
+                    }
                   </p>
                 }
                 <dl>
@@ -203,7 +211,7 @@ import {
     }
     .card:hover,
     .card:focus-within {
-      border-color: var(--brand-secondary);
+      border-color: var(--color-accent);
     }
     .tags {
       display: flex;
@@ -235,7 +243,7 @@ import {
     .price {
       display: grid;
       font-size: 1.25rem;
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     dl {
       display: flex;
@@ -248,7 +256,7 @@ import {
       padding: 0.5rem;
       box-sizing: content-box;
       border-radius: 50%;
-      background: var(--brand-secondary);
+      background: var(--color-accent);
       color: var(--color-on-accent);
     }
     .pager {
@@ -262,6 +270,7 @@ import {
 export class ResultListComponent {
   private readonly api = inject(ApiClientService);
   private readonly locale = inject(LocaleService);
+  private readonly currency = inject(CurrencyService);
   private readonly heading = viewChild<ElementRef<HTMLElement>>('heading');
   private readonly listingButtons = viewChildren<ElementRef<HTMLElement>>('listingButton');
 
@@ -276,14 +285,17 @@ export class ResultListComponent {
     (state) => this.state.set(state),
   );
 
-  /** Rows are formatted for the active locale and follow a language switch. */
+  /** Rows are formatted for the active locale and display currency and follow a switch. */
   protected readonly rows = computed(() => {
     const { offerType } = this.state();
     const locale = this.locale.active();
+    const display = this.currency.display();
     return (currentPage(this.state())?.items ?? []).map((listing) =>
-      toResultRow(listing, offerType, locale),
+      toResultRow(listing, offerType, locale, display),
     );
   });
+  /** Tooltip of converted prices: approximate, with the date of the static rates. */
+  protected readonly convertedHint = computed(() => ({ date: this.currency.ratesDate() }));
   protected readonly empty = computed(() => isEmptyResult(this.state()));
   protected readonly hasNext = computed(() => hasNextPage(this.state()));
   protected readonly errorMessage = computed(() => {

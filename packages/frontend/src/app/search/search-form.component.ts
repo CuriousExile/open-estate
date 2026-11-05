@@ -18,6 +18,7 @@ import { NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { TranslocoPipe, TranslocoService } from '@jsverse/transloco';
 import { OFFER_TYPES, type OfferType } from '@open-estate/shared';
 import type { SearchParams } from '../api/api-client';
+import { CurrencyService } from '../currency/currency.service';
 import { CodeLabelPipe } from '../locale/code-label.pipe';
 import { LocaleService } from '../locale/locale.service';
 import { codeLabelKey } from '../locale/text-fallback';
@@ -121,7 +122,9 @@ export interface SearchFormState {
           </div>
         }
         <fieldset class="oe-search-seg oe-search-seg--price">
-          <legend class="label">{{ 'search.field.price' | transloco }}</legend>
+          <legend class="label">
+            {{ 'search.field.priceIn' | transloco: { currency: priceCurrency() } }}
+          </legend>
           <div class="oe-search-pair">
             @for (field of priceFields; track field; let first = $first) {
               @if (!first) {
@@ -257,6 +260,8 @@ export class SearchFormComponent {
   readonly search = output<SearchParams>();
 
   protected readonly meta: SearchMeta = withTaxonomyWarning(inject(StartupState).meta());
+  /** Currency the price bounds are entered in (display currency or the default currency). */
+  protected readonly priceCurrency = inject(CurrencyService).priceCurrency;
   protected readonly offerTypes = OFFER_TYPES;
   protected readonly priceFields = ['priceMin', 'priceMax'] as const;
   protected readonly roomsChips = ROOMS_CHIPS;

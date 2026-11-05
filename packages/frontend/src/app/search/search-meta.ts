@@ -2,6 +2,7 @@
 import {
   buildSchemas,
   Currency,
+  ExchangeRatesConfig,
   LocaleTag,
   TaxonomyConfig,
   validateTaxonomy,
@@ -30,6 +31,7 @@ const MetaSchema = z.object({
     .catch(undefined),
   defaultCurrency: Currency.optional().catch(undefined),
   tourProviders: z.array(z.string().min(1)).optional().catch(undefined),
+  exchangeRates: ExchangeRatesConfig.optional().catch(undefined),
 });
 
 /** Validated `/meta` plus the request schemas built from it (once, not per submit). */
@@ -38,6 +40,8 @@ export interface SearchMeta {
   readonly taxonomy?: Taxonomy;
   readonly defaultCurrency?: string;
   readonly tourProviders?: readonly string[];
+  /** Static exchange rates; `undefined` if not configured or invalid (no conversion). */
+  readonly exchangeRates?: ExchangeRatesConfig;
   readonly schemas: Schemas;
 }
 
@@ -75,11 +79,12 @@ export function parseSearchMeta(raw: unknown): SearchMeta {
   const meta = MetaSchema.safeParse(raw);
   if (!meta.success) return FALLBACK_SEARCH_META;
   const taxonomy = toTaxonomy(meta.data.taxonomy);
-  const { defaultCurrency, tourProviders } = meta.data;
+  const { defaultCurrency, tourProviders, exchangeRates } = meta.data;
   return {
     ...(taxonomy !== undefined && { taxonomy }),
     ...(defaultCurrency !== undefined && { defaultCurrency }),
     ...(tourProviders !== undefined && { tourProviders }),
+    ...(exchangeRates !== undefined && { exchangeRates }),
     schemas: buildSchemas(taxonomy ?? { groups: [] }, toLocaleConfig(meta.data.locales)),
   };
 }

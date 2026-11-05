@@ -1,6 +1,11 @@
 // Framework-free formatting of listing values, shared by result list and detail view
 // (Req 7.4, 12.13). Kept free of Angular imports so it can be unit-tested with plain Jest.
-import type { LocalizedListing, OfferType } from '@open-estate/shared';
+import {
+  convertAmount,
+  type ExchangeRatesConfig,
+  type LocalizedListing,
+  type OfferType,
+} from '@open-estate/shared';
 
 export type ListingOffer = LocalizedListing['offers'][number];
 
@@ -57,3 +62,74 @@ export function formatNumber(
   }
   return new Intl.NumberFormat(locale || undefined, { maximumFractionDigits }).format(number);
 }
+
+/**
+ * Display currency of the header: `currency` `''` shows every amount in its own currency
+ * ("Original currency"); otherwise amounts are converted with the static `rates` from `/meta`.
+ */
+export interface DisplayCurrency {
+  readonly currency: string;
+  readonly rates?: ExchangeRatesConfig | undefined;
+}
+
+/** A formatted amount; `original` is set iff `value` is a converted, approximate amount. */
+export interface PriceView {
+  readonly value: string;
+  /** The amount in the listing's own currency (shown smaller below the converted one). */
+  readonly original?: string;
+}
+
+/** Marks converted amounts as approximate ("≈ 110.818 €"). */
+export const APPROXIMATE_SIGN = '≈';
+
+/**
+ * Amount for the display currency: unchanged without one, for the same currency or without a rate;
+ * otherwise converted, rounded to whole units, prefixed with {@link APPROXIMATE_SIGN} and with the
+ * original amount in `original`.
+ */
+export function formatPrice(
+  amount: string,
+  currency: string,
+  locale: string,
+  display: DisplayCurrency | undefined,
+): PriceView {
+  const original = formatMoney(amount, currency, locale);
+  const target = display?.currency ?? '';
+  const value = Number(amount);
+  if (target === '' || target === currency || amount.trim() === '' || !Number.isFinite(value)) {
+    return { value: original };
+  }
+  const converted = convertAmount(display?.rates, value, currency, target);
+  if (converted === undefined) return { value: original };
+  try {
+    const text = new Intl.NumberFormat(locale || undefined, {
+      style: 'currency',
+      currency: target,
+      maximumFractionDigits: 0,
+    }).format(Math.round(converted));
+    return { value: `${APPROXIMATE_SIGN}\u00a0${text}`, original };
+  } catch {
+    return { value: original };
+  }
+}
+
+/**
+ * A price bound typed in `from`, converted into `to` and rounded to whole units, e.g. when the
+ * display currency changes. Empty or unparsable input and missing rates return the input.
+ */
+export function convertPriceInput(
+  input: string,
+  from: string,
+  to: string,
+  rates: ExchangeRatesConfig | undefined,
+): string {
+  const value = Number(input.trim());
+  if (input.trim() === '' || !Number.isFinite(value) || from === to) return input;
+  const converted = convertAmount(rates, value, from, to);
+  return converted === undefined
+    ? input
+    : String(Math.min(PRICE_INPUT_MAX, Math.max(1, Math.round(converted))));
+}
+
+/** Largest whole amount a price filter accepts (`Money`: at most 999,999,999.99). */
+const PRICE_INPUT_MAX = 999_999_999;

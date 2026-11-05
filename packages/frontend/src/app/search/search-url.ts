@@ -58,14 +58,30 @@ export function formValuesFromQuery(query: QueryParams): Required<SearchFormValu
 }
 
 /** Query parameters for the URL of a validated search (only form fields, in form order). */
-export function searchQueryParams(params: SearchParams): Record<string, string> {
+export function searchQueryParams(
+  params: SearchParams,
+  priceCurrency?: string,
+): Record<string, string> {
   const query: Record<string, string> = {};
   for (const field of SEARCH_FORM_FIELDS) {
     const value = params[field];
     if (value === undefined || value === '' || value === false) continue;
     query[field] = String(value);
   }
+  // The price bounds' currency, so a shared link keeps its meaning (only with a bound).
+  if (priceCurrency !== undefined && (query['priceMin'] || query['priceMax'])) {
+    query[CURRENCY_QUERY_PARAM] = priceCurrency;
+  }
   return query;
+}
+
+/** Query parameter of the currency the price bounds of a search URL are in. */
+export const CURRENCY_QUERY_PARAM = 'currency';
+
+/** Currency of the price bounds in a search URL; `undefined` if absent or not ISO 4217. */
+export function currencyFromQuery(query: QueryParams): string | undefined {
+  const code = first(query[CURRENCY_QUERY_PARAM])?.trim() ?? '';
+  return /^[A-Z]{3}$/.test(code) ? code : undefined;
 }
 
 /** Whether a navigation switches between the start (hero) and the "searched" layout. */

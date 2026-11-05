@@ -2,7 +2,12 @@
 // Kept free of Angular imports so it can be unit-tested with plain Jest.
 import type { LocalizedListing, OfferType } from '@open-estate/shared';
 import { codeLabelKey } from '../locale/text-fallback';
-import { formatMoney, formatNumber, type ListingOffer } from './listing-format';
+import {
+  formatNumber,
+  formatPrice,
+  type DisplayCurrency,
+  type ListingOffer,
+} from './listing-format';
 
 /** Translation key of an offer amount label. */
 export type OfferAmountKey =
@@ -13,8 +18,10 @@ export type OfferAmountKey =
 
 export interface OfferAmountView {
   readonly key: OfferAmountKey;
-  /** Amount with the offer's currency, formatted for the active locale. */
+  /** Amount in the display currency (or the offer's own), formatted for the active locale. */
   readonly value: string;
+  /** Original amount if `value` is converted into the display currency (approximate). */
+  readonly original?: string;
 }
 
 export interface OfferView {
@@ -25,11 +32,19 @@ export interface OfferView {
 }
 
 /** One offer of the detail view with all of its stored amounts (Req 12.13). */
-export function toOfferView(offer: ListingOffer, locale: string): OfferView {
-  const money = (key: OfferAmountKey, amount: string): OfferAmountView => ({
-    key,
-    value: formatMoney(amount, offer.currency, locale),
-  });
+export function toOfferView(
+  offer: ListingOffer,
+  locale: string,
+  display?: DisplayCurrency,
+): OfferView {
+  const money = (key: OfferAmountKey, amount: string): OfferAmountView => {
+    const price = formatPrice(amount, offer.currency, locale, display);
+    return {
+      key,
+      value: price.value,
+      ...(price.original !== undefined && { original: price.original }),
+    };
+  };
   if (offer.offerType === 'SALE') {
     return { offerType: 'SALE', amounts: [money('detail.offer.price', offer.price)] };
   }
@@ -171,12 +186,14 @@ function phoneLink(phone: string): string {
 export interface ListingDetailOptions {
   /** Row keys of {@link DETAIL_ROWS_HIDDEN_BY_DEFAULT} to show anyway. */
   readonly showRows?: ReadonlySet<string>;
+  /** Display currency of the header; amounts in their own currency if omitted. */
+  readonly display?: DisplayCurrency;
 }
 
 export function toListingDetail(
   listing: LocalizedListing,
   locale: string,
-  { showRows = new Set() }: ListingDetailOptions = {},
+  { showRows = new Set(), display }: ListingDetailOptions = {},
 ): ListingDetail {
   const shown = (row: DetailRow | false | undefined): DetailRow | undefined =>
     row && (!DETAIL_ROWS_HIDDEN_BY_DEFAULT.has(row.key) || showRows.has(row.key)) ? row : undefined;
@@ -266,7 +283,7 @@ export function toListingDetail(
       .filter((part) => part !== undefined && part !== '')
       .join(', '),
     listingType: listing.listingType,
-    offers: listing.offers.map((offer) => toOfferView(offer, locale)),
+    offers: listing.offers.map((offer) => toOfferView(offer, locale, display)),
     facts,
     actions,
     sections,

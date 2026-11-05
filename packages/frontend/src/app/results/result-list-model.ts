@@ -8,7 +8,14 @@ import type {
   SearchPage,
   SearchParams,
 } from '../api/api-client';
-import { formatMoney, formatNumber, offerAmount, selectOffer } from '../listing/listing-format';
+import {
+  formatMoney,
+  formatNumber,
+  formatPrice,
+  offerAmount,
+  selectOffer,
+  type DisplayCurrency,
+} from '../listing/listing-format';
 
 // Moved to ../listing/listing-format (shared with the detail view); re-exported for existing importers.
 export { formatMoney, formatNumber, offerAmount, selectOffer };
@@ -28,6 +35,8 @@ export interface ResultRow {
   readonly city: string;
   /** Amount with currency of the shown offer; `undefined` if the listing has no offer. */
   readonly price: string | undefined;
+  /** Original amount if `price` is converted into the display currency (approximate). */
+  readonly priceOriginal?: string;
   readonly rooms: string;
   readonly area: string;
   /** Listing type code; label via `taxonomy.type.<code>`. */
@@ -38,8 +47,10 @@ export function toResultRow(
   listing: LocalizedListing,
   offerType: OfferType | undefined,
   locale: string,
+  display?: DisplayCurrency,
 ): ResultRow {
   const offer = selectOffer(listing, offerType);
+  const price = offer && formatPrice(offerAmount(offer), offer.currency, locale, display);
   return {
     listing,
     id: listing.id,
@@ -47,7 +58,8 @@ export function toResultRow(
     titleLocale: listing.deliveredLocale,
     offerType: offer?.offerType ?? offerType,
     city: listing.address.city,
-    price: offer && formatMoney(offerAmount(offer), offer.currency, locale),
+    price: price?.value,
+    ...(price?.original !== undefined && { priceOriginal: price.original }),
     rooms: formatNumber(listing.rooms, locale),
     area: formatNumber(listing.area, locale),
     listingType: listing.listingType,

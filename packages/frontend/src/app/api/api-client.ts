@@ -36,6 +36,8 @@ export interface SearchParams {
   priceMin?: string;
   priceMax?: string;
   currency?: string;
+  /** `true`: offers in other currencies match after converting the price bounds. */
+  convertCurrency?: boolean;
   roomsMin?: string;
   roomsMax?: string;
   areaMin?: string;
@@ -102,6 +104,7 @@ const SEARCH_PARAM_ORDER = [
   'priceMin',
   'priceMax',
   'currency',
+  'convertCurrency',
   'roomsMin',
   'roomsMax',
   'areaMin',

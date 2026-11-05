@@ -12,6 +12,7 @@ import {
 import { TranslocoPipe } from '@jsverse/transloco';
 import type { LocalizedListing } from '@open-estate/shared';
 import { CodeLabelPipe } from '../locale/code-label.pipe';
+import { CurrencyService } from '../currency/currency.service';
 import { LocaleService } from '../locale/locale.service';
 import { ImageCarouselComponent } from '../ui/image-carousel/image-carousel.component';
 import { toListingDetail } from './listing-detail-model';
@@ -79,7 +80,16 @@ import { TourEmbedComponent } from './tour-embed.component';
                 @for (amount of offer.amounts; track amount.key) {
                   <div [class.is-main]="$first">
                     <dt class="label">{{ amount.key | transloco }}</dt>
-                    <dd>{{ amount.value }}</dd>
+                    <dd>
+                      {{ amount.value }}
+                      @if (amount.original; as original) {
+                        <span
+                          class="oe-price-original"
+                          [title]="'currency.convertedHint' | transloco: convertedHint()"
+                          >{{ 'currency.originalAmount' | transloco: { amount: original } }}</span
+                        >
+                      }
+                    </dd>
                   </div>
                 }
               </dl>
@@ -262,7 +272,7 @@ import { TourEmbedComponent } from './tour-embed.component';
     .offer .is-main dd {
       font-size: 1.75rem;
       line-height: 1.15;
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
     .offer + .offer {
       padding-top: 1rem;
@@ -286,11 +296,11 @@ import { TourEmbedComponent } from './tour-embed.component';
       text-decoration: none;
     }
     .actions a:hover {
-      border-color: var(--brand-secondary);
+      border-color: var(--color-accent);
     }
     .actions .is-primary {
-      border-color: var(--brand-secondary);
-      background: var(--brand-secondary);
+      border-color: var(--color-accent);
+      background: var(--color-accent);
       color: var(--color-on-accent);
       font-weight: 600;
     }
@@ -309,20 +319,25 @@ import { TourEmbedComponent } from './tour-embed.component';
       white-space: pre-line;
     }
     .panel a {
-      color: var(--brand-secondary);
+      color: var(--color-accent);
     }
   `,
 })
 export class ListingDetailComponent {
   private readonly locale = inject(LocaleService);
+  private readonly currency = inject(CurrencyService);
   private readonly heading = viewChild.required<ElementRef<HTMLElement>>('heading');
 
   readonly listing = input.required<LocalizedListing>();
   /** Back to the result list; the parent restores focus there. */
   readonly close = output();
 
-  /** Formatted for the active locale; follows a language switch. */
-  protected readonly detail = computed(() => toListingDetail(this.listing(), this.locale.active()));
+  /** Formatted for the active locale and display currency; follows a switch of either. */
+  protected readonly detail = computed(() =>
+    toListingDetail(this.listing(), this.locale.active(), { display: this.currency.display() }),
+  );
+  /** Tooltip of converted amounts: approximate, with the date of the static rates. */
+  protected readonly convertedHint = computed(() => ({ date: this.currency.ratesDate() }));
 
   constructor() {
     // Move focus to the title whenever a listing is shown, so screen readers announce it.

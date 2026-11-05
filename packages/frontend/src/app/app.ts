@@ -1,26 +1,31 @@
 import { NgTemplateOutlet } from '@angular/common';
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
 import { RouterLink, RouterOutlet } from '@angular/router';
+import { CurrencySelectComponent } from './currency/currency-select.component';
 import { LanguageSelectComponent } from './locale/language-select.component';
 import { CountrySelectComponent } from './location/country-select.component';
 import { ShellLayout } from './shell/shell-layout.service';
 import { StartupState } from './startup/startup-state';
+import { ThemeSelectComponent } from './theme/theme-select.component';
 import { ThemeService } from './theme/theme.service';
 
 /**
  * Root component: the app shell after a successful start, otherwise only the startup error page.
- * The shell has a fixed background layer (hero image + overlay, darker outside the start page)
- * and a header with brand, an optional page slot (the search card of the start page) and the
- * country/language controls; `ShellLayout` switches between hero, searched and page layout.
+ * The shell has a fixed background layer (hero image + overlay, a calm surface outside the start
+ * page) and a header with brand, an optional page slot (the search card of the start page) and the
+ * country/currency/language/theme controls; `ShellLayout` switches between hero, searched and page
+ * layout.
  */
 @Component({
   selector: 'oe-root',
   imports: [
     CountrySelectComponent,
+    CurrencySelectComponent,
     LanguageSelectComponent,
     NgTemplateOutlet,
     RouterLink,
     RouterOutlet,
+    ThemeSelectComponent,
   ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
@@ -39,7 +44,9 @@ import { ThemeService } from './theme/theme.service';
         </a>
         <div class="site-controls">
           <oe-country-select />
+          <oe-currency-select />
           <oe-language-select />
+          <oe-theme-select />
         </div>
         @if (headerContent(); as content) {
           <div class="site-header-slot">
