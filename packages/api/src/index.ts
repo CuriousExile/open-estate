@@ -5,5 +5,6 @@ export * from './discovery';
 export * from './listings-handler';
 export * from './listings-lambda';
 export * from './listing-detail-handler';
+export * from './locations-handler';
 export * from './observability';
 export * from './router';

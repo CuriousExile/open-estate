@@ -11,6 +11,7 @@ configured taxonomy, languages and bounds. AI agents can use the same functions 
 | `GET`  | `/listings/{id}` | [Get one listing](#get-listingsid) with all offers, media and tours        |
 | `GET`  | `/openapi.json`  | [OpenAPI 3.1 document](#get-openapijson) (machine-readable API schema)     |
 | `GET`  | `/meta`          | [Platform metadata](#get-meta): taxonomy, locales, currency, tours, bounds |
+| `GET`  | `/locations`     | [Countries and cities](#get-locations) that have listings, with counts     |
 | `POST` | `/mcp`           | MCP server (JSON-RPC 2.0), see [mcp.md](mcp.md)                            |
 
 All examples on this page are produced by the real handlers. The test
@@ -48,7 +49,8 @@ curl -sS -H "Authorization: Bearer $API_KEY" "${API_URL}listings?city=Berlin"
 ```
 
 If the key is missing you get `401 API_KEY_MISSING`. If it is unknown, revoked or expired you get
-`401 API_KEY_INVALID`. The discovery endpoints `/openapi.json` and `/meta` need a key too. Operators
+`401 API_KEY_INVALID`. The discovery endpoints `/openapi.json` and `/meta` and the
+`/locations` endpoint need a key too. Operators
 manage keys and the mode with the admin CLI, for example `open-estate-admin create-key` and
 `open-estate-admin set-access-mode api-keys`. The plaintext key is shown once, when it is created.
 Access changes take effect within 60 seconds.
@@ -146,6 +148,7 @@ listings.
 | `areaMax`    | decimal string           | 1.00 – 100000.00 (m²), ≤ 2 fraction digits  | Inclusive upper bound of the living or plot area.                                                |
 | `city`       | string                   | 1 – 200 characters                          | Exact city name, case-insensitive.                                                               |
 | `postalCode` | string                   | 1 – 10 characters                           | Exact postal code.                                                                               |
+| `country`    | string                   | ISO 3166-1 alpha-2, `^[A-Z]{2}$`            | Exact country of the address, for example `DE` or `TH`. See [`/locations`](#get-locations).     |
 | `group`      | taxonomy group code      | exactly 1 code from `/meta`                 | Only listings whose type belongs to this property group. Cannot be combined with `types`.        |
 | `types`      | taxonomy type code, list | 1 – 50 codes from `/meta`                   | Only listings of one of these types (OR). Repeat the parameter: `types=loft&types=penthouse`.    |
 | `hasTour`    | boolean                  | `true`, `false`                             | `true`: only listings with a 3D tour of an allowed tour provider. `false` means no tour filter.   |
@@ -172,6 +175,8 @@ Filter rules:
   including listings that are also for sale.
 - **Tours.** `hasTour=true` checks the tour hosts against the tour-provider allow-list that is
   current when you search (`tourProviders` in `/meta`).
+- **Country.** `country` is an exact, upper-case ISO 3166-1 alpha-2 code (`th` is
+  `400 INVALID_PARAMETER`). `GET /locations` lists the countries that have listings.
 - **Strict parameters.** Unknown parameters are ignored. Repeating a parameter other than `types` or
   `group` is an error for that parameter (for example `INVALID_PARAMETER` or `INVALID_PAGE_SIZE`).
   Every invalid parameter is reported, each in its own error with its `field`, and nothing is
@@ -604,6 +609,41 @@ Vary: Origin
       "pageToken": { "min": 1, "max": 1024 }
     }
   }
+}
+```
+
+## `GET /locations`
+
+Returns every country and every city that has at least one listing in the search, with the number
+of listings. Only publicly visible listings count, exactly as in `GET /listings`. Use it for a
+country selector or a city autocomplete that never offers a choice without results: send `code` as
+`country` and `name` as `city` to `GET /listings`. Cities are listed per country. Spellings that only
+differ in case are merged (the `city` filter matches them all). Countries are ordered by `code`,
+cities by `country` and `name`. The endpoint has no parameters. Clients may cache the answer for
+five minutes (`Cache-Control: private, max-age=300`).
+
+With the DynamoDB search provider, every API instance reads country and city of all public listings
+at most once per five minutes, so new or removed listings can take that long to show up here (see
+[known issues](known-issues.md)).
+
+```sh request:locations
+curl -sS "${API_URL}locations"
+```
+
+```http head:locations
+HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Cache-Control: private, max-age=300
+Vary: Origin
+```
+
+```json response:locations
+{
+  "countries": [{ "code": "DE", "count": 3 }],
+  "cities": [
+    { "name": "Berlin", "country": "DE", "count": 2 },
+    { "name": "Hamburg", "country": "DE", "count": 1 }
+  ]
 }
 ```
 

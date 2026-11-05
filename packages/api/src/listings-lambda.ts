@@ -15,6 +15,7 @@ import {
 import { loadCorsPolicy, NO_CORS, withCors } from './cors';
 import { createDiscoveryHandlers } from './discovery';
 import { createListingDetailHandler } from './listing-detail-handler';
+import { createLocationsHandler } from './locations-handler';
 import {
   createListingsHandler,
   serviceUnavailableResponse,
@@ -35,6 +36,7 @@ export const LISTINGS_ROUTES = {
   detail: '/listings/{id}',
   openapi: '/openapi.json',
   meta: '/meta',
+  locations: '/locations',
 } as const;
 
 /** `endpoint` dimension of every request outside {@link LISTINGS_ROUTES}. */
@@ -120,6 +122,7 @@ export function createListingsRoutes(model: ReadModel): ListingsHandler {
     }),
     [LISTINGS_ROUTES.openapi]: discovery.openapi,
     [LISTINGS_ROUTES.meta]: discovery.meta,
+    [LISTINGS_ROUTES.locations]: createLocationsHandler({ guard, locations: model.locations }),
   });
 }
 

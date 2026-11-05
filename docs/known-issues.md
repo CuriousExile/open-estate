@@ -67,6 +67,20 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 - **CloudWatch reads use `*`** (`GetMetricData`, `ListMetrics`, `DescribeAlarms` have no resource
   scoping).
 
+## Search API
+
+- **`GET /locations` with DynamoDB reads every public listing.** The DynamoDB provider has no
+  index to aggregate on, so a cache miss runs a projection query over the whole `byId` index
+  (country, city and owner only, all pages) — read cost grows linearly with the number of listings,
+  and the scan shares the 4.5 s downstream deadline, so very large tables (≫ 10,000 listings) can answer
+  503. Each Lambda instance caches the rows for 5 minutes (`DYNAMODB_LOCATIONS_CACHE_TTL_MS`);
+  listings published or removed in that time appear late. Suspensions are applied per request.
+  With OpenSearch the endpoint is a single terms aggregation (at most 250 countries and 1,000 cities
+  per country, `OPENSEARCH_LOCATION_LIMITS`).
+- **City names are not translated.** `/locations` and the city filter use the stored
+  `address.city`; "München" and "Munich" are different cities. Country names are localized in the
+  frontend only (`Intl.DisplayNames`).
+
 ## Data and import
 
 - **Usage counting is at-least-once.** If one `ADD` of a batch fails, Lambda retries the whole

@@ -95,6 +95,7 @@ describe('GET /openapi.json document', () => {
     expect(operations.sort()).toEqual([
       'GET /listings',
       'GET /listings/{id}',
+      'GET /locations',
       'GET /meta',
       'GET /openapi.json',
       'POST /mcp',

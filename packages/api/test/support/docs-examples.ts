@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import {
   createAccessGuard,
   createListingService,
+  createLocationService,
   createSearchService,
   hashApiKey,
   InMemoryApiKeyStore,
@@ -12,6 +13,7 @@ import {
   type AccessConfig,
   type AccessGuard,
   type ListingService,
+  type LocationService,
   type SearchService,
 } from '@open-estate/core';
 import {
@@ -27,6 +29,7 @@ import {
   createDiscoveryHandlers,
   createListingDetailHandler,
   createListingsHandler,
+  createLocationsHandler,
   createRouter,
   LISTINGS_ROUTES,
   withCors,
@@ -152,6 +155,7 @@ export interface DocReadModel extends DiscoveryInput {
   guard: AccessGuard;
   search: SearchService;
   listings: ListingService;
+  locations: LocationService;
 }
 
 /** Read model over {@link DOC_LISTINGS}, like `initReadModel` builds it in the Lambdas. */
@@ -180,6 +184,7 @@ export function docReadModel(mode: AccessConfig['mode'] = 'open'): DocReadModel 
       defaultCurrency: DOC_DEFAULT_CURRENCY,
     }),
     listings: createListingService({ provider, taxonomy: DOC_TAXONOMY }),
+    locations: createLocationService({ provider }),
   };
 }
 
@@ -337,6 +342,7 @@ export function docApiHandler(model: DocReadModel): ListingsHandler {
     }),
     [LISTINGS_ROUTES.openapi]: discovery.openapi,
     [LISTINGS_ROUTES.meta]: discovery.meta,
+    [LISTINGS_ROUTES.locations]: createLocationsHandler({ guard, locations: model.locations }),
   });
   return withCors(async () => createCorsPolicy([DOC_FRONTEND_ORIGIN]), router);
 }

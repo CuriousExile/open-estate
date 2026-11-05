@@ -1,4 +1,5 @@
 import type { IncomingMessage, RequestListener, ServerResponse } from 'node:http';
+import { LISTINGS_ROUTES } from '@open-estate/api';
 import {
   fromProxyResult,
   stripPathPrefix,
@@ -11,7 +12,8 @@ import type { DevPlatform } from './platform';
 
 // DEV ONLY: HTTP front of the local demo. Path prefixes stand in for the separate API Gateway
 // APIs of a deployment:
-//   /api/*         Search_API (stage-less paths `/listings`, `/listings/{id}`, `/openapi.json`, `/meta`)
+//   /api/*         Search_API (stage-less paths `/listings`, `/listings/{id}`, `/openapi.json`, `/meta`,
+//                  `/locations`)
 //   /mcp, /api/mcp MCP_Server (Streamable HTTP, `POST`)
 //   /management/*  Management_API (paths without the `/v1` stage)
 //   /oidc/*        local OIDC provider (insecure, replaces Cognito)
@@ -24,7 +26,7 @@ export const PREFIX = {
 } as const;
 
 /** Resource templates of the Search_API (API Gateway routes by template, not by path). */
-export const SEARCH_RESOURCES = ['/listings', '/listings/{id}', '/openapi.json', '/meta'] as const;
+export const SEARCH_RESOURCES: readonly string[] = Object.values(LISTINGS_ROUTES);
 
 const MAX_BODY_BYTES = 1_048_576;
 

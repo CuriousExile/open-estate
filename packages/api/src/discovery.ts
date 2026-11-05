@@ -6,6 +6,7 @@ import {
   formatDecimal,
   LISTING_BOUNDS,
   LocalizedListing,
+  LocationsDocument,
   requestSchemaOverride,
   SEARCH_QUERY_BOUNDS,
   tourHostIndex,
@@ -182,6 +183,7 @@ function componentSchemas(enums: Schemas['enums']) {
     LocalizedListing: LocalizedListingModel,
     SearchPage,
     Meta,
+    Locations: component('Locations', LocationsDocument),
     ErrorResponse,
     ApiError,
     ErrorCode,
@@ -257,6 +259,7 @@ function parameterDocs(input: DiscoveryInput): Record<string, string> {
     areaMax: 'Inclusive upper bound of the living or plot area in m².',
     city: 'Exact city name, case-insensitive.',
     postalCode: 'Exact postal code.',
+    country: 'Country of the address, ISO 3166-1 alpha-2 in upper case (exact match).',
     group: 'Exactly one property group code; cannot be combined with `types`.',
     types: 'Listing type codes (repeat the parameter), OR-combined; not combinable with `group`.',
     hasTour: 'Only listings with at least one 3D tour of an allowed tour provider.',
@@ -363,6 +366,17 @@ function operations(input: DiscoveryInput) {
         ...guardErrors,
       },
     },
+    locations: {
+      operationId: 'getLocations',
+      summary: 'Countries and cities with public listings',
+      description:
+        'Every country and every city (per country) that has at least one public listing, with ' +
+        'the number of listings. Use the values as `country` and `city` in GET /listings.',
+      responses: {
+        200: { description: 'Locations with listing counts.', content: jsonRef('Locations') },
+        ...guardErrors,
+      },
+    },
     mcp: {
       operationId: 'mcp',
       summary: 'MCP server (JSON-RPC 2.0, Streamable HTTP, stateless)',
@@ -408,6 +422,7 @@ export function buildOpenApiDocument(input: DiscoveryInput): OpenApiDocument {
         '/listings/{id}': { get: op.detail },
         '/openapi.json': { get: op.openapi },
         '/meta': { get: op.meta },
+        '/locations': { get: op.locations },
         '/mcp': { post: op.mcp },
       },
       components: {
