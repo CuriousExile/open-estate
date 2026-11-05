@@ -11,7 +11,7 @@
 - **Typography:** large serif display headline with an italic accent line; clean sans-serif for UI text; small, widely letter-spaced uppercase labels.
 - **Surfaces:** frosted-glass cards with subtle borders and blur over imagery; strong corner radius; pill-shaped controls.
 - **Search:** one wide, light, pill-shaped search bar with labelled segments (icon, label, current value) and a round primary search button.
-- **Controls:** segmented pill toggles with a filled active state; outlined pill dropdowns (e.g. language switcher) on dark backgrounds.
+- **Controls:** segmented pill toggles with a filled active state; outlined pill dropdowns on dark backgrounds and in the search bar — one shared native `<select>` style (`.oe-select` in `styles.scss`) for language, country and property group.
 - **Cards:** image tiles with dark gradient overlay, title and meta text bottom-left, round arrow button bottom-right.
 
 These map to the white-label defaults in `theme-config.json` (colors, logo, texts). Anything a deployer should be able to change belongs in the theme config, not in component styles.

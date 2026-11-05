@@ -202,6 +202,15 @@ Texts follow this fallback chain (Req 13.7, 13.8):
 Empty strings count as missing. Each missing (locale, key) pair is logged once:
 `[i18n] missing translation {locale, key}`.
 
+### Country selection
+
+Next to the language selector, the header has a country filter: *All countries* plus every country
+that has public listings (`GET /locations`), with the country names localized by the browser
+(`Intl.DisplayNames`) — no translation keys are needed per country. The choice is stored like the
+language (`localStorage` key `open-estate.country`); a start URL with `?country=<ISO 3166-1
+alpha-2>` preselects a country. A stored country without listings falls back to *All countries*.
+The city autocomplete of the search form suggests only cities of the selected country.
+
 ### Adding a locale
 
 1. Copy `packages/frontend/public/i18n/en.json` to `i18n/<locale>.json` and translate every value,

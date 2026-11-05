@@ -20,7 +20,7 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 
 ## Frontend
 
-- **Bundle size.** The initial bundle is about 650 kB, under the 700 kB warning budget. The main
+- **Bundle size.** The initial bundle is about 665 kB, under the 700 kB warning budget. The main
   parts are Angular (~395 kB incl. router and forms), `angular-auth-oidc-client` (~135 kB) and zod
   (~130 kB). The OIDC client cannot move into the lazy portal chunks: its services are
   `providedIn: 'root'` and need `StsConfigLoader` and the storage/logger tokens at root, and its

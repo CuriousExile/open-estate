@@ -18,7 +18,10 @@ npm run dev          # builds packages/devserver, starts the dev server and ng s
 ```
 
 Open <http://127.0.0.1:4200>. Stop with `Ctrl+C` (stops both processes). State is lost on
-every restart; each start seeds the same demo data again.
+every restart; each start seeds the same demo data again. The dev server is compiled once at
+start (no watch mode): after changing backend code or the seed data
+(`packages/devserver/src/seed/`), restart `npm run dev`. Nothing needs to be deployed for that;
+`ng serve` reloads frontend changes by itself.
 
 `npm run dev:server` starts only the dev server (no Angular, works on Node 20). Environment
 variables: `DEV_PORT` (default `4310`), `DEV_HOST` (loopback addresses only),
@@ -29,7 +32,7 @@ ports.
 | What                 | URL                                                               |
 | -------------------- | ----------------------------------------------------------------- |
 | Frontend (SPA)       | <http://127.0.0.1:4200> (portal: `/portal`)                       |
-| Search API           | `http://127.0.0.1:4310/api` — e.g. `/api/listings`, `/api/openapi.json` |
+| Search API           | `http://127.0.0.1:4310/api` — e.g. `/api/listings`, `/api/locations`, `/api/openapi.json` |
 | MCP endpoint         | `http://127.0.0.1:4310/mcp` (`POST`, Streamable HTTP)             |
 | Management API       | `http://127.0.0.1:4310/management` — e.g. `/management/openapi.json` |
 | OIDC issuer          | `http://127.0.0.1:4310/oidc` (`/.well-known/openid-configuration`) |
@@ -60,11 +63,13 @@ prints the credential of the seeded machine access `CRM-Sync (Demo)` of Nordlich
 
 - 2 agencies, 4 users (above), the taxonomy, tour providers and PII allow-list of
   `packages/shared/src/config/`, locales of `packages/frontend/public/i18n-config.json`.
-- 15 listings (sale and rent, Germany and Austria): manual portal listings with Custom_Ids, a
+- 17 listings (sale and rent, Germany, Austria and Thailand — Bangkok and Pattaya, so the country
+  filter has a second country with listings): manual portal listings with Custom_Ids, a
   price reduction, a restored version and a status toggle; 4 listings of the CRM connector
   `nordlicht-crm` (origin `IMPORT`) with import versions and a portal edit on top (field
   provenance mixes `IMPORT` and `PORTAL`); drafts (`INACTIVE`) and the 3 listings of the suspended
-  agency are not public.
+  agency are not public. Every title starts with `[DEMO]` and every description with a demo
+  marker. Austria only has listings of the suspended agency, so it is not offered as a country.
 - 4 connector runs over the last three weeks (rejections with field names, one `FAILURE`), two
   machine accesses (one revoked), usage counters (detail views, search impressions) for the last
   14 days and the corresponding audit log.
@@ -94,6 +99,10 @@ suspensions and role changes show up quickly.
 
 1. **Public search** — <http://127.0.0.1:4200>: search for `Hamburg` or filter *For rent*; switch
    the language to Deutsch. The listings of the suspended agency and the drafts do not appear.
+   Pick *Thailand* in the country selector (top right, next to the language): the search re-runs
+   with `country=TH`, and the choice is remembered (`localStorage`; `/?country=TH` preselects it).
+   Type `pat` or `lub` into *City*: the suggestions come from `GET /api/locations` and only list
+   cities of the selected country. Rooms take numbers only (`1`, `3.5`).
 2. **Listing detail** — open a result (`/listings/{id}`): offers, key facts, original listing link.
    Images are placeholders on `example.org` and are hidden.
 3. **Portal login** — open <http://127.0.0.1:4200/portal>, pick **Anna Albers**.
