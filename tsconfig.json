@@ -6,6 +6,7 @@
     { "path": "packages/api" },
     { "path": "packages/mcp" },
     { "path": "packages/admin" },
+    { "path": "packages/management" },
     { "path": "packages/ingestion" },
     { "path": "packages/infra" },
     { "path": "packages/loadtest" }

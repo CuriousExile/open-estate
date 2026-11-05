@@ -1,0 +1,23 @@
+{
+  "name": "@open-estate/management",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Management_API Lambda adapter",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "3.1162.0",
+    "@aws-sdk/client-ssm": "3.1162.0",
+    "@aws-sdk/lib-dynamodb": "3.1162.0",
+    "@open-estate/core": "0.0.0",
+    "@open-estate/shared": "0.0.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "8.10.164"
+  }
+}
