@@ -20,8 +20,9 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 
 ## Frontend
 
-- **Bundle size.** The initial bundle is about 680 kB, under the 700 kB warning budget (the
-  listing detail view and the "More filters" sheet are lazy chunks). The main
+- **Bundle size.** The initial bundle is about 693 kB, under the 700 kB warning budget (the
+  listing detail view and the "More filters" sheet are lazy chunks; the image carousel of the
+  result cards is not). The main
   parts are Angular (~395 kB incl. router and forms), `angular-auth-oidc-client` (~135 kB) and zod
   (~130 kB). The OIDC client cannot move into the lazy portal chunks: its services are
   `providedIn: 'root'` and need `StsConfigLoader` and the storage/logger tokens at root, and its
@@ -43,6 +44,18 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 - **`toPublicDetailModel`** lives in the workspace folder and mirrors the Search_API's
   serialization. If the Search_API changes how it picks the language version, the preview drifts
   silently; property test 14.6 is not written yet.
+- **Hidden detail fields are not configurable yet.** The public detail view hides coordinates,
+  languages, listing ID, source, import time and run ID (`DETAIL_ROWS_HIDDEN_BY_DEFAULT` in
+  `listing-detail-model.ts`; `toListingDetail` accepts `showRows` to switch single rows on). An
+  agency setting that chooses the visible fields is still to be designed: where it is stored
+  (agency record, Management API, portal page), and whether the Search_API and MCP_Server should
+  omit hidden fields too. Today they are only hidden in the SPA and still in the API response.
+- **No browser test of `oe-image-carousel`.** Its model (index wrapping, swipe threshold, which
+  images load, placeholder fallback) is unit-tested; swipe, keyboard and screen reader behaviour
+  were checked in headless Chromium only.
+- **Opened listing in the URL.** A listing opened from the results is `&listing=<id>` on the search
+  URL; on a reload it is fetched from the Search_API. If that fails (unknown, no longer public,
+  network), the parameter is dropped and the results show, without a notice.
 
 ## Management API
 
@@ -71,6 +84,12 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 - **CSP is broad.** `connect-src` allows `https://*.execute-api.<region>.<suffix>`, i.e. every API
   Gateway in the region, because the FrontendStack is deployed before the Management_API exists. A
   custom domain for the Management_API would allow an exact origin.
+- **`img-src 'self' https:` on purpose.** Listing media are hosted by agencies and connectors on
+  any https host (Req 16.1), so the CSP cannot list them; `img-src 'self'` alone would block every
+  real listing image. Plain `http:` and `data:` stay blocked (the image placeholder is inline SVG
+  markup, not a data URL); a test pins the directive. To narrow it, platform-hosted media are the
+  way: copy imported images into an S3 bucket behind the CloudFront distribution (resizing and
+  variants at the same time) and allow only that origin. Planned for later, not designed yet.
 - **CORS lives in an infra wrapper** (`infra/src/lambda/management-cors.ts`) around the management
   handler, not in `packages/management`.
 - **`runtime-config.json` is written by the ManagementStack**, not the FrontendStack. Deploying the

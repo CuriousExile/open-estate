@@ -37,11 +37,31 @@ ports.
 | Management API       | `http://127.0.0.1:4310/management` — e.g. `/management/openapi.json` |
 | OIDC issuer          | `http://127.0.0.1:4310/oidc` (`/.well-known/openid-configuration`) |
 | Overview             | `http://127.0.0.1:4310/` (JSON with URLs and users)               |
+| Demo images          | `http://127.0.0.1:4310/demo-media/…` (see [Demo images](#demo-images)) |
 
-The SPA reaches `/api` and `/management` through the `ng serve` proxy
+The SPA reaches `/api`, `/management` and `/demo-media` through the `ng serve` proxy
 (`packages/frontend/dev/proxy.local.json`); its `runtime-config.json` comes from
 `packages/frontend/dev/` via the `local` build configuration, the deployed
 `public/runtime-config.json` stays untouched.
+
+### Demo images
+
+Listing media must be `https://` URLs, so the seed stores them under the reserved host
+`https://demo-media.localhost/…`. The dev server serves them at `/demo-media/…` and rewrites that
+origin in Search API and MCP responses to `http://127.0.0.1:4200/demo-media/…` (through the
+proxy, i.e. same-origin for the SPA). Two kinds exist, both made in this repository, nothing is
+downloaded:
+
+- `/demo-media/art/<scene>-<time>-<palette>.svg` — generated illustrations
+  (`packages/devserver/src/media/illustrations.ts`; scenes `house`, `townhouses`, `apartment`,
+  `villa`, `loft`, `chalet`, `tower`, `interior`; times `day`, `golden`, `dusk`, `night`).
+- `/demo-media/photos/<name>.webp` — crops of `packages/frontend/public/hero-background.png`
+  (`packages/devserver/media/photos/`).
+
+On purpose, Rostock (sale) has no images and München-Schwabing (rent) a broken image URL, so the
+placeholder shows. Management API responses keep the stored `https://demo-media.localhost` URLs
+(the portal validates them with the listing schema), so images in the portal's public preview show
+the placeholder.
 
 ## Demo users and login
 
