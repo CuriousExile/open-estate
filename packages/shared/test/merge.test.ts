@@ -87,11 +87,20 @@ describe('mergeImport creation (Req 12.8)', () => {
 });
 
 describe('resolveImportMode (Req 12.16)', () => {
-  it('prefers configuration, then module default, then MERGE', () => {
-    expect(resolveImportMode({ importMode: 'MERGE' }, { defaultImportMode: 'REPLACE' })).toBe(
-      'MERGE',
-    );
-    expect(resolveImportMode({}, { defaultImportMode: 'REPLACE' })).toBe('REPLACE');
-    expect(resolveImportMode({}, {})).toBe('MERGE');
+  // Configuration wins, then the module default, then MERGE — all nine combinations.
+  it.each([
+    ['MERGE', 'MERGE', 'MERGE'],
+    ['MERGE', 'REPLACE', 'MERGE'],
+    ['MERGE', undefined, 'MERGE'],
+    ['REPLACE', 'MERGE', 'REPLACE'],
+    ['REPLACE', 'REPLACE', 'REPLACE'],
+    ['REPLACE', undefined, 'REPLACE'],
+    [undefined, 'MERGE', 'MERGE'],
+    [undefined, 'REPLACE', 'REPLACE'],
+    [undefined, undefined, 'MERGE'],
+  ] as const)('config %s + module default %s -> %s', (importMode, defaultImportMode, expected) => {
+    const config = importMode === undefined ? {} : { importMode };
+    const moduleSettings = defaultImportMode === undefined ? {} : { defaultImportMode };
+    expect(resolveImportMode(config, moduleSettings)).toBe(expected);
   });
 });
