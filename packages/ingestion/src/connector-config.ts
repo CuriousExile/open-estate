@@ -1,3 +1,4 @@
+import { EntityId, ImportModeSchema } from '@open-estate/shared';
 import { z } from 'zod';
 import { CONNECTOR_TYPES } from './connector';
 
@@ -58,6 +59,10 @@ export const connectorConfigSchema = z.strictObject({
     .string()
     .regex(SECRET_REF, 'must be a Secrets Manager secret name or ARN')
     .optional(),
+  /** Owning agency (Req 12.1); without it, the connector's listings are admin-managed only. */
+  agencyId: EntityId.optional(),
+  /** Takes precedence over the module's `defaultImportMode`; fallback `MERGE` (Req 12.16). */
+  importMode: ImportModeSchema.optional(),
 });
 
 export type ConnectorConfig = z.output<typeof connectorConfigSchema>;

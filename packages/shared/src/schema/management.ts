@@ -6,6 +6,7 @@ import {
   AGENCY_STATES,
   CHANGE_TYPES,
   CHANNELS,
+  IMPORT_MODES,
   LISTING_STATUSES,
   ORIGINS,
   PERMISSIONS,
@@ -73,6 +74,7 @@ export const ListingStatusSchema = z.enum(LISTING_STATUSES);
 export const ChannelSchema = z.enum(CHANNELS);
 export const OriginSchema = z.enum(ORIGINS);
 export const ChangeTypeSchema = z.enum(CHANGE_TYPES);
+export const ImportModeSchema = z.enum(IMPORT_MODES);
 export const AgencyStateSchema = z.enum(AGENCY_STATES);
 export const AgencyRoleSchema = z.enum(AGENCY_ROLES);
 export const RoleSchema = z.enum(ROLES);

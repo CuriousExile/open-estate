@@ -165,6 +165,8 @@ export function externalApiModule(deps: ExternalApiDeps): ConnectorModule<Extern
     name: EXTERNAL_API_MODULE,
     type: 'external-api',
     settingsSchema: externalApiSettingsSchema,
+    /** Full record per listing: a field dropped at the source must disappear (Req 12.17). */
+    defaultImportMode: 'REPLACE',
     create: () => new ExternalApiConnector(deps),
   };
 }

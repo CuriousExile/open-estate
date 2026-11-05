@@ -42,6 +42,16 @@ describe('connectorsFileSchema', () => {
     expect(parsed[2]?.settings).toEqual({});
   });
 
+  it('accepts an optional agencyId and importMode (Req 12.1, 12.16)', () => {
+    const [withBoth, without] = connectorsFileSchema.parse([
+      entry({ agencyId: 'agency-1', importMode: 'MERGE' }),
+      entry({ id: 'other' }),
+    ]);
+    expect(withBoth).toMatchObject({ agencyId: 'agency-1', importMode: 'MERGE' });
+    expect(without).not.toHaveProperty('agencyId');
+    expect(without).not.toHaveProperty('importMode');
+  });
+
   it('accepts an empty file', () => {
     expect(connectorsFileSchema.parse([])).toEqual([]);
   });
@@ -60,6 +70,8 @@ describe('connectorsFileSchema', () => {
     ['module', { module: '../../evil.js' }],
     ['enabled', { enabled: 'yes' }],
     ['secretRef', { secretRef: '' }],
+    ['agencyId', { agencyId: '' }],
+    ['importMode', { importMode: 'APPEND' }],
   ])('rejects invalid %s', (path, overrides) => {
     expect(issuePaths([entry(overrides)])).toEqual([`0.${path}`]);
   });

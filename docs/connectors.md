@@ -79,6 +79,8 @@ are already stored.
 | `timeoutSeconds` | no       | Run time limit, 1–900 (Lambda maximum). Default `300`.                                                                                                                                      |
 | `settings`       | no       | Module-specific settings. Default `{}`. Validated against the module's `settingsSchema` at the start of every run, not at synth.                                                            |
 | `secretRef`      | no       | Secrets Manager secret name or ARN. The connector Lambda may read only this secret.                                                                                                         |
+| `agencyId`       | no       | Id of the owning agency. Without it, the connector's listings are managed by platform admins only.                                                                                          |
+| `importMode`     | no       | `MERGE` (overwrite only delivered fields) or `REPLACE` (replace the whole content). Default: the module's `defaultImportMode`, otherwise `MERGE`. The built-in modules default to `REPLACE`. |
 
 Unknown keys are rejected. `cdk synth` / `cdk deploy` validates the whole file (field rules,
 duplicate ids, schedule syntax) and fails with every problem listed. Module settings are checked
@@ -349,6 +351,7 @@ interface ConnectorModule<TSettings = unknown> {
   readonly name: string; // referenced by connectors.json → module
   readonly type: ConnectorType;
   readonly settingsSchema: ZodType<TSettings>;
+  readonly defaultImportMode?: ImportMode; // used when connectors.json sets no importMode
   create(): Connector<TSettings>; // fresh instance per run
 }
 ```

@@ -181,6 +181,8 @@ export function relationalDbModule(deps: RelationalDbDeps): ConnectorModule<Rela
     name: RELATIONAL_DB_MODULE,
     type: 'relational-db',
     settingsSchema: relationalDbSettingsSchema,
+    /** Full record per listing: a field dropped at the source must disappear (Req 12.17). */
+    defaultImportMode: 'REPLACE',
     create: () => new RelationalDbConnector(deps),
   };
 }

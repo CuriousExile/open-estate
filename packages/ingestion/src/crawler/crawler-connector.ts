@@ -216,6 +216,8 @@ export function createWebCrawlerModule(
     name: WEB_CRAWLER_MODULE_NAME,
     type: 'web-crawler',
     settingsSchema: settingsSchemaFor(names),
+    /** Full record per listing: a field dropped at the source must disappear (Req 12.17). */
+    defaultImportMode: 'REPLACE',
     create: () => new WebCrawlerConnector(options, extractors),
   };
 }

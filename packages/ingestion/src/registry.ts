@@ -1,4 +1,4 @@
-import { err, ok, type Result } from '@open-estate/shared';
+import { err, ok, type ImportMode, type Result } from '@open-estate/shared';
 import type { ZodType } from 'zod';
 import type { Connector, ConnectorType } from './connector';
 import type { ConnectorConfig } from './connector-config';
@@ -12,6 +12,8 @@ export interface ConnectorModule<TSettings = unknown> {
   readonly name: string;
   readonly type: ConnectorType;
   readonly settingsSchema: ZodType<TSettings>;
+  /** Used when the config sets no `importMode`; absent → `MERGE` (Req 12.16, 12.17). */
+  readonly defaultImportMode?: ImportMode;
   /** Fresh instance per run; connectors keep per-run state (status counters). */
   create(): Connector<TSettings>;
 }
