@@ -1,4 +1,18 @@
-import { ListingBase, type Listing } from '@open-estate/shared';
+import {
+  CustomId,
+  EntityId,
+  FieldSourcesSchema,
+  IsoDateTime,
+  ListingBase,
+  ListingStatusSchema,
+  OriginSchema,
+  VersionNumber,
+  type FieldSources,
+  type Listing,
+  type ListingStatus,
+  type Origin,
+} from '@open-estate/shared';
+import { z } from 'zod';
 import { toSearchDocument, type SearchDocument } from './search-document';
 
 // Key layout of the `Listings` table shared by infra (DataStack), writers (seed, indexer) and the
@@ -50,4 +64,69 @@ export function fromListingItem(item: Record<string, unknown>): Listing {
   return Object.fromEntries(
     Object.entries(item).filter(([key]) => LISTING_KEYS.has(key)),
   ) as Listing;
+}
+
+// Management attributes of a `Listings` item (design: "DynamoDB-Tabellen", listing management).
+// They are stored next to the listing but are not part of the `Listing` schema: Search_API and MCP
+// never see them because `fromListingItem` keeps only the listing's own attributes.
+
+/** Verwaltungsdaten of a listing: status, owner, origin, Custom_Id, version, hash, Feldherkunft. */
+export interface ListingManagement {
+  status: ListingStatus;
+  agencyId?: string;
+  origin: Origin;
+  customId?: string;
+  /** Current version number; condition attribute of optimistic concurrency (Req 4.8). */
+  version: number;
+  /** Inhalts_Hash of the current Listing_Inhalt (`contentHash` from `shared`). */
+  contentHash: string;
+  /** Keys = `contentPaths(content)` after every write (Req 7.2). */
+  fieldSources: FieldSources;
+  /** ISO-8601 with offset; time of the current version. */
+  updatedAt: string;
+}
+
+export const listingManagementSchema = z.object({
+  status: ListingStatusSchema,
+  agencyId: EntityId.optional(),
+  origin: OriginSchema,
+  customId: CustomId.optional(),
+  version: VersionNumber,
+  contentHash: z.string().regex(/^[0-9a-f]{64}$/),
+  fieldSources: FieldSourcesSchema,
+  updatedAt: IsoDateTime,
+});
+
+/** Stored item of a managed listing: listing item plus {@link ListingManagement}. */
+export type ManagedListingItem = ListingItem & ListingManagement;
+
+// Management attributes must not collide with listing or search attributes, otherwise one would
+// overwrite the other in the flat item (compile-time check like `sharedKeysAreKnown`).
+const managementKeysAreDisjoint: [keyof ListingManagement & keyof ListingItem] extends [never]
+  ? true
+  : never = true;
+void managementKeysAreDisjoint;
+
+/** Item layout of a managed listing; `gsiPk` and search fields come from {@link toListingItem}. */
+export function toManagedListingItem(
+  listing: Listing,
+  management: ListingManagement,
+): ManagedListingItem {
+  const attributes: Partial<ListingManagement> = { ...management };
+  // Absent optional attributes are omitted instead of being written as `undefined`.
+  if (attributes.agencyId === undefined) delete attributes.agencyId;
+  if (attributes.customId === undefined) delete attributes.customId;
+  return { ...toListingItem(listing), ...(attributes as ListingManagement) };
+}
+
+/**
+ * Splits a stored item into the public listing (as {@link fromListingItem}) and its validated
+ * management attributes; malformed management data throws instead of being guessed.
+ */
+export function fromManagedListingItem(item: object): {
+  listing: Listing;
+  management: ListingManagement;
+} {
+  const management = listingManagementSchema.parse(item) as ListingManagement;
+  return { listing: fromListingItem(item as Record<string, unknown>), management };
 }
