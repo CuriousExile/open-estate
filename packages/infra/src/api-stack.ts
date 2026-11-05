@@ -230,7 +230,7 @@ export class ApiStack extends Stack {
     }
 
     this.listingsFunction = readModelFunction(this, 'ListingsFunction', {
-      description: 'Search_API GET /listings, /listings/{id}, /openapi.json, /meta',
+      description: 'Search_API GET /listings, /listings/{id}, /openapi.json, /meta, /locations',
       packageDir: API_PACKAGE,
       entry: 'src/listings.ts',
       memorySize: 512,

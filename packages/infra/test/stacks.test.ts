@@ -995,6 +995,17 @@ describe.each([
     }
   });
 
+  it('serves GET/OPTIONS /locations from the Listings Lambda like the other read routes', () => {
+    const locations = methods.filter((m) => pathOf(m['ResourceId']) === '/locations');
+    expect(locations.map((m) => m['HttpMethod']).sort()).toEqual(['GET', 'OPTIONS']);
+    for (const method of locations) {
+      expect(method).toMatchObject({ AuthorizationType: 'NONE' });
+      expect(JSON.stringify(method['Integration'])).toContain(
+        functionId('ListingsFunction') as string,
+      );
+    }
+  });
+
   it('does not validate requests at the gateway: Lambda Zod schema is the only source (Req 3.4)', () => {
     t.api.resourceCountIs('AWS::ApiGateway::RequestValidator', 0);
     t.api.resourceCountIs('AWS::ApiGateway::Model', 0);
