@@ -1,5 +1,6 @@
 // Framework-free validation of the search form (design: SearchFormComponent; Req 4.7, 7.1, 7.2,
-// 12.10). Uses `parseSearchQuery` from `shared`, i.e. exactly the rules of Search_API and MCP_Server.
+// 12.10). Uses `parseSearchQuery` from `shared`, i.e. exactly the rules of Search_API and MCP_Server,
+// plus two frontend-only rules: the offer type is mandatory and a room count starts at 1.
 import {
   LISTING_BOUNDS,
   MINOR_UNIT_SCALE,
@@ -16,7 +17,6 @@ import { FALLBACK_SEARCH_META, type SearchMeta } from './search-meta';
 export const SEARCH_FORM_FIELDS = [
   'offerType',
   'city',
-  'postalCode',
   'priceMin',
   'priceMax',
   'roomsMin',
@@ -24,7 +24,6 @@ export const SEARCH_FORM_FIELDS = [
   'areaMin',
   'areaMax',
   'group',
-  'types',
   'hasTour',
 ] as const;
 export type SearchFormField = (typeof SEARCH_FORM_FIELDS)[number];
@@ -40,10 +39,8 @@ export interface SearchFormValues {
   areaMin: string;
   areaMax: string;
   city: string;
-  postalCode: string;
-  /** Group code or `''`; mutually exclusive with `types`. */
+  /** Group code or `''`. */
   group: string;
-  types: readonly string[];
   hasTour: boolean;
 }
 
@@ -57,9 +54,7 @@ export const INITIAL_SEARCH_FORM_VALUES: SearchFormValues = {
   areaMin: '',
   areaMax: '',
   city: '',
-  postalCode: '',
   group: '',
-  types: [],
   hasTour: false,
 };
 
@@ -82,12 +77,20 @@ const DECIMAL_FIELDS = [
   'areaMax',
 ] as const;
 
+export const ROOM_FIELDS = ['roomsMin', 'roomsMax'] as const;
+
+/**
+ * Lowest room count of the search form. The API accepts 0 (e.g. plots); a room filter below one
+ * room is meaningless for a person searching, so the form starts at 1 (frontend-only rule).
+ */
+export const SEARCH_FORM_ROOMS_MIN = 1;
+
 const B = LISTING_BOUNDS;
 const PRICE_PARAMS = {
   min: B.money.minMinor / MINOR_UNIT_SCALE,
   max: B.money.maxMinor / MINOR_UNIT_SCALE,
 };
-const ROOMS_PARAMS = { min: B.rooms.min, max: B.rooms.max, step: B.rooms.step };
+export const ROOMS_PARAMS = { min: SEARCH_FORM_ROOMS_MIN, max: B.rooms.max, step: B.rooms.step };
 const AREA_PARAMS = {
   min: B.area.minMinor / MINOR_UNIT_SCALE,
   max: B.area.maxMinor / MINOR_UNIT_SCALE,
@@ -110,20 +113,19 @@ function toRawQuery(values: SearchFormValues): SearchParams {
     if (value !== '') query[field] = value;
   }
   if (values.city !== '') query.city = values.city;
-  if (values.postalCode !== '') query.postalCode = values.postalCode;
   if (values.group !== '') query.group = values.group;
-  if (values.types.length > 0) query.types = [...values.types];
   if (values.hasTour) query.hasTour = true;
   return query;
 }
 
 const FIELD_SET: ReadonlySet<string> = new Set(SEARCH_FORM_FIELDS);
 
-/** Form field of an API error; `group,types` (conflict) is reported on `types`. */
+/** Form field of an API error. */
 function formField(error: ApiError): SearchFormField {
-  const field = error.field === 'group,types' ? 'types' : error.field;
   // Only form fields are sent, so every schema issue belongs to one of them.
-  return field !== undefined && FIELD_SET.has(field) ? (field as SearchFormField) : 'offerType';
+  return error.field !== undefined && FIELD_SET.has(error.field)
+    ? (error.field as SearchFormField)
+    : 'offerType';
 }
 
 function invalidValueMessage(field: SearchFormField): Omit<SearchFormError, 'field'> {
@@ -139,8 +141,6 @@ function invalidValueMessage(field: SearchFormField): Omit<SearchFormError, 'fie
       return { messageKey: 'search.error.area', params: AREA_PARAMS };
     case 'city':
       return { messageKey: 'search.error.text', params: { max: B.city.max } };
-    case 'postalCode':
-      return { messageKey: 'search.error.text', params: { max: B.postalCode.max } };
     default:
       return { messageKey: 'search.error.invalid' };
   }
@@ -154,16 +154,10 @@ function toFormError(error: ApiError): SearchFormError {
       return { field: 'offerType', messageKey: 'search.error.offerType' };
     case 'INVALID_RANGE':
       return { field, messageKey: 'search.error.range' };
-    case 'CONFLICTING_FILTERS':
-      return { field, messageKey: 'search.error.conflict' };
     case 'UNKNOWN_TAXONOMY_CODE':
       return { field, messageKey: 'search.error.unknownCode' };
     case 'INVALID_FILTER_COUNT':
-      return {
-        field,
-        messageKey: 'search.error.count',
-        params: SEARCH_QUERY_BOUNDS[field === 'group' ? 'group' : 'types'],
-      };
+      return { field, messageKey: 'search.error.count', params: SEARCH_QUERY_BOUNDS.group };
     default:
       return { field, ...invalidValueMessage(field) };
   }
@@ -177,10 +171,24 @@ function byField(errors: readonly SearchFormError[]): SearchFormError[] {
 }
 
 /**
+ * Room fields below {@link SEARCH_FORM_ROOMS_MIN} that the schema accepted on their own (fields
+ * with a schema error keep that error).
+ */
+export function roomsBelowFormMinimum(
+  values: Pick<SearchFormValues, (typeof ROOM_FIELDS)[number]>,
+  schemaErrorFields: ReadonlySet<string>,
+): (typeof ROOM_FIELDS)[number][] {
+  return ROOM_FIELDS.filter((field) => {
+    const value = normalizeDecimal(values[field]);
+    return value !== '' && !schemaErrorFields.has(field) && Number(value) < SEARCH_FORM_ROOMS_MIN;
+  });
+}
+
+/**
  * Validates the form before any API call (Req 7.2): returns the `SearchParams` to send, or the
  * invalid fields with message keys. Rules are those of the shared `SearchQuery` schema (Req 4.7) —
- * bounds from `LISTING_BOUNDS`, rooms in steps of 0.5, Min ≤ Max, known taxonomy codes, group XOR
- * types — plus the mandatory offer type `SALE`|`RENT` (Req 12.10). `values` is never modified.
+ * bounds from `LISTING_BOUNDS`, rooms in steps of 0.5, Min ≤ Max, known taxonomy codes — plus the
+ * mandatory offer type `SALE`|`RENT` (Req 12.10) and at least one room. `values` is never modified.
  */
 export function validateSearchForm(
   values: SearchFormValues,
@@ -192,6 +200,10 @@ export function validateSearchForm(
     errors.push({ field: 'offerType', messageKey: 'search.error.offerType' });
   }
   const parsed = parseSearchQuery({ ...query }, meta.schemas);
-  if (!parsed.ok) errors.push(...parsed.error.map(toFormError));
+  const schemaErrors = parsed.ok ? [] : parsed.error.map(toFormError);
+  errors.push(...schemaErrors);
+  for (const field of roomsBelowFormMinimum(values, new Set(schemaErrors.map((e) => e.field)))) {
+    errors.push({ field, messageKey: 'search.error.rooms', params: ROOMS_PARAMS });
+  }
   return errors.length > 0 ? { errors: byField(errors) } : { params: query };
 }

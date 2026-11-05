@@ -1,8 +1,11 @@
-import { DEFAULT_TAXONOMY_CONFIG, LISTING_BOUNDS, SEARCH_QUERY_BOUNDS } from '@open-estate/shared';
+import { DEFAULT_TAXONOMY_CONFIG, LISTING_BOUNDS } from '@open-estate/shared';
 import { FALLBACK_SEARCH_META, parseSearchMeta } from '../src/app/search/search-meta';
 import {
   INITIAL_SEARCH_FORM_VALUES,
   normalizeDecimal,
+  ROOMS_PARAMS,
+  SEARCH_FORM_FIELDS,
+  SEARCH_FORM_ROOMS_MIN,
   validateSearchForm,
   type SearchFormValues,
 } from '../src/app/search/validate-search-form';
@@ -47,8 +50,7 @@ describe('validateSearchForm', () => {
         areaMin: '40',
         areaMax: '120.25',
         city: 'Berlin',
-        postalCode: '10115',
-        types: ['loft', 'villa'],
+        group: 'house',
         hasTour: true,
       }),
       META,
@@ -62,8 +64,7 @@ describe('validateSearchForm', () => {
         areaMin: '40',
         areaMax: '120.25',
         city: 'Berlin',
-        postalCode: '10115',
-        types: ['loft', 'villa'],
+        group: 'house',
         hasTour: true,
       },
     });
@@ -80,7 +81,7 @@ describe('validateSearchForm', () => {
     ['priceMax', String(LISTING_BOUNDS.money.maxMinor / 100), '1000000000'],
     ['areaMin', String(LISTING_BOUNDS.area.minMinor / 100), '0.99'],
     ['areaMax', String(LISTING_BOUNDS.area.maxMinor / 100), '100000.01'],
-    ['roomsMin', String(LISTING_BOUNDS.rooms.min), '-0.5'],
+    ['roomsMin', String(SEARCH_FORM_ROOMS_MIN), '0.5'],
     ['roomsMax', String(LISTING_BOUNDS.rooms.max), '100'],
   ] as const)(
     'accepts the bound of %s and rejects the value beyond it',
@@ -90,6 +91,14 @@ describe('validateSearchForm', () => {
     },
   );
 
+  it('starts the room filter at one room, also for the maximum (frontend-only rule)', () => {
+    const tooFew = { field: 'roomsMax', messageKey: 'search.error.rooms', params: ROOMS_PARAMS };
+    expect(validateSearchForm(form({ roomsMax: '0' }), META)).toEqual({ errors: [tooFew] });
+    expect(ROOMS_PARAMS).toEqual({ min: 1, max: 99.5, step: 0.5 });
+    // A schema error on the field wins over the room rule.
+    expect(errorFields(form({ roomsMin: '-1' }))).toEqual(['roomsMin']);
+  });
+
   it('accepts rooms only in steps of 0.5', () => {
     expect(errorFields(form({ roomsMin: '2.5', roomsMax: '3' }))).toEqual([]);
     const result = validateSearchForm(form({ roomsMin: '2.25' }), META);
@@ -98,7 +107,7 @@ describe('validateSearchForm', () => {
         {
           field: 'roomsMin',
           messageKey: 'search.error.rooms',
-          params: { min: 0, max: 99.5, step: 0.5 },
+          params: { min: 1, max: 99.5, step: 0.5 },
         },
       ],
     });
@@ -114,10 +123,9 @@ describe('validateSearchForm', () => {
       errorFields(
         form({
           city: 'x'.repeat(LISTING_BOUNDS.city.max + 1),
-          postalCode: '1'.repeat(LISTING_BOUNDS.postalCode.max + 1),
         }),
       ),
-    ).toEqual(['city', 'postalCode']);
+    ).toEqual(['city']);
   });
 
   it.each([
@@ -139,26 +147,25 @@ describe('validateSearchForm', () => {
     ).toEqual(['offerType', 'priceMin', 'roomsMin', 'areaMax']);
   });
 
-  it('accepts a group or types from /meta, but not both', () => {
+  it('accepts a group from /meta', () => {
     expect(validateSearchForm(form({ group: 'house' }), META)).toEqual({
       params: { offerType: 'SALE', group: 'house' },
     });
-    expect(validateSearchForm(form({ group: 'house', types: ['villa'] }), META)).toEqual({
-      errors: [{ field: 'types', messageKey: 'search.error.conflict' }],
-    });
   });
 
-  it('rejects unknown taxonomy codes and too many types', () => {
-    expect(errorFields(form({ group: 'castle' }))).toEqual(['group']);
-    expect(errorFields(form({ types: ['loft', 'castle'] }))).toEqual(['types']);
-    const many = Array.from({ length: SEARCH_QUERY_BOUNDS.types.max + 1 }, () => 'loft');
-    expect(validateSearchForm(form({ types: many }), META)).toEqual({
-      errors: [{ field: 'types', messageKey: 'search.error.count', params: { min: 1, max: 50 } }],
+  it('has no property-type field any more (only the group stays in the form)', () => {
+    expect(SEARCH_FORM_FIELDS).not.toContain('types');
+    expect(Object.keys(INITIAL_SEARCH_FORM_VALUES)).not.toContain('types');
+  });
+
+  it('rejects unknown taxonomy codes', () => {
+    expect(validateSearchForm(form({ group: 'castle' }), META)).toEqual({
+      errors: [{ field: 'group', messageKey: 'search.error.unknownCode' }],
     });
   });
 
   it('never modifies the form values', () => {
-    const values = form({ priceMin: ' 1,5 ', types: ['loft'], roomsMin: 'x' });
+    const values = form({ priceMin: ' 1,5 ', group: 'house', roomsMin: 'x' });
     const copy = structuredClone(values);
     validateSearchForm(values, META);
     expect(values).toEqual(copy);

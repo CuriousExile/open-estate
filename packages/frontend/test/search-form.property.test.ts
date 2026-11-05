@@ -6,6 +6,7 @@ import { parseSearchMeta } from '../src/app/search/search-meta';
 import {
   normalizeDecimal,
   SEARCH_FORM_FIELDS,
+  SEARCH_FORM_ROOMS_MIN,
   validateSearchForm,
   type SearchFormField,
   type SearchFormValues,
@@ -25,7 +26,8 @@ import {
  * else ("1.250,50", "1e3", "+1", …) is left to the schema on both sides.
  *
  * `offerType` is always `SALE`/`RENT`: the control is non-nullable with radio buttons (Req 12.10);
- * the frontend-only "offer type required" rule is covered by the unit tests. `SearchFormComponent`
+ * the frontend-only "offer type required" rule is covered by the unit tests. The other
+ * frontend-only rule — a room bound of at least `SEARCH_FORM_ROOMS_MIN` — is part of the oracle. `SearchFormComponent`
  * itself needs Angular; `submit` below mirrors its logic (validate → emit only on success) with a
  * fake `emit` standing in for the `search` output that triggers the API call.
  *
@@ -128,36 +130,24 @@ const boundedText = (max: number) =>
     { arbitrary: fc.constantFrom(' ', 'x'.repeat(max), 'x'.repeat(max + 1)), weight: 1 },
   );
 
-/** Types come from checkboxes, so no duplicates; `castle` is unknown to the taxonomy. */
-const typeSelection = fc.uniqueArray(fc.constantFrom('loft', 'penthouse', 'villa', 'castle'), {
-  minLength: 1,
-  maxLength: 4,
-});
-const groupCode = fc.constantFrom('apartment', 'house', 'castle');
-
-/** Group XOR types as in the UI, plus programmatic states with both. */
+/** Group selection; `castle` is unknown to the taxonomy. */
 const taxonomyFilter = fc.oneof(
-  { arbitrary: fc.constant({ group: '', types: [] as string[] }), weight: 3 },
-  { arbitrary: groupCode.map((group) => ({ group, types: [] as string[] })), weight: 2 },
-  { arbitrary: typeSelection.map((types) => ({ group: '', types })), weight: 2 },
-  { arbitrary: fc.record({ group: groupCode, types: typeSelection }), weight: 1 },
+  { arbitrary: fc.constant(''), weight: 3 },
+  { arbitrary: fc.constantFrom('apartment', 'house', 'castle'), weight: 2 },
 );
 
-const formValues: fc.Arbitrary<SearchFormValues> = fc
-  .record({
-    offerType: fc.constantFrom('SALE' as const, 'RENT' as const),
-    priceMin: decimalInput('price'),
-    priceMax: decimalInput('price'),
-    roomsMin: decimalInput('rooms'),
-    roomsMax: decimalInput('rooms'),
-    areaMin: decimalInput('area'),
-    areaMax: decimalInput('area'),
-    city: boundedText(LISTING_BOUNDS.city.max),
-    postalCode: boundedText(LISTING_BOUNDS.postalCode.max),
-    taxonomy: taxonomyFilter,
-    hasTour: fc.boolean(),
-  })
-  .map(({ taxonomy, ...rest }) => ({ ...rest, ...taxonomy }));
+const formValues: fc.Arbitrary<SearchFormValues> = fc.record({
+  offerType: fc.constantFrom('SALE' as const, 'RENT' as const),
+  priceMin: decimalInput('price'),
+  priceMax: decimalInput('price'),
+  roomsMin: decimalInput('rooms'),
+  roomsMax: decimalInput('rooms'),
+  areaMin: decimalInput('area'),
+  areaMax: decimalInput('area'),
+  city: boundedText(LISTING_BOUNDS.city.max),
+  group: taxonomyFilter,
+  hasTour: fc.boolean(),
+});
 
 // --- Oracle: the query as Search_API receives it -------------------------------------------
 
@@ -168,9 +158,7 @@ function wireParams(values: SearchFormValues): SearchParams {
   };
   for (const field of DECIMAL_FIELDS) params[field] = normalizeDecimal(values[field]);
   params.city = values.city;
-  params.postalCode = values.postalCode;
   params.group = values.group;
-  params.types = values.types;
   if (values.hasTour) params.hasTour = true;
   return params;
 }
@@ -188,12 +176,23 @@ function receive(params: SearchParams): Record<string, string | string[]> {
   );
 }
 
-/** Form controls an API error refers to; the group/types conflict concerns both. */
+/** Form controls an API error refers to. */
 function controlsOf(error: ApiError): SearchFormField[] {
-  const fields = error.field === 'group,types' ? ['group', 'types'] : [error.field];
-  return fields.filter((f): f is SearchFormField =>
+  return [error.field].filter((f): f is SearchFormField =>
     (SEARCH_FORM_FIELDS as readonly (string | undefined)[]).includes(f),
   );
+}
+
+/**
+ * Frontend-only rule on top of the schema: a room bound the schema accepted must be at least
+ * `SEARCH_FORM_ROOMS_MIN` (independent check: plain `Number` on the normalized input).
+ */
+function belowRoomsMinimum(values: SearchFormValues, schemaErrors: readonly ApiError[]) {
+  const failed = new Set(schemaErrors.flatMap(controlsOf));
+  return (['roomsMin', 'roomsMax'] as const).filter((field) => {
+    const text = normalizeDecimal(values[field]);
+    return text !== '' && !failed.has(field) && Number(text) < SEARCH_FORM_ROOMS_MIN;
+  });
 }
 
 // --- System under test ---------------------------------------------------------------------
@@ -220,11 +219,14 @@ describe('Property 31: frontend filter validation matches the schema and keeps i
         const before = structuredClone(generated);
         const values = deepFreeze(generated);
         const oracle = parseSearchQuery(receive(wireParams(values)), META.schemas);
+        const schemaErrors = oracle.ok ? [] : oracle.error;
+        const tooFewRooms = belowRoomsMinimum(values, schemaErrors);
+        const accepted = oracle.ok && tooFewRooms.length === 0;
         const sent: SearchParams[] = [];
 
         const result = submit(values, (params) => sent.push(params));
 
-        expect('params' in result).toBe(oracle.ok);
+        expect('params' in result).toBe(accepted);
         expect(values).toEqual(before);
         if ('params' in result) {
           expect(sent).toEqual([result.params]);
@@ -233,16 +235,16 @@ describe('Property 31: frontend filter validation matches the schema and keeps i
           return;
         }
         expect(sent).toEqual([]);
-        if (oracle.ok) return; // unreachable: covered by the equivalence above
         const named = new Set(result.errors.map((e) => e.field));
         expect(named.size).toBe(result.errors.length);
-        for (const error of oracle.error) {
+        for (const error of schemaErrors) {
           const controls = controlsOf(error);
           expect(controls.length).toBeGreaterThan(0);
           expect(controls.some((field) => named.has(field))).toBe(true);
         }
-        // No field is named that the schema did not reject.
-        const rejected = new Set(oracle.error.flatMap(controlsOf));
+        for (const field of tooFewRooms) expect(named.has(field)).toBe(true);
+        // No field is named that neither the schema nor the room rule rejected.
+        const rejected = new Set<string>([...schemaErrors.flatMap(controlsOf), ...tooFewRooms]);
         for (const field of named) expect(rejected.has(field)).toBe(true);
       }),
       { numRuns: 100 },
