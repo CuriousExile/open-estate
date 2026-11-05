@@ -1,6 +1,7 @@
 // @open-estate/shared: Shared Zod schemas and pure domain functions (no AWS dependency).
 export * from './content';
 export * from './cursor';
+export * from './diff';
 export * from './errors';
 export * from './locale';
 export * from './locale-selection';
