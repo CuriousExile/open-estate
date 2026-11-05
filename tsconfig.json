@@ -9,6 +9,7 @@
     { "path": "packages/management" },
     { "path": "packages/ingestion" },
     { "path": "packages/infra" },
-    { "path": "packages/loadtest" }
+    { "path": "packages/loadtest" },
+    { "path": "packages/devserver" }
   ]
 }

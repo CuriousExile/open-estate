@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "include": ["src/**/*.ts"],
+  "references": [
+    { "path": "../shared" },
+    { "path": "../core" },
+    { "path": "../api" },
+    { "path": "../mcp" },
+    { "path": "../admin" },
+    { "path": "../management" },
+    { "path": "../ingestion" }
+  ]
+}

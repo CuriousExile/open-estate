@@ -1,0 +1,26 @@
+{
+  "name": "@open-estate/devserver",
+  "version": "0.0.0",
+  "private": true,
+  "description": "DEV ONLY: local demo server with in-memory stores and an insecure local OIDC provider",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-cloudwatch": "3.1162.0",
+    "@open-estate/admin": "0.0.0",
+    "@open-estate/api": "0.0.0",
+    "@open-estate/core": "0.0.0",
+    "@open-estate/ingestion": "0.0.0",
+    "@open-estate/management": "0.0.0",
+    "@open-estate/mcp": "0.0.0",
+    "@open-estate/shared": "0.0.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "8.10.164"
+  }
+}
