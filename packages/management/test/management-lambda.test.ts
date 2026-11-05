@@ -155,6 +155,7 @@ describe('route groups', () => {
       'listings',
       'monitoring',
       'platform',
+      'openapi',
     ]);
   });
 });

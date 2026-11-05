@@ -33,6 +33,9 @@ export interface RouteGroupContext {
 export interface RouteGroup {
   /** Stable group name, e.g. `listings`. */
   name: string;
-  /** Builds the group's routes from the environment; throws `ConfigError` on missing config. */
-  create(context: RouteGroupContext): Route[];
+  /**
+   * Builds the group's routes from the environment; throws `ConfigError` on missing config.
+   * `registered`: routes of the groups registered before this one (e.g. for `/openapi.json`).
+   */
+  create(context: RouteGroupContext, registered?: readonly Route[]): Route[];
 }

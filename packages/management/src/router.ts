@@ -30,7 +30,7 @@ export interface RouteContext<P, Q, B> {
 /** Validated input of a public route (no authentication, e.g. `/openapi.json`). */
 export type PublicRouteContext<P, Q, B> = Omit<RouteContext<P, Q, B>, 'principal'>;
 
-interface RouteSchemas<P, Q, B> {
+export interface RouteSchemas<P = unknown, Q = unknown, B = unknown> {
   /** Path parameters by template name; strings as matched (URL-decoded). */
   params?: ZodType<P>;
   /** Query string parameters (single values). */
@@ -67,11 +67,22 @@ export interface Route {
   path: string;
   /** `true`: served without authentication and without actor rate limit. */
   public: boolean;
+  /** Input schemas the route validates with; read by the OpenAPI generator (Req 16.2). */
+  schemas: RouteSchemas;
   /** Validates the input and runs the handler; `principal` is `undefined` only for public routes. */
   run(input: RawRouteInput, principal: Principal | undefined): Promise<Reply>;
 }
 
 const isEmpty = (value: string) => value.trim() === '';
+
+/** The schemas of `spec` without the handler, type-erased for documentation. */
+function schemasOf<P, Q, B>({ params, query, body }: RouteSchemas<P, Q, B>): RouteSchemas {
+  return {
+    ...(params !== undefined && { params }),
+    ...(query !== undefined && { query }),
+    ...(body !== undefined && { body }),
+  };
+}
 
 function parseJsonBody(raw: string): Result<unknown, ApiError[]> {
   if (isEmpty(raw)) return ok(undefined);
@@ -110,6 +121,7 @@ export function defineRoute<P = Record<string, string>, Q = Record<string, strin
     method: spec.method,
     path: spec.path,
     public: false,
+    schemas: schemasOf(spec),
     async run(input, principal) {
       if (principal === undefined) throw new Error(`${spec.method} ${spec.path}: no principal`);
       const parsed = parseInput(spec, input);
@@ -129,6 +141,7 @@ export function definePublicRoute<
     method: spec.method,
     path: spec.path,
     public: true,
+    schemas: schemasOf(spec),
     async run(input) {
       const parsed = parseInput(spec, input);
       if (!parsed.ok) return failure(parsed.error);

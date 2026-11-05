@@ -5,5 +5,6 @@ export * from './env';
 export * from './handler';
 export * from './http';
 export * from './management-lambda';
+export * from './openapi';
 export * from './router';
 export * from './routes';
