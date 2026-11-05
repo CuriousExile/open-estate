@@ -96,8 +96,7 @@ suspensions and role changes show up quickly.
    the language to Deutsch. The listings of the suspended agency and the drafts do not appear.
 2. **Listing detail** — open a result (`/listings/{id}`): offers, key facts, original listing link.
    Images are placeholders on `example.org` and are hidden.
-3. **Portal login** — open <http://127.0.0.1:4200/portal>, pick **Anna Albers**. (After the login
-   the SPA may land on the public search; open `/portal` again.)
+3. **Portal login** — open <http://127.0.0.1:4200/portal>, pick **Anna Albers**.
 4. **Create a listing** — *Listings → New listing*, fill in title, offer, type, rooms, area, city.
    It is created `INACTIVE` and is not searchable yet.
 5. **Activate** — set the status to *Active*; search for its city in the public search: it appears

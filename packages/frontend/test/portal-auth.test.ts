@@ -78,6 +78,12 @@ describe('buildOidcConfig', () => {
       secureRoutes: [],
     });
   });
+
+  it('leaves the post-login and failure navigation to the auth guard', () => {
+    // The library would otherwise navigate to `postLoginRoute` ('/') after the code callback and
+    // cancel the guard's redirect to the remembered portal route.
+    expect(buildOidcConfig(PORTAL, ORIGIN).triggerAuthorizationResultEvent).toBe(true);
+  });
 });
 
 describe('cognitoLogoutUrl', () => {

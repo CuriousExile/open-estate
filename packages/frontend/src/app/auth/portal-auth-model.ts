@@ -64,6 +64,11 @@ export function buildOidcConfig(config: PortalConfig, origin: string): OpenIdCon
     startCheckSession: false,
     // The bearer token is attached by our own interceptor (Management_API only).
     secureRoutes: [],
+    // Without this flag the library calls `router.navigateByUrl(postLoginRoute ?? '/')` (or
+    // `unauthorizedRoute`) after processing a code callback inside `checkAuth()`. That navigation
+    // supersedes the guard's redirect to the remembered portal route, so the user landed on the
+    // public search. The auth guard (`decideAuth`) owns all post-login and failure navigation.
+    triggerAuthorizationResultEvent: true,
   };
 }
 
