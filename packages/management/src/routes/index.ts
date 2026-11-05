@@ -10,6 +10,20 @@ import type { RouteGroup, RouteGroupContext } from './route-group';
 // own file; this list only changes when a new group is introduced.
 
 export * from './route-group';
+// Route lists over already wired use cases: the seam for callers that inject their own stores
+// (tests, the local dev server) instead of wiring them from the Lambda environment.
+export { AgencyOverview } from './identity/agency-overview';
+export type { AgencyOverviewDeps } from './identity/agency-overview';
+export { machineAccessAudit } from './identity/services';
+export { createIdentityRouteList, createIdentityRoutes, meResponse } from './identity';
+export type { IdentityServiceOptions, IdentityServices } from './identity';
+export { createListingRouteGroup, createListingRoutes } from './listings';
+export type { ListingCommands, ListingServices } from './listings';
+export { createMonitoringRouteGroup, createMonitoringRoutes } from './monitoring';
+export type { MonitoringRouteDeps, MonitoringRoutesDeps } from './monitoring';
+export { createOpenApiRoute } from './openapi';
+export { createPlatformRouteGroup, createPlatformRoutes } from './platform';
+export type { PlatformDeps } from './platform';
 
 export const ROUTE_GROUPS: readonly RouteGroup[] = [
   identityRoutes,
