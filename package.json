@@ -28,6 +28,7 @@
   "scripts": {
     "build": "tsc -b && npm run build --workspace @open-estate/frontend",
     "clean": "tsc -b --clean",
+    "dev": "node scripts/dev.mjs",
     "dev:server": "tsc -b packages/devserver && node packages/devserver/dist/main.js",
     "lint": "eslint . && prettier --check . && npm run check:config",
     "check:config": "node scripts/check-hardcoded-config.mjs",
