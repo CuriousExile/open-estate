@@ -1,0 +1,5 @@
+{
+  "/api": { "target": "http://127.0.0.1:4310", "secure": false, "changeOrigin": false },
+  "/management": { "target": "http://127.0.0.1:4310", "secure": false, "changeOrigin": false },
+  "/mcp": { "target": "http://127.0.0.1:4310", "secure": false, "changeOrigin": false }
+}

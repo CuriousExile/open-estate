@@ -58,6 +58,22 @@
               "optimization": false,
               "extractLicenses": false,
               "sourceMap": true
+            },
+            "local": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true,
+              "assets": [
+                {
+                  "glob": "**/*",
+                  "input": "public",
+                  "ignore": ["runtime-config.json"]
+                },
+                {
+                  "glob": "runtime-config.json",
+                  "input": "dev"
+                }
+              ]
             }
           },
           "defaultConfiguration": "production"
@@ -70,6 +86,12 @@
             },
             "development": {
               "buildTarget": "frontend:build:development"
+            },
+            "local": {
+              "buildTarget": "frontend:build:local",
+              "host": "127.0.0.1",
+              "port": 4200,
+              "proxyConfig": "dev/proxy.local.json"
             }
           },
           "defaultConfiguration": "development"
