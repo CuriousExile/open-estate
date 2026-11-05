@@ -122,17 +122,19 @@ describe('toListingDetail (Req 7.5)', () => {
       tours: source.tours,
     });
     expect(detail.offers.map((o) => o.offerType)).toEqual(['SALE']);
+    expect(detail.address).toBe('Spreeweg 1, 10115 Berlin');
+    expect(detail.facts).toEqual([
+      { key: 'detail.type', textKey: 'taxonomy.type.loft' },
+      { key: 'detail.group', textKey: 'taxonomy.group.apartment' },
+      { key: 'detail.rooms', text: '3,5' },
+      { key: 'detail.area', textKey: 'detail.areaValue', params: { value: '98,5' } },
+    ]);
+    expect(detail.actions).toEqual([
+      { key: 'detail.action.original', href: 'https://example.com/listing/1', external: true },
+      { key: 'detail.action.email', href: 'mailto:info@example.com', external: false },
+      { key: 'detail.action.phone', href: 'tel:+4930123', external: false },
+    ]);
     expect(detail.sections).toEqual([
-      {
-        id: 'detail-facts',
-        key: 'detail.facts',
-        rows: [
-          { key: 'detail.type', textKey: 'taxonomy.type.loft' },
-          { key: 'detail.group', textKey: 'taxonomy.group.apartment' },
-          { key: 'detail.rooms', text: '3,5' },
-          { key: 'detail.area', textKey: 'detail.areaValue', params: { value: '98,5' } },
-        ],
-      },
       {
         id: 'detail-location',
         key: 'detail.location',
@@ -161,12 +163,6 @@ describe('toListingDetail (Req 7.5)', () => {
         id: 'detail-about',
         key: 'detail.about',
         rows: [
-          {
-            key: 'detail.sourceUrl',
-            textKey: 'detail.sourceLink',
-            href: 'https://example.com/listing/1',
-            external: true,
-          },
           { key: 'detail.language', text: 'Englisch' },
           { key: 'detail.originalLanguage', text: 'Deutsch' },
           { key: 'detail.id', text: 'l-1' },
@@ -182,7 +178,12 @@ describe('toListingDetail (Req 7.5)', () => {
     const detail = toListingDetail(listing({ contact: {} }), 'de');
     const keys = detail.sections.flatMap((s) => s.rows.map((row) => row.key));
     for (const hidden of DETAIL_ROWS_HIDDEN_BY_DEFAULT) expect(keys).not.toContain(hidden);
-    expect(keys).toEqual(expect.arrayContaining(['detail.city', 'detail.sourceUrl']));
+    expect(keys).toContain('detail.city');
+    // The linkable source URL is the summary's primary action, not a row; nothing else of
+    // "about" is shown by default, so the section is omitted.
+    expect(keys).not.toContain('detail.sourceUrl');
+    expect(detail.sections.map((s) => s.id)).not.toContain('detail-about');
+    expect(detail.actions.map((a) => a.key)).toEqual(['detail.action.original']);
     // Single rows can be switched on.
     const withId = toListingDetail(listing({ contact: {} }), 'de', {
       showRows: new Set(['detail.id']),
@@ -206,13 +207,20 @@ describe('toListingDetail (Req 7.5)', () => {
         expect.stringMatching(/^detail\.(street|coordinates|group|contact)/),
       ]),
     );
+    expect(detail.facts.map((row) => row.key)).not.toContain('detail.group');
     expect(keys).toContain('detail.city');
   });
 
-  it('shows a source URL that is no http(s) link as text', () => {
+  it('shows a source URL that is no http(s) link as text, without an action', () => {
     const detail = toListingDetail(listing({ sourceUrl: 'javascript:alert(1)' }), 'en');
     const about = detail.sections.find((s) => s.id === 'detail-about');
     expect(about?.rows[0]).toEqual({ key: 'detail.sourceUrl', text: 'javascript:alert(1)' });
+    expect(detail.actions).toEqual([]);
+  });
+
+  it('builds the summary address without a street when none is stored', () => {
+    const address = { city: 'Berlin', postalCode: '10115', country: 'DE' };
+    expect(toListingDetail(listing({ address }), 'en').address).toBe('10115 Berlin');
   });
 });
 

@@ -1312,3 +1312,13 @@ oe-image-placeholder {
     transition: none;
   }
 }
+
+// Detail view (oe-listing-detail, layout in its component; its host is the size container): the
+// images leave room for the summary below them, or next to them from 60rem.
+.oe-detail-media .oe-carousel-viewport {
+  max-height: min(45vh, 32rem);
+
+  @container (min-width: 60rem) {
+    max-height: min(60vh, 42rem);
+  }
+}

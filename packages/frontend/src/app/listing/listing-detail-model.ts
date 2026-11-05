@@ -100,6 +100,21 @@ export interface DetailSection {
   readonly rows: readonly DetailRow[];
 }
 
+/** Translation key of a call to action in the detail view's summary. */
+export type DetailActionKey =
+  'detail.action.original' | 'detail.action.email' | 'detail.action.phone';
+
+/**
+ * A link of the summary next to the images: the original listing (the primary action) and the
+ * contact's email and phone, each only if stored and safe as link target.
+ */
+export interface DetailAction {
+  readonly key: DetailActionKey;
+  readonly href: string;
+  /** Opens in a new tab (the provider's page). */
+  readonly external: boolean;
+}
+
 /** All fields of a listing, formatted for the active locale (Req 7.5). */
 export interface ListingDetail {
   readonly listing: LocalizedListing;
@@ -109,11 +124,17 @@ export interface ListingDetail {
   readonly contentLocale: string;
   readonly city: string;
   readonly postalCode: string;
+  /** One line for the summary: street (if stored), postal code and city. */
+  readonly address: string;
   /** Listing type code; label via `taxonomy.type.<code>`. */
   readonly listingType: string;
   /** All offers in stored order — both for listings with `SALE` + `RENT` (Req 12.13). */
   readonly offers: readonly OfferView[];
-  /** All remaining fields; rows of values that are not stored are omitted. */
+  /** Key facts shown in the summary next to the images: type, group, rooms, area. */
+  readonly facts: readonly DetailRow[];
+  /** Links of the summary; the original listing first. */
+  readonly actions: readonly DetailAction[];
+  /** All remaining fields below the summary; rows of values that are not stored are omitted. */
   readonly sections: readonly DetailSection[];
   readonly media: LocalizedListing['media'];
   /** Embedded by TourEmbedComponent if their host is allowed (Req 16.6, 16.7). */
@@ -141,6 +162,11 @@ export const DETAIL_ROWS_HIDDEN_BY_DEFAULT: ReadonlySet<string> = new Set([
   'detail.runId',
 ]);
 
+/** `tel:` link of a phone number (digits and a leading `+` only). */
+function phoneLink(phone: string): string {
+  return `tel:${phone.replace(/[^\d+]/g, '')}`;
+}
+
 /** Options of {@link toListingDetail}. */
 export interface ListingDetailOptions {
   /** Row keys of {@link DETAIL_ROWS_HIDDEN_BY_DEFAULT} to show anyway. */
@@ -156,20 +182,34 @@ export function toListingDetail(
     row && (!DETAIL_ROWS_HIDDEN_BY_DEFAULT.has(row.key) || showRows.has(row.key)) ? row : undefined;
   const { address, geo, contact } = listing;
   const sourceHref = httpUrl(listing.sourceUrl);
+  const facts = section('facts', [
+    { key: 'detail.type', textKey: codeLabelKey('taxonomy.type', listing.listingType) },
+    listing.group !== undefined && {
+      key: 'detail.group',
+      textKey: codeLabelKey('taxonomy.group', listing.group),
+    },
+    { key: 'detail.rooms', text: formatNumber(listing.rooms, locale) },
+    {
+      key: 'detail.area',
+      textKey: 'detail.areaValue',
+      params: { value: formatNumber(listing.area, locale) },
+    },
+  ]).rows;
+  const action = (key: DetailActionKey, href: string, external = false): DetailAction => ({
+    key,
+    href,
+    external,
+  });
+  const actions: DetailAction[] = [
+    ...(sourceHref !== undefined ? [action('detail.action.original', sourceHref, true)] : []),
+    ...(contact?.email !== undefined
+      ? [action('detail.action.email', `mailto:${contact.email}`)]
+      : []),
+    ...(contact?.phone !== undefined
+      ? [action('detail.action.phone', phoneLink(contact.phone))]
+      : []),
+  ];
   const sections = [
-    section('facts', [
-      { key: 'detail.type', textKey: codeLabelKey('taxonomy.type', listing.listingType) },
-      listing.group !== undefined && {
-        key: 'detail.group',
-        textKey: codeLabelKey('taxonomy.group', listing.group),
-      },
-      { key: 'detail.rooms', text: formatNumber(listing.rooms, locale) },
-      {
-        key: 'detail.area',
-        textKey: 'detail.areaValue',
-        params: { value: formatNumber(listing.area, locale) },
-      },
-    ]),
     section('location', [
       address.street !== undefined && { key: 'detail.street', text: address.street },
       { key: 'detail.postalCode', text: address.postalCode },
@@ -187,7 +227,7 @@ export function toListingDetail(
       contact?.phone !== undefined && {
         key: 'detail.contactPhone',
         text: contact.phone,
-        href: `tel:${contact.phone.replace(/[^\d+]/g, '')}`,
+        href: phoneLink(contact.phone),
       },
       contact?.email !== undefined && {
         key: 'detail.contactEmail',
@@ -195,15 +235,9 @@ export function toListingDetail(
         href: `mailto:${contact.email}`,
       },
     ]),
+    // A linkable source URL is the summary's primary action; only a non-link stays as text.
     section('about', [
-      sourceHref === undefined
-        ? { key: 'detail.sourceUrl', text: listing.sourceUrl }
-        : {
-            key: 'detail.sourceUrl',
-            textKey: 'detail.sourceLink',
-            href: sourceHref,
-            external: true,
-          },
+      sourceHref === undefined && { key: 'detail.sourceUrl', text: listing.sourceUrl },
       {
         key: 'detail.language',
         text: displayName(listing.deliveredLocale, 'language', locale),
@@ -228,8 +262,13 @@ export function toListingDetail(
     contentLocale: listing.deliveredLocale,
     city: address.city,
     postalCode: address.postalCode,
+    address: [address.street, `${address.postalCode} ${address.city}`.trim()]
+      .filter((part) => part !== undefined && part !== '')
+      .join(', '),
     listingType: listing.listingType,
     offers: listing.offers.map((offer) => toOfferView(offer, locale)),
+    facts,
+    actions,
     sections,
     media: listing.media,
     tours: listing.tours,

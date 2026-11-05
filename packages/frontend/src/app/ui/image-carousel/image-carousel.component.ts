@@ -47,7 +47,6 @@ interface Gesture {
     @let count = slides().length;
     <div
       class="oe-carousel"
-      [class.oe-carousel--wide]="wide()"
       role="region"
       [attr.aria-roledescription]="'media.carousel' | transloco"
       [attr.aria-label]="'media.carouselLabel' | transloco: { title: title() }"
@@ -155,8 +154,6 @@ export class ImageCarouselComponent {
   readonly media = input.required<readonly { readonly url: string }[]>();
   /** Listing title for the labels and alt texts (media carry no own description). */
   readonly title = input.required<string>();
-  /** 16:9 instead of 16:10 (detail view). */
-  readonly wide = input(false);
   /** Load the first image right away (above the fold) instead of lazily. */
   readonly eager = input(false);
   /** Shows a pointer cursor; set when something listens to `activate`. */
