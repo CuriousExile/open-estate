@@ -9,6 +9,7 @@ import {
   READ_MODEL_ENV,
   withRequestLatency,
   type Metrics,
+  type ReadModel,
   type ReadModelSources,
 } from '@open-estate/core';
 import { loadCorsPolicy, NO_CORS, withCors } from './cors';
@@ -100,7 +101,14 @@ export async function initListingsHandler(
   env: Readonly<Record<string, string | undefined>>,
   sources: ListingsInitSources = {},
 ): Promise<ListingsHandler> {
-  const model = await initReadModel(env, sources);
+  return createListingsRoutes(await initReadModel(env, sources));
+}
+
+/**
+ * Router over all Search_API routes of an already built read model (the local dev server
+ * injects an in-memory one); computes the discovery documents once.
+ */
+export function createListingsRoutes(model: ReadModel): ListingsHandler {
   const { guard, schemas } = model;
   const discovery = createDiscoveryHandlers(guard, model);
   return createRouter({
