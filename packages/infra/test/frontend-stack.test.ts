@@ -256,6 +256,13 @@ describe('FrontendStack', () => {
     expect(cspOf(synth().template)).toContain("frame-src 'none'");
   });
 
+  it('lets listing images load from any https host, but not over http or as data: URLs', () => {
+    // Listing media are hosted by agencies and connectors (Req 16.1); the image placeholder is
+    // inline SVG markup, so no `data:` source is needed.
+    const imgSrc = /img-src ([^;]*)/.exec(cspOf(synth().template))?.[1]?.split(' ');
+    expect(imgSrc).toEqual(["'self'", 'https:']);
+  });
+
   it('fails synth with a hint when the build output is missing', () => {
     rmSync(assetDir, { recursive: true });
     expect(() => synth()).toThrow(/npm run build/);
