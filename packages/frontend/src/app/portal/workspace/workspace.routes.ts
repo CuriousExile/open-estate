@@ -1,14 +1,8 @@
 import type { Routes } from '@angular/router';
-import { PortalPlaceholderComponent } from '../portal-placeholder.component';
+import { ListingWorkspaceComponent } from './listing-workspace.component';
 
 /**
- * `/portal/listings/:id` (Req 5.8, 7.8, 8.6, 12.15): preview, field provenance and history — task
- * 14.4 replaces the placeholder with `ListingWorkspaceComponent`. `:id` is bound from the parent.
+ * `/portal/listings/:id` (Req 5.8, 7.8, 8.6, 12.15): preview, field provenance and history.
+ * `:id` is bound from the parent route (inherited by this empty-path child).
  */
-export const WORKSPACE_ROUTES: Routes = [
-  {
-    path: '',
-    component: PortalPlaceholderComponent,
-    data: { titleKey: 'portal.workspace.title' },
-  },
-];
+export const WORKSPACE_ROUTES: Routes = [{ path: '', component: ListingWorkspaceComponent }];
