@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -211,6 +212,18 @@ export function loadFrontendRuntimeFiles(sources: FrontendRuntimeSources): Front
   return { i18nConfig, files, warnings };
 }
 
+/**
+ * CSP sources (`'sha256-<base64>'`) of every inline `<script>` (without `src`) of the built
+ * `index.html`, hashed exactly as the browser does (UTF-8 of the element's text). Computed from the
+ * file that is uploaded, so the hash always matches the deployed script.
+ */
+export function inlineScriptHashes(html: string): string[] {
+  return [...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map(([, body]) => body ?? '')
+    .filter((body) => body.trim() !== '')
+    .map((body) => `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`);
+}
+
 /** Tour allowlist from the validated config-bucket files; missing file = no provider (default-deny). */
 export function tourProvidersFromConfigFiles(files: readonly ConfigFile[]): TourProvidersConfig {
   const file = files.find(({ key }) => key === READ_MODEL_CONFIG_FILES.tourProviders);
@@ -226,15 +239,19 @@ export function tourProvidersFromConfigFiles(files: readonly ConfigFile[]): Tour
  * - `connect-src` adds the Search_API origin, which differs from the SPA's, and the
  *   {@link FrontendStackProps.portalConnectOrigins} of the Agentur_Portal (Management_API, Cognito);
  * - `style-src 'unsafe-inline'`: Angular injects component styles as `<style>` elements at runtime,
- *   and a static S3 origin cannot issue per-response nonces. Scripts stay `'self'` only; therefore
- *   the production build disables critical-CSS inlining (`angular.json` `inlineCritical: false`),
- *   whose inline loader script would be blocked.
+ *   and a static S3 origin cannot issue per-response nonces. Scripts stay `'self'` plus the
+ *   hashes of the inline scripts of `index.html` (the light/dark theme script that must run before
+ *   the first paint, see {@link inlineScriptHashes}); therefore the production build disables
+ *   critical-CSS inlining (`angular.json` `inlineCritical: false`), whose inline loader script
+ *   would be blocked.
  */
 export function contentSecurityPolicy(options: {
   tourProviders: TourProvidersConfig;
   apiOrigin: string;
   /** Further `connect-src` sources (origins or host wildcards); tokens allowed. */
   connectOrigins?: readonly string[];
+  /** `'sha256-…'` sources of the inline scripts of `index.html` ({@link inlineScriptHashes}). */
+  scriptHashes?: readonly string[];
 }): string {
   const tourHosts = [...tourHostIndex(options.tourProviders).keys()]
     .sort()
@@ -242,7 +259,7 @@ export function contentSecurityPolicy(options: {
   const connectOrigins = options.connectOrigins ?? [];
   const directives: [string, string[]][] = [
     ['default-src', ["'self'"]],
-    ['script-src', ["'self'"]],
+    ['script-src', ["'self'", ...(options.scriptHashes ?? [])]],
     ['style-src', ["'self'", "'unsafe-inline'"]],
     ['img-src', ["'self'", 'https:']],
     ['font-src', ["'self'"]],
@@ -375,6 +392,7 @@ export class FrontendStack extends Stack {
       tourProviders: props.tourProviders,
       apiOrigin: urlOrigin(props.apiUrl),
       connectOrigins: props.portalConnectOrigins ?? [],
+      scriptHashes: inlineScriptHashes(readFileSync(indexFile, 'utf8')),
     });
     const responseHeadersPolicy = new ResponseHeadersPolicy(this, 'SecurityHeaders', {
       comment: 'Open Estate SPA: CSP from the tour allowlist and security headers',

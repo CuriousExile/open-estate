@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
@@ -14,6 +15,7 @@ import {
   frontendRuntimeSources,
   type FrontendRuntimeSources,
   IMMUTABLE_CACHE_CONTROL,
+  inlineScriptHashes,
   loadFrontendRuntimeFiles,
   NO_CACHE_CONTROL,
   SPA_ROUTING_FUNCTION_CODE,
@@ -28,6 +30,7 @@ const CDK_CONTEXT = (
 
 const API_URL = 'https://abc123.execute-api.eu-central-1.amazonaws.com/dev/';
 const API_ORIGIN = 'https://abc123.execute-api.eu-central-1.amazonaws.com';
+const FRONTEND_SRC = path.join(__dirname, '../../frontend/src');
 const MATTERPORT: TourProvidersConfig = {
   providers: [{ code: 'matterport', hostnames: ['My.Matterport.com', 'mpembed.com'] }],
 };
@@ -254,6 +257,13 @@ describe('FrontendStack', () => {
 
   it('denies all frames when no tour provider is allowed', () => {
     expect(cspOf(synth().template)).toContain("frame-src 'none'");
+  });
+
+  it('allows the inline theme script of the built index.html by its hash', () => {
+    const html = '<!doctype html><script>applyTheme();</script><script src="main-ABC.js"></script>';
+    write(path.join(assetDir, 'index.html'), html);
+    const [hash] = inlineScriptHashes(html);
+    expect(cspOf(synth().template)).toContain(`script-src 'self' ${hash};`);
   });
 
   it('lets listing images load from any https host, but not over http or as data: URLs', () => {
@@ -597,6 +607,27 @@ describe('contentSecurityPolicy', () => {
 
   it('treats a missing tour-providers.json as an empty allowlist', () => {
     expect(tourProvidersFromConfigFiles([])).toEqual({ providers: [] });
+  });
+
+  it('allows the inline scripts of index.html by their SHA-256 hash, never script-src unsafe-inline', () => {
+    const body = "\n  document.documentElement.setAttribute('data-theme', 'dark');\n";
+    const html = `<html><head><script>${body}</script><script src="main.js"></script></head></html>`;
+    const hashes = inlineScriptHashes(html);
+    const expected = `'sha256-${createHash('sha256').update(body, 'utf8').digest('base64')}'`;
+    expect(hashes).toEqual([expected]);
+    expect(inlineScriptHashes('<script src="a.js"></script><script> </script>')).toEqual([]);
+    const csp = contentSecurityPolicy({
+      tourProviders: { providers: [] },
+      apiOrigin: API_ORIGIN,
+      scriptHashes: hashes,
+    });
+    expect(csp).toContain(`script-src 'self' ${expected};`);
+    expect(csp).not.toMatch(/script-src[^;]*unsafe-inline/);
+  });
+
+  it('hashes the light/dark theme script of the frontend source index.html', () => {
+    const html = readFileSync(path.join(FRONTEND_SRC, 'index.html'), 'utf8');
+    expect(inlineScriptHashes(html)).toHaveLength(1);
   });
 });
 
