@@ -122,7 +122,7 @@ const arbCoordinate = (bounds: Bounds): fc.Arbitrary<number> =>
     .integer({ min: bounds.min * COORDINATE_SCALE, max: bounds.max * COORDINATE_SCALE })
     .map((n) => n / COORDINATE_SCALE || 0);
 
-const arbIsoDateTime = fc
+export const arbIsoDateTime: fc.Arbitrary<string> = fc
   .date({
     min: new Date('2000-01-01T00:00:00.000Z'),
     max: new Date('2100-01-01T00:00:00.000Z'),
