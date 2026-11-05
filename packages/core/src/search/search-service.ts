@@ -1,11 +1,14 @@
 import {
+  convertBounds,
   decodeCursor,
   encodeCursor,
   err,
+  exchangeCurrencies,
   ok,
   queryHash,
   typesOfGroup,
   type ApiError,
+  type ExchangeRatesConfig,
   type LocalePreference,
   type LocalizedListing,
   type Result,
@@ -15,7 +18,14 @@ import {
 } from '@open-estate/shared';
 import { localize } from './localize';
 import { normalizeCity } from './search-document';
-import type { IntRange, OfferCondition, ResolvedQuery, SearchProvider } from './search-provider';
+import type {
+  IntRange,
+  OfferCondition,
+  PriceCondition,
+  PriceConditions,
+  ResolvedQuery,
+  SearchProvider,
+} from './search-provider';
 import { NO_SUSPENDED_AGENCIES, type SuspendedAgencies } from './suspended-agencies';
 import { NO_USAGE, type UsageRecorder } from '../usage/usage-line';
 
@@ -45,6 +55,11 @@ export interface SearchServiceDeps {
   /** ISO 4217 code used when a price filter has no `currency` (Req 12.9). */
   defaultCurrency: string;
   /**
+   * Static exchange rates (`exchange-rates.json`) for `convertCurrency=true`; without them a price
+   * filter only matches offers in its own currency.
+   */
+  exchangeRates?: ExchangeRatesConfig | undefined;
+  /**
    * Suspended agencies, resolved per request into `excludeAgencies` (Req 1.9). Defaults to none
    * (no `Agencies` table, e.g. local development).
    */
@@ -73,7 +88,7 @@ const toHalf = (rooms: number | undefined): number | undefined =>
   rooms === undefined ? undefined : Math.round(rooms * 2);
 
 export function createSearchService(deps: SearchServiceDeps): SearchService {
-  const { provider, taxonomy, defaultCurrency } = deps;
+  const { provider, taxonomy, defaultCurrency, exchangeRates } = deps;
   const suspendedAgencies = deps.suspendedAgencies ?? NO_SUSPENDED_AGENCIES;
   const usage = deps.usage ?? NO_USAGE;
   const allowedTourHosts = [
@@ -87,8 +102,24 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
     const price = range(q.priceMin, q.priceMax);
     return {
       offerType: q.offerType,
-      ...(price && { price: { ...price, currency: q.currency ?? defaultCurrency } }),
+      ...(price && { price: priceConditions(price, q.currency ?? defaultCurrency, q) }),
     };
+  }
+
+  /**
+   * The requested currency first; with `convertCurrency=true` and a rate for it, also every other
+   * configured currency with the converted bounds (empty converted ranges are left out).
+   */
+  function priceConditions(price: IntRange, currency: string, q: SearchQuery): PriceConditions {
+    const requested: PriceCondition = { ...price, currency };
+    if (q.convertCurrency !== true || exchangeRates === undefined) return [requested];
+    const converted = exchangeCurrencies(exchangeRates)
+      .filter((code) => code !== currency)
+      .flatMap((code) => {
+        const bounds = convertBounds(exchangeRates, price, currency, code);
+        return bounds === undefined ? [] : [{ ...bounds, currency: code }];
+      });
+    return [requested, ...converted];
   }
 
   function listingTypes(q: SearchQuery): readonly string[] | undefined {

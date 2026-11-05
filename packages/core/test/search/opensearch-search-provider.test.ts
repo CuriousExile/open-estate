@@ -87,15 +87,55 @@ describe('buildOpenSearchFilter', () => {
 
   it('price → currency term + range on the amount of the offer type', () => {
     expect(
-      buildOpenSearchFilter({ offerType: 'RENT', price: { currency: 'EUR', min: 100, max: 900 } }),
+      buildOpenSearchFilter({
+        offerType: 'RENT',
+        price: [{ currency: 'EUR', min: 100, max: 900 }],
+      }),
     ).toEqual([
       { exists: { field: 'rentAmountMinor' } },
       { term: { rentCurrency: 'EUR' } },
       { range: { rentAmountMinor: { gte: 100, lte: 900 } } },
     ]);
-    expect(buildOpenSearchFilter({ offerType: 'SALE', price: { currency: 'USD' } })).toEqual([
+    expect(buildOpenSearchFilter({ offerType: 'SALE', price: [{ currency: 'USD' }] })).toEqual([
       { exists: { field: 'saleAmountMinor' } },
       { term: { saleCurrency: 'USD' } },
+    ]);
+  });
+
+  it('several price currencies (conversion) → bool.should of one filter group per currency', () => {
+    expect(
+      buildOpenSearchFilter({
+        offerType: 'SALE',
+        price: [
+          { currency: 'EUR', max: 100 },
+          { currency: 'THB', min: 5, max: 4000 },
+        ],
+      }),
+    ).toEqual([
+      { exists: { field: 'saleAmountMinor' } },
+      {
+        bool: {
+          should: [
+            {
+              bool: {
+                filter: [
+                  { term: { saleCurrency: 'EUR' } },
+                  { range: { saleAmountMinor: { lte: 100 } } },
+                ],
+              },
+            },
+            {
+              bool: {
+                filter: [
+                  { term: { saleCurrency: 'THB' } },
+                  { range: { saleAmountMinor: { gte: 5, lte: 4000 } } },
+                ],
+              },
+            },
+          ],
+          minimum_should_match: 1,
+        },
+      },
     ]);
   });
 
@@ -317,6 +357,11 @@ function evaluate(clause: OpenSearchFilterClause, doc: SearchDocument): boolean 
     const [[field, set]] = Object.entries(clause.terms) as [[string, string[]]];
     return values(doc, field).some((v) => set.includes(v as string));
   }
+  if ('bool' in clause) {
+    return 'should' in clause.bool
+      ? clause.bool.should.some((c) => evaluate(c, doc))
+      : clause.bool.filter.every((c) => evaluate(c, doc));
+  }
   const [[field, { gte, lte }]] = Object.entries(clause.range) as [
     [string, { gte?: number; lte?: number }],
   ];
@@ -367,9 +412,13 @@ describe('builder ≡ matchesQuery (in-memory evaluation of bool.filter)', () =>
     fc.record(
       {
         offerType: fc.constantFrom('SALE' as const, 'RENT' as const),
-        price: fc.record(
-          { currency: arbCurrency, min: small, max: small },
-          { requiredKeys: ['currency'] },
+        // One currency (plain filter) or several (converted bounds, `bool.should`).
+        price: fc.array(
+          fc.record(
+            { currency: arbCurrency, min: small, max: small },
+            { requiredKeys: ['currency'] },
+          ),
+          { minLength: 1, maxLength: 3 },
         ),
       },
       { requiredKeys: ['offerType'] },
@@ -392,7 +441,7 @@ describe('builder ≡ matchesQuery (in-memory evaluation of bool.filter)', () =>
         { requiredKeys: [] },
       ),
     )
-    .map(([offer, rest]) => ({ ...offer, ...rest }) as ResolvedQuery);
+    .map(([offer, rest]) => ({ ...offer, ...rest }) as unknown as ResolvedQuery);
 
   it('every document matches the generated bool.filter iff it satisfies matchesQuery', () => {
     fc.assert(

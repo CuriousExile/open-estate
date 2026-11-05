@@ -6,6 +6,7 @@ import {
   assertValidTaxonomy,
   buildSchemas,
   Currency,
+  ExchangeRatesConfig,
   LocaleTag,
   TaxonomyConfig,
   TaxonomyValidationError,
@@ -71,6 +72,8 @@ export const READ_MODEL_CONFIG_FILES = {
   i18n: 'i18n-config.json',
   /** Optional: a missing file means "no tour provider allowed" (default-deny). */
   tourProviders: 'tour-providers.json',
+  /** Optional: without it there is no currency conversion (display or `convertCurrency`). */
+  exchangeRates: 'exchange-rates.json',
 } as const;
 
 /** `i18n-config.json`: default locale must be enabled; locales unique (case-insensitive). */
@@ -118,6 +121,8 @@ export interface ReadModel {
   defaultCurrency: string;
   /** Tour allow-list; empty if `tour-providers.json` is missing (default-deny). */
   tourProviders: TourProvidersConfig;
+  /** Static exchange rates; `undefined` if `exchange-rates.json` is missing. */
+  exchangeRates?: ExchangeRatesConfig | undefined;
   search: SearchService;
   listings: ListingService;
   /** Countries and cities with public listings (`GET /locations`). */
@@ -164,17 +169,30 @@ function parseDefaultCurrency(value: string | undefined): string {
 
 /** Missing allow-list ⇒ empty (default-deny, Req 16.9); an invalid file aborts the init. */
 async function loadTourProviders(sources: ConfigSources): Promise<TourProvidersConfig> {
-  const key = READ_MODEL_CONFIG_FILES.tourProviders;
+  const config = await loadOptionalFile(
+    READ_MODEL_CONFIG_FILES.tourProviders,
+    TourProvidersConfig,
+    sources,
+  );
+  return config ?? EMPTY_TOUR_PROVIDERS;
+}
+
+/** Optional config file: `undefined` if missing; an invalid file aborts the init. */
+async function loadOptionalFile<T>(
+  key: string,
+  schema: z.ZodType<T>,
+  sources: ConfigSources,
+): Promise<T | undefined> {
   try {
     const config = await loadConfig({ files: [key] }, sources);
-    return config.loadJson(key, TourProvidersConfig);
+    return config.loadJson(key, schema);
   } catch (error) {
     const onlyThisFileMissing =
       error instanceof ConfigError &&
       error.code === 'CONFIG_MISSING' &&
       error.names.length === 1 &&
       error.names[0] === key;
-    if (onlyThisFileMissing) return EMPTY_TOUR_PROVIDERS;
+    if (onlyThisFileMissing) return undefined;
     throw error;
   }
 }
@@ -192,7 +210,7 @@ export async function initReadModel(
   const s3 = sources.s3 ?? new S3Client({});
   const configSources: ConfigSources = { ...sources, env, ssm, s3 };
 
-  const [config, tourProviders] = await Promise.all([
+  const [config, tourProviders, exchangeRates] = await Promise.all([
     loadConfig(
       {
         values: Object.values(READ_MODEL_CONFIG_VALUES),
@@ -201,6 +219,7 @@ export async function initReadModel(
       configSources,
     ),
     loadTourProviders(configSources),
+    loadOptionalFile(READ_MODEL_CONFIG_FILES.exchangeRates, ExchangeRatesConfig, configSources),
   ]);
 
   const values = config.requireAll(Object.values(READ_MODEL_CONFIG_VALUES));
@@ -262,6 +281,7 @@ export async function initReadModel(
     locales,
     defaultCurrency,
     tourProviders,
+    ...(exchangeRates !== undefined && { exchangeRates }),
     suspendedAgencies,
     ...(sources.usage !== undefined && { usage: sources.usage }),
   });
@@ -275,6 +295,8 @@ export interface ReadModelParts {
   locales: LocaleConfig;
   defaultCurrency: string;
   tourProviders: TourProvidersConfig;
+  /** Optional; without it there is no currency conversion. */
+  exchangeRates?: ExchangeRatesConfig;
   /** Shared by search and detail, so both see the same suspension state. */
   suspendedAgencies: SuspendedAgencies;
   /** Defaults to none. */
@@ -287,7 +309,7 @@ export interface ReadModelParts {
  */
 export function createReadModel(parts: ReadModelParts): ReadModel {
   const { guard, provider, taxonomy, locales, defaultCurrency, tourProviders } = parts;
-  const { suspendedAgencies } = parts;
+  const { suspendedAgencies, exchangeRates } = parts;
   const usage = parts.usage ?? NO_USAGE;
   return {
     guard,
@@ -296,11 +318,13 @@ export function createReadModel(parts: ReadModelParts): ReadModel {
     locales,
     defaultCurrency,
     tourProviders,
+    exchangeRates,
     search: createSearchService({
       provider,
       taxonomy,
       tourProviders,
       defaultCurrency,
+      ...(exchangeRates !== undefined && { exchangeRates }),
       suspendedAgencies,
       usage,
     }),

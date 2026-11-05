@@ -118,15 +118,22 @@ describe('InMemorySearchProvider filters', () => {
   });
 
   it('price is inclusive, applies to the selected offer type and requires its currency', async () => {
-    const price = { currency: 'EUR', min: 100_000_00, max: 200_000_00 };
+    const price = [{ currency: 'EUR', min: 100_000_00, max: 200_000_00 }] as const;
     await expect(ids({ offerType: 'SALE', price })).resolves.toEqual(['b1', 'k2', 's1']);
     // b1's sale price must not satisfy a RENT price filter.
     await expect(
-      ids({ offerType: 'RENT', price: { currency: 'EUR', min: 900_00 } }),
+      ids({ offerType: 'RENT', price: [{ currency: 'EUR', min: 900_00 }] }),
     ).resolves.toEqual(['b1']);
     await expect(
-      ids({ offerType: 'SALE', price: { currency: 'USD', max: 200_000_00 } }),
+      ids({ offerType: 'SALE', price: [{ currency: 'USD', max: 200_000_00 }] }),
     ).resolves.toEqual(['s3']);
+    // Several currencies (converted bounds) are OR-combined.
+    await expect(
+      ids({
+        offerType: 'SALE',
+        price: [...price, { currency: 'USD', max: 200_000_00 }],
+      }),
+    ).resolves.toEqual(['b1', 'k2', 's1', 's3']);
   });
 
   it('rooms, area, city (case-insensitive), postal code and types are AND-combined', async () => {

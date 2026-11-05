@@ -23,13 +23,20 @@ export interface PriceCondition extends IntRange {
   currency: string;
 }
 
+/**
+ * Price conditions, OR-combined: one per currency. Without currency conversion there is exactly
+ * one (the requested currency); with `convertCurrency=true` the SearchService adds the converted
+ * bounds of every currency with an exchange rate.
+ */
+export type PriceConditions = readonly [PriceCondition, ...PriceCondition[]];
+
 /** A price condition only exists together with an offer type (Req 12.8). */
 export type OfferCondition =
   | { offerType?: undefined; price?: undefined }
   | {
       /** Listing must have an offer of this type (Req 12.6). */
       offerType: OfferType;
-      price?: PriceCondition;
+      price?: PriceConditions;
     };
 
 /** Query as seen by a provider: validated and resolved; all conditions are AND-combined. */
@@ -228,7 +235,7 @@ function offerMatches(doc: SearchDocument, q: ResolvedQuery): boolean {
       : [doc.rentAmountMinor, doc.rentCurrency];
   if (amount === undefined) return false;
   if (q.price === undefined) return true;
-  return currency === q.price.currency && inRange(amount, q.price);
+  return q.price.some((price) => currency === price.currency && inRange(amount, price));
 }
 
 /** Reference predicate: does `doc` satisfy every condition of `q`? (Req 1.1–1.4, 1.9, 12.6–12.9, 16.9) */

@@ -115,8 +115,14 @@ function addFilter(q: ResolvedQuery, b: ExpressionBuilder): string | undefined {
         : ['rentAmountMinor', 'rentCurrency'];
     parts.push(`attribute_exists(${b.name(amount)})`);
     if (q.price !== undefined) {
-      parts.push(`${b.name(currency)} = ${b.value(q.price.currency)}`);
-      b.range(amount, q.price, parts);
+      // One currency: plain AND terms (as without conversion); several: OR of AND groups.
+      const conditions = q.price.map((price) => {
+        const terms = [`${b.name(currency)} = ${b.value(price.currency)}`];
+        b.range(amount, price, terms);
+        return terms;
+      });
+      if (conditions.length === 1) parts.push(...(conditions[0] ?? []));
+      else parts.push(`(${conditions.map((terms) => `(${terms.join(' AND ')})`).join(' OR ')})`);
     }
   }
   b.range('roomsHalf', q.roomsHalf, parts);

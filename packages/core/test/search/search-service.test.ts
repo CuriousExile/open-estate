@@ -3,6 +3,7 @@ import {
   createSearchService,
   InMemorySearchProvider,
   type ResolvedQuery,
+  type SearchProvider,
   type SearchServiceDeps,
   type SuspendedAgencies,
 } from '@open-estate/core';
@@ -145,6 +146,65 @@ describe('SearchService', () => {
       await expect(
         searchIds(mixed, { offerType: 'SALE', priceMin: '1', currency: 'CHF' }),
       ).resolves.toEqual(['chf']);
+    });
+  });
+
+  describe('currency conversion (convertCurrency=true)', () => {
+    // 1 EUR = 40 THB = 1.25 USD; JPY has no rate.
+    const exchangeRates = { base: 'EUR', asOf: '2026-11-01', rates: { THB: 40, USD: 1.25 } };
+    const data = [
+      sale('eur', 100_000_00),
+      sale('thb', 4_000_000_00, 'THB'), // = 100,000 EUR
+      sale('thb-big', 8_000_000_00, 'THB'), // = 200,000 EUR
+      sale('usd', 150_000_00, 'USD'), // = 120,000 EUR
+      sale('jpy', 1_00, 'JPY'),
+    ];
+    const ids = (raw: Record<string, unknown>, deps: Partial<SearchServiceDeps> = {}) =>
+      searchIds(data, { offerType: 'SALE', ...raw }, { exchangeRates, ...deps });
+
+    it('matches offers in every currency with a rate after converting the bounds', async () => {
+      await expect(ids({ priceMax: '120000', convertCurrency: 'true' })).resolves.toEqual([
+        'eur',
+        'thb',
+        'usd',
+      ]);
+      await expect(
+        ids({ priceMin: '4000000', priceMax: '4000000', currency: 'THB', convertCurrency: true }),
+      ).resolves.toEqual(['eur', 'thb']);
+    });
+
+    it('compares in one currency without the flag, without rates or for a currency without rate', async () => {
+      await expect(ids({ priceMax: '120000' })).resolves.toEqual(['eur']);
+      await expect(
+        ids({ priceMax: '120000', convertCurrency: true }, { exchangeRates: undefined }),
+      ).resolves.toEqual(['eur']);
+      await expect(
+        ids({ priceMax: '1000', currency: 'JPY', convertCurrency: true }),
+      ).resolves.toEqual(['jpy']);
+    });
+
+    it('resolves one price condition per currency, the requested one first', async () => {
+      const searches: ResolvedQuery[] = [];
+      const recording: SearchProvider = {
+        search: async (q) => {
+          searches.push(q);
+          return { items: [] };
+        },
+        getById: async () => null,
+        locations: async () => ({ countries: [], cities: [] }),
+      };
+      const q = query({
+        offerType: 'SALE',
+        priceMin: '1.01',
+        priceMax: '2',
+        convertCurrency: true,
+      });
+      await service([], { provider: recording, exchangeRates }).search(q, []);
+      expect(searches[0]?.price).toEqual([
+        { currency: 'EUR', min: 101, max: 200 },
+        { currency: 'THB', min: 4040, max: 8000 },
+        { currency: 'USD', min: 127, max: 250 },
+      ]);
     });
   });
 

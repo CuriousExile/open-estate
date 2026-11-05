@@ -98,7 +98,7 @@ describe('DynamoDbSearchProvider.search', () => {
     const { provider, inputs } = setup(queryPages([[]]));
     await provider.search({
       offerType: 'RENT',
-      price: { currency: 'EUR', min: 50000, max: 150000 },
+      price: [{ currency: 'EUR', min: 50000, max: 150000 }],
       roomsHalf: { min: 4 },
       areaMinor: { max: 9000 },
       cityNorm: 'köln',
@@ -142,11 +142,36 @@ describe('DynamoDbSearchProvider.search', () => {
   it('filters SALE offers on the sale fields; offer type without price only requires existence', async () => {
     const { provider, inputs } = setup(queryPages([[]]));
     await provider.search({ offerType: 'SALE' });
-    await provider.search({ offerType: 'SALE', price: { currency: 'CHF', max: 1 } });
+    await provider.search({ offerType: 'SALE', price: [{ currency: 'CHF', max: 1 }] });
     expect(inputs().map((i) => i.FilterExpression)).toEqual([
       'attribute_exists(#saleAmountMinor)',
       'attribute_exists(#saleAmountMinor) AND #saleCurrency = :v1 AND #saleAmountMinor <= :v2',
     ]);
+  });
+
+  it('OR-combines the price conditions of several currencies (currency conversion)', async () => {
+    const { provider, inputs } = setup(queryPages([[]]));
+    await provider.search({
+      offerType: 'SALE',
+      price: [
+        { currency: 'EUR', max: 100 },
+        { currency: 'THB', min: 5, max: 4000 },
+      ],
+      country: 'TH',
+    });
+    const [input] = inputs();
+    expect(input?.FilterExpression).toBe(
+      'attribute_exists(#saleAmountMinor) AND ((#saleCurrency = :v1 AND #saleAmountMinor <= :v2)' +
+        ' OR (#saleCurrency = :v3 AND #saleAmountMinor >= :v4 AND #saleAmountMinor <= :v5))' +
+        ' AND #country = :v6',
+    );
+    expect(input?.ExpressionAttributeValues).toMatchObject({
+      ':v1': 'EUR',
+      ':v2': 100,
+      ':v3': 'THB',
+      ':v4': 5,
+      ':v5': 4000,
+    });
   });
 
   it('excludes suspended agencies with NOT IN, split into chunks of 100 operands (Req 1.9)', async () => {

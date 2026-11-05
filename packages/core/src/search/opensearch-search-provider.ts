@@ -65,7 +65,9 @@ export type OpenSearchFilterClause =
   | { term: Partial<Record<Field, string>> }
   | { terms: Partial<Record<Field, string[]>> }
   | { range: Partial<Record<Field, { gte?: number; lte?: number }>> }
-  | { exists: { field: Field } };
+  | { exists: { field: Field } }
+  | { bool: { filter: OpenSearchFilterClause[] } }
+  | { bool: { should: OpenSearchFilterClause[]; minimum_should_match: 1 } };
 
 export interface OpenSearchSearchBody {
   size: number;
@@ -99,8 +101,21 @@ export function buildOpenSearchFilter(q: ResolvedQuery): OpenSearchFilterClause[
         : ['rentAmountMinor', 'rentCurrency'];
     filter.push({ exists: { field: amount } });
     if (q.price !== undefined) {
-      filter.push({ term: { [currency]: q.price.currency } });
-      range(amount, q.price, filter);
+      // One currency: plain filter clauses (as without conversion); several: `should` of groups.
+      const conditions = q.price.map((price) => {
+        const clauses: OpenSearchFilterClause[] = [{ term: { [currency]: price.currency } }];
+        range(amount, price, clauses);
+        return clauses;
+      });
+      if (conditions.length === 1) filter.push(...(conditions[0] ?? []));
+      else {
+        filter.push({
+          bool: {
+            should: conditions.map((clauses) => ({ bool: { filter: clauses } })),
+            minimum_should_match: 1,
+          },
+        });
+      }
     }
   }
   range('roomsHalf', q.roomsHalf, filter);
