@@ -20,14 +20,19 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 
 ## Frontend
 
-- **Bundle size.** The initial bundle is about 693 kB, under the 700 kB warning budget (the
-  listing detail view and the "More filters" sheet are lazy chunks; the image carousel of the
-  result cards is not). The main
+- **Bundle size.** The initial bundle is about 690 kB, under the 700 kB warning budget (the
+  listing detail view, the result list and the "More filters" sheet are lazy chunks; theme switch,
+  display currency and the inline theme script added about 8 kB, offset by deferring the result
+  list). The main
   parts are Angular (~395 kB incl. router and forms), `angular-auth-oidc-client` (~135 kB) and zod
   (~130 kB). The OIDC client cannot move into the lazy portal chunks: its services are
   `providedIn: 'root'` and need `StsConfigLoader` and the storage/logger tokens at root, and its
   bundle does not tree-shake, so any root import pulls all of it. zod stays small only with
   `import * as z from 'zod'` (enforced by lint) and `sideEffects: false` in shared.
+- **Light/dark theme and display currency have no browser test.** Their models (theme
+  preference, inline script parity, light palette derivation, price conversion and formatting) are
+  unit-tested; both themes were checked in headless Chromium only. Contrast was checked for the
+  default palette; explicit `colors.light` values of a deployment are not checked.
 - **Native dropdowns left in the portal.** The property type selects of the listing form and the
   listing table group types by property group (`<optgroup>`); `oe-select` has no option groups
   yet, so they stay native `<select>`. All other dropdowns use `oe-select`.
@@ -111,6 +116,17 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 - **City names are not translated.** `/locations` and the city filter use the stored
   `address.city`; "München" and "Munich" are different cities. Country names are localized in the
   frontend only (`Intl.DisplayNames`).
+- **Exchange rates are static configuration.** `exchange-rates.json` (config bucket, `/meta`
+  `exchangeRates`) is maintained by hand; nothing fetches rates from an external service. Converted
+  prices in the frontend (shown as "≈") and price filters with `convertCurrency=true` are only as
+  current as the file. To update: edit the rates and `asOf`, deploy, then run
+  `open-estate-admin reload` (the Lambdas read the file at cold start; the frontend reads `/meta`
+  on each page load). A scheduled updater (e.g. an EventBridge rule writing the file from a rates
+  provider) is planned for later and not designed yet; it would need a licence-compatible source.
+- **Converted price filters grow the query.** With `convertCurrency=true` the filter has one
+  condition per configured currency (at most 31, `EXCHANGE_RATES_BOUNDS`); with DynamoDB that is
+  a longer `FilterExpression` (4 KB limit), with OpenSearch a `bool.should`. Results are not sorted
+  by converted price — the order stays `id` ascending.
 
 ## Data and import
 

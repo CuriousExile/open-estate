@@ -21,6 +21,8 @@ describe('theme documentation', () => {
       logoUrl: THEME_DEFAULTS.logoUrl,
       'colors.primary': THEME_DEFAULTS.colors.primary,
       'colors.secondary': THEME_DEFAULTS.colors.secondary,
+      'colors.light.primary': THEME_DEFAULTS.colors.light.primary,
+      'colors.light.secondary': THEME_DEFAULTS.colors.light.secondary,
       'texts.appTitle.<locale>': THEME_DEFAULTS.texts.appTitle,
     });
     for (const row of rows.values()) expect(row.format?.length).toBeGreaterThan(0);

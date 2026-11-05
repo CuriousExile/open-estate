@@ -1,9 +1,9 @@
 # Configuration
 
 Open Estate is configured with JSON files. You don't change application code to rebrand the frontend,
-add a language, extend the property taxonomy or allow a 3D tour provider. This page covers those four
-areas. Connector configuration (`connectors.json`, `pii-allowlist.json`, `crawler-allowlist.json`)
-is described in [connectors.md](connectors.md).
+add a language, extend the property taxonomy, allow a 3D tour provider or set exchange rates. This
+page covers those areas. Connector configuration (`connectors.json`, `pii-allowlist.json`,
+`crawler-allowlist.json`) is described in [connectors.md](connectors.md).
 
 | File                                             | Read by                                    | Takes effect                       |
 | ------------------------------------------------ | ------------------------------------------ | ---------------------------------- |
@@ -12,6 +12,7 @@ is described in [connectors.md](connectors.md).
 | `packages/frontend/public/i18n/<locale>.json`    | Frontend                                   | Deploy, then reload the page       |
 | `packages/shared/src/config/taxonomy.json`       | API, MCP, connectors; frontend via `/meta` | Deploy, then reload (Lambda)       |
 | `packages/shared/src/config/tour-providers.json` | API, MCP, connectors; CSP of the frontend  | Deploy, then reload (Lambda)       |
+| `packages/shared/src/config/exchange-rates.json` | API, MCP; frontend via `/meta`             | Deploy, then reload (Lambda)       |
 
 ## Applying changes
 
@@ -49,7 +50,8 @@ Two CDK context values point synth at your own files. Relative paths resolve aga
 directory, which is `packages/infra` when you use `npm run … --workspace`, so use absolute paths:
 
 - `-c configDir=<dir>` replaces `packages/shared/src/config` completely. The directory must contain
-  `taxonomy.json`. It may also contain `tour-providers.json` and the connector files. Unknown files
+  `taxonomy.json`. It may also contain `tour-providers.json`, `exchange-rates.json` and the
+  connector files. Unknown files
   are rejected. It must not contain `i18n-config.json`, which is mirrored from the frontend (see
   below).
 - `-c i18nConfigFile=<dir>/i18n-config.json` replaces the frontend's `public/` files. The
@@ -81,8 +83,10 @@ If the file is missing or isn't a JSON object, all defaults apply. Defaults and 
 | Key                       | Format                                           | Default       | Used for                                    |
 | ------------------------- | ------------------------------------------------ | ------------- | ------------------------------------------- |
 | `logoUrl`                 | Relative or `https://` URL, see below            | `logo.svg`    | Header logo (decorative, next to the title) |
-| `colors.primary`          | Hex colour `#RRGGBB` or `#RGB`, case-insensitive | `#12352B`     | CSS property `--brand-primary`              |
-| `colors.secondary`        | Hex colour `#RRGGBB` or `#RGB`, case-insensitive | `#A7E3C4`     | CSS property `--brand-secondary` (accents)  |
+| `colors.primary`          | Hex colour `#RRGGBB` or `#RGB`, case-insensitive | `#12352B`     | Dark theme: CSS property `--brand-primary`  |
+| `colors.secondary`        | Hex colour `#RRGGBB` or `#RGB`, case-insensitive | `#A7E3C4`     | Dark theme: `--brand-secondary` (accent)    |
+| `colors.light.primary`    | Hex colour, derived from `colors.primary`        | `#12352B`     | Light theme: `--brand-light-primary`        |
+| `colors.light.secondary`  | Hex colour, derived from `colors.secondary`      | `#A7E3C4`     | Light theme: `--brand-light-secondary`      |
 | `texts.appTitle.<locale>` | Non-empty text, at most 120 characters (trimmed) | `Open Estate` | Header title and `document.title`           |
 
 `logoUrl` is either a relative URL (same origin, e.g. `logo.svg` or `/brand/logo.png`) or an absolute
@@ -107,6 +111,44 @@ Every invalid locale entry is reported, whichever locale is active.
   }
 }
 ```
+
+### Light and dark theme
+
+The header has a theme switch: *System* (the default, follows the operating system's
+`prefers-color-scheme`), *Light* and *Dark*. The choice is stored like the language
+(`localStorage` key `open-estate.theme`). A small inline script in `index.html` sets
+`data-theme="light|dark"` and `color-scheme` on `<html>` before the first paint, so there is no
+flash of the wrong theme; the FrontendStack allows exactly this script in the CSP by its SHA-256
+hash. Both themes are sets of CSS custom properties in `src/styles.scss`
+(`:root[data-theme='dark']`, `:root[data-theme='light']`); components use only these semantic
+tokens (`--color-text`, `--color-surface`, `--color-accent`, …), never fixed colours.
+
+`theme-config.json` stays backward compatible: `colors.primary` and `colors.secondary` are the
+**dark** palette, as before. `colors.light` is optional and has the same two keys:
+
+- In the dark theme `secondary` is the accent on the dark background (buttons, links, focus rings,
+  selected chips) and `primary` the deep brand colour.
+- In the light theme `light.primary` is the accent on the light background (fills, links, focus
+  rings) and `light.secondary` the text on those fills.
+
+Each missing light value is derived from the dark palette: `light.primary` is `colors.primary`,
+darkened until it has a contrast of at least 4.5:1 on the light page background (`#F4EFE6`);
+`light.secondary` is `colors.secondary` if it has 4.5:1 on `light.primary`, otherwise white
+(`deriveLightPalette` in `resolve-theme.ts`). Explicit light values are used as given — check their
+contrast yourself.
+
+```json
+{
+  "colors": {
+    "primary": "#1D3557",
+    "secondary": "#F1C40F",
+    "light": { "primary": "#1D3557", "secondary": "#FFF4C2" }
+  }
+}
+```
+
+In the light theme the hero image keeps its colours but fades into the light page at the top and
+behind the search card; after a search the page uses a light surface instead of the dark overlay.
 
 There are two ways to host the logo:
 
@@ -138,7 +180,8 @@ Because `public/` files get a one-year `immutable` cache header, prefer new file
 image (and update the `image-set()` URLs); browsers that cached an old file under the same name
 keep showing it.
 
-After a search the same background stays behind a dark green overlay; the search card moves into
+After a search the same background stays behind a dark green overlay (a light surface in the light
+theme); the search card moves into
 the sticky header (animated with view transitions, skipped for `prefers-reduced-motion`).
 
 ## Search filters
@@ -411,3 +454,38 @@ The allowlist is enforced in four places:
 Tours that were dropped before the provider was added come back only when the listing is imported
 again. If you remove a provider, its tours that are already stored disappear from `hasTour` results
 and are no longer embedded.
+
+## Exchange rates
+
+`exchange-rates.json` holds static exchange rates. They are used in two places:
+
+- **Display currency in the frontend.** Next to the country, the header has a currency selector:
+  *Original currency* (the default, every price in the listing's own currency) or one of the
+  configured currencies. With a currency selected, result cards and the detail view show the
+  converted amount marked as approximate ("≈ 110.818 €") with the original amount below it. The
+  choice is stored like the country (`localStorage` key `open-estate.currency`).
+- **Price filter.** The price fields of the search use the selected currency, or `defaultCurrency`
+  with *Original currency*; the unit next to the fields says which. The frontend sends
+  `currency=<code>&convertCurrency=true`, so listings in other currencies match after conversion
+  (see [`GET /listings`](api.md#get-listings)). Switching the display currency converts the
+  entered bounds into the new currency. Searches in URLs carry `currency`, so a shared link keeps
+  its meaning.
+
+```json
+{
+  "base": "EUR",
+  "asOf": "2026-11-01",
+  "rates": { "CHF": 0.93, "GBP": 0.88, "THB": 37.9, "USD": 1.16 }
+}
+```
+
+- `base`: ISO 4217 code; one unit of `base` is worth `rates[X]` units of `X`. It needs no entry
+  in `rates` (if it has one, the rate must be `1`).
+- `asOf`: the date the rates were taken (`YYYY-MM-DD`); shown in the frontend's tooltip.
+- `rates`: at most 30 currencies besides the base, each a positive number. Unknown keys are
+  rejected (`ExchangeRatesConfig` in `packages/shared/src/exchange-rates.ts`).
+
+The file is optional. Without it `/meta` has no `exchangeRates`, the frontend offers only
+*Original currency*, and price filters compare in one currency. Rates are never fetched from an
+external service: update the file by hand, deploy and run `open-estate-admin reload` (see
+[known issues](known-issues.md#search-api)).
