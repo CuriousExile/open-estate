@@ -50,25 +50,37 @@ The full design (data model, interfaces, correctness properties) lives in [`.kir
 - **Infrastructure:** AWS CDK
 - **Testing:** Jest + [fast-check](https://github.com/dubzzz/fast-check) for property-based tests
 
-## Repository layout (planned)
+## Repository layout
 
 ```
 packages/
-  shared/      # Listing model, API types, error codes
-  backend/     # API Lambdas, search providers
+  shared/      # Listing model, schemas, API types, error codes
+  core/        # Search and listing services, search providers, access guard
+  api/         # Search API Lambdas (search, detail, discovery)
+  mcp/         # MCP server for AI agents
+  admin/       # Admin API and CLI
   ingestion/   # Connector framework, crawler, compliance checker
   frontend/    # Angular white-label app
-infra/         # AWS CDK app
-docs/          # Installation, API, connector and theming guides
+  infra/       # AWS CDK app, seed data
+  loadtest/    # Load tests
+docs/          # Installation, API, MCP, connector and configuration guides
 ```
+
+## Documentation
+
+See the [documentation index](docs/README.md): installation and troubleshooting, Search API, MCP
+server, connectors, theming, translations, taxonomy and 3D tour providers.
 
 ## Getting started
 
-Not deployable yet — the first milestone is tracked in the [Roadmap](ROADMAP.md). Once it lands, deployment will be:
+Requires Node.js 22.22.3+ (Angular 22), an AWS account and a bootstrapped CDK environment. Full steps, configuration overrides and troubleshooting: [docs/installation.md](docs/installation.md).
 
 ```bash
-npm install
-npx cdk deploy --all
+npm ci
+npm run build   # the FrontendStack uploads packages/frontend/dist/browser
+npx cdk bootstrap aws://<account>/<region>   # once per account and region
+npm run deploy --workspace @open-estate/infra -- -c env=dev
+npm run seed --workspace @open-estate/infra -- --env dev   # sample listings
 ```
 
 ## Legal notice on crawling

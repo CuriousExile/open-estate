@@ -45,6 +45,18 @@ docs: describe theme-config.json color formats
   ```
 
 - Tests must not need an AWS account — use in-memory fakes.
+- Integration tests (`*.integration.test.ts`) run against [DynamoDB Local](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/DynamoDBLocal.html) and a local [OpenSearch](https://opensearch.org/) container. Each suite is skipped unless its endpoint (`DYNAMODB_ENDPOINT`, `OPENSEARCH_ENDPOINT`) is set; `npm run test:integration` sets both to the defaults below, so start both containers:
+
+  ```sh
+  docker run --rm -d --name dynamodb-local -p 8000:8000 amazon/dynamodb-local
+  docker run --rm -d --name opensearch -p 9200:9200 -e discovery.type=single-node \
+    -e DISABLE_SECURITY_PLUGIN=true -e OPENSEARCH_JAVA_OPTS="-Xms512m -Xmx512m" \
+    opensearchproject/opensearch:2.19.2   # wait until http://localhost:9200 answers (~30 s)
+  npm run test:integration   # defaults: http://localhost:8000, http://localhost:9200
+  docker stop dynamodb-local opensearch
+  ```
+
+- End-to-end tests (`*.e2e.test.ts`) run against a deployed environment and are skipped unless `OPEN_ESTATE_E2E_ENV` is set; see [docs/installation.md](docs/installation.md#end-to-end-tests).
 
 ## Connectors
 
