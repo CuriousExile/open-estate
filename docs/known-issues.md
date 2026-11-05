@@ -20,12 +20,24 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 
 ## Frontend
 
-- **Bundle size.** The initial bundle is about 665 kB, under the 700 kB warning budget. The main
+- **Bundle size.** The initial bundle is about 680 kB, under the 700 kB warning budget (the
+  listing detail view and the "More filters" sheet are lazy chunks). The main
   parts are Angular (~395 kB incl. router and forms), `angular-auth-oidc-client` (~135 kB) and zod
   (~130 kB). The OIDC client cannot move into the lazy portal chunks: its services are
   `providedIn: 'root'` and need `StsConfigLoader` and the storage/logger tokens at root, and its
   bundle does not tree-shake, so any root import pulls all of it. zod stays small only with
   `import * as z from 'zod'` (enforced by lint) and `sideEffects: false` in shared.
+- **Native dropdowns left in the portal.** The property type selects of the listing form and the
+  listing table group types by property group (`<optgroup>`); `oe-select` has no option groups
+  yet, so they stay native `<select>`. All other dropdowns use `oe-select`.
+- **No browser test of `oe-select`, rooms chips or "More filters".** Their framework-free models
+  are unit-tested (`select-model`, `rooms-chips`, `filter-registry`, `search-url`); keyboard,
+  focus and screen reader behaviour were checked manually in headless Chromium only.
+- **Hero image cache.** `hero-background.png` kept its file name; browsers that cached the old PNG
+  under the one-year `immutable` header and do not support AVIF/WebP keep the old image.
+- **More filters:** only filters the Search_API supports today (area, max. rooms, postal code, 3D
+  tour). State, region, bathrooms, pool or floor need backend filters first; see
+  [configuration](configuration.md#adding-a-filter-to-more-filters).
 - **Two diff views.** The listing form uses `portal/shared/diff-view`, the workspace its own
   `workspace/version-diff.component.ts`. Merge them.
 - **`toPublicDetailModel`** lives in the workspace folder and mirrors the Search_API's

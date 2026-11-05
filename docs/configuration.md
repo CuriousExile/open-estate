@@ -119,6 +119,66 @@ To apply a theme change, deploy (see [Applying changes](#applying-changes)). For
 without a deploy, upload `theme-config.json` to the frontend bucket with
 `--cache-control no-cache`. The next deploy overwrites it with the source file.
 
+### Start page background (hero)
+
+The start page shows `packages/frontend/public/hero-background.*` full-screen: AVIF and WebP for
+browsers that support them, a palette-reduced PNG as fallback (`image-set()` in
+`packages/frontend/src/styles.scss`). The image is not part of `theme-config.json`; to brand it:
+
+- Replace the three files (same motif, 16:9, about 1672×941). Keep the composition of the
+  default: buildings at the left and right edges, an empty middle for the search card. The image
+  is drawn with `background-size: cover`, centred, so on screens wider than 16:9 only the top and
+  bottom are cropped; on phones it shifts to the right edge (villa side).
+- Or set the CSS custom property `--hero-background` in a deployment stylesheet, e.g.
+  `:root { --hero-background: url('/brand/hero.webp'); }`.
+- Produce the compressed variants with any optimizer, e.g. `cwebp -q 80`, `avifenc -q 60` and
+  `magick in.png -colors 256 PNG8:hero-background.png`. No npm dependency is needed.
+
+Because `public/` files get a one-year `immutable` cache header, prefer new file names for a new
+image (and update the `image-set()` URLs); browsers that cached an old file under the same name
+keep showing it.
+
+After a search the same background stays behind a dark green overlay; the search card moves into
+the sticky header (animated with view transitions, skipped for `prefers-reduced-motion`).
+
+## Search filters
+
+The public search has a lean main bar — offer type, city, property group, price and the rooms
+chips (`roomsMin`: Any, 1+ … 5+) — and a **More filters** view (drawer, full-screen sheet on phones)
+with the remaining filters: living area (`areaMin`/`areaMax`), maximum rooms (`roomsMax`), postal
+code (`postalCode`) and 3D tour (`hasTour`). A badge on the button counts the active extra filters.
+A search is part of the URL (`/?offerType=SALE&city=Berlin&hasTour=true`), so it can be shared;
+the query parameters are the `GET /listings` parameter names. The header's country stays a
+separate, remembered choice (`?country=XX` preselects it).
+
+### Adding a filter to More filters
+
+The view is rendered from a declarative registry,
+`packages/frontend/src/app/search/filters/extra-filters.ts`. Each entry has an `id`, a `labelKey`
+(optional `hintKey`), a `kind` and the form field(s) it binds:
+
+- `toggle` — one boolean field, e.g. `hasTour`;
+- `text` — one text field with `maxLength` (optional `inputMode`, `autocomplete`, `placeholderKey`);
+- `number` — one decimal field (optional `unitKey`);
+- `number-range` — a `min`/`max` pair of decimal fields;
+- `select` — one field with `choices(meta)` from `/meta` and an `anyLabelKey`, shown with the
+  shared `oe-select` dropdown.
+
+The field names are the URL query parameters and the Search_API parameters. Badge count, Reset,
+URL mapping and validation follow from the entry: the shared `SearchQuery` schema validates every
+field (bounds, Min ≤ Max, known codes), and an optional `validate(values)` adds frontend-only
+rules. To add a filter:
+
+1. Make sure the Search_API supports it (`SearchQuery` in `packages/shared/src/schema/search.ts`).
+   The frontend must not offer filters the API ignores; new backend filters are a separate change.
+2. If the field is new to the form, add it to `SearchFormValues`, `INITIAL_SEARCH_FORM_VALUES` and
+   `SEARCH_FORM_FIELDS` in `validate-search-form.ts` (and map it in `toRawQuery`).
+3. Append the definition to `EXTRA_FILTERS` and add its translation keys to every
+   `i18n/<locale>.json` (the key-parity and template-i18n tests fail otherwise).
+
+`test/filter-registry.test.ts` checks that ids and fields are unique and that every form field
+belongs to either the main bar or the registry.
+
 ## Translations & locales
 
 ### `i18n-config.json`
