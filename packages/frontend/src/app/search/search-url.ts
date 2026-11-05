@@ -72,3 +72,29 @@ export function searchQueryParams(params: SearchParams): Record<string, string> 
 export function isSearchLayoutChange(from: QueryParams, to: QueryParams): boolean {
   return isSearchQuery(from) !== isSearchQuery(to);
 }
+
+/**
+ * Query parameter of the listing opened from the results (`/?offerType=SALE&listing=<id>`): the
+ * detail view survives a reload, and back/forward close and reopen it. Not a form field, so a new
+ * search drops it.
+ */
+export const LISTING_QUERY_PARAM = 'listing';
+
+/** Upper bound for an id taken from the URL (listing ids are far shorter). */
+const MAX_LISTING_ID_LENGTH = 200;
+
+/** Id of the listing opened in a search URL; `undefined` without a (plausible) one. */
+export function listingIdFromQuery(query: QueryParams): string | undefined {
+  if (!isSearchQuery(query)) return undefined;
+  const id = first(query[LISTING_QUERY_PARAM])?.trim();
+  return id === undefined || id === '' || id.length > MAX_LISTING_ID_LENGTH ? undefined : id;
+}
+
+/** Same form values (compared field by field), so opening a listing does not re-run the search. */
+export function sameFormValues(
+  a: Required<SearchFormValues> | undefined,
+  b: Required<SearchFormValues> | undefined,
+): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return SEARCH_FORM_FIELDS.every((field) => a[field] === b[field]);
+}

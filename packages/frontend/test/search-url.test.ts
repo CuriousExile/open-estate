@@ -2,6 +2,9 @@ import {
   formValuesFromQuery,
   isSearchLayoutChange,
   isSearchQuery,
+  LISTING_QUERY_PARAM,
+  listingIdFromQuery,
+  sameFormValues,
   searchQueryParams,
 } from '../src/app/search/search-url';
 import {
@@ -90,5 +93,29 @@ describe('search URL', () => {
     expect(isSearchLayoutChange({ offerType: 'SALE' }, {})).toBe(true);
     expect(isSearchLayoutChange({ offerType: 'SALE' }, { offerType: 'RENT' })).toBe(false);
     expect(isSearchLayoutChange({}, { country: 'TH' })).toBe(false);
+  });
+
+  it('reads the opened listing from a search URL', () => {
+    expect(listingIdFromQuery({ offerType: 'SALE', listing: 'l-1' })).toBe('l-1');
+    expect(listingIdFromQuery({ offerType: 'SALE', listing: ['l-2', 'l-3'] })).toBe('l-2');
+    expect(listingIdFromQuery({ offerType: 'SALE', listing: '  ' })).toBeUndefined();
+    expect(listingIdFromQuery({ offerType: 'SALE', listing: 'x'.repeat(201) })).toBeUndefined();
+    expect(listingIdFromQuery({ offerType: 'SALE' })).toBeUndefined();
+    // Only within a search; the public detail URL is /listings/:id.
+    expect(listingIdFromQuery({ listing: 'l-1' })).toBeUndefined();
+  });
+
+  it('keeps the search when only the opened listing changes, and drops it on a new search', () => {
+    const query = { offerType: 'RENT', city: 'Kiel' };
+    const withListing = { ...query, [LISTING_QUERY_PARAM]: 'l-1' };
+    expect(sameFormValues(formValuesFromQuery(query), formValuesFromQuery(withListing))).toBe(true);
+    expect(
+      sameFormValues(formValuesFromQuery(query), formValuesFromQuery({ offerType: 'RENT' })),
+    ).toBe(false);
+    expect(sameFormValues(undefined, undefined)).toBe(true);
+    expect(sameFormValues(undefined, formValuesFromQuery(query))).toBe(false);
+    expect(searchQueryParams({ offerType: 'RENT', city: 'Kiel' })).not.toHaveProperty(
+      LISTING_QUERY_PARAM,
+    );
   });
 });
