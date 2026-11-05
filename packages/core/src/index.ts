@@ -13,6 +13,7 @@ export * from './search/search-provider-factory';
 export * from './search/service-unavailable-error';
 export * from './search/search-service';
 export * from './search/listing-service';
+export * from './search/location-service';
 export * from './search/suspended-agencies';
 export * from './deletion/deletion-tables';
 export * from './deletion/deletion-blocklist-check';

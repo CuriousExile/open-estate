@@ -103,6 +103,7 @@ describe('DynamoDbSearchProvider.search', () => {
       areaMinor: { max: 9000 },
       cityNorm: 'köln',
       postalCode: '50667',
+      country: 'DE',
       listingTypes: ['APARTMENT', 'LOFT'],
       tourHosts: ['my.matterport.com', 'kuula.co'],
       after: 'id-007',
@@ -113,9 +114,9 @@ describe('DynamoDbSearchProvider.search', () => {
       'attribute_exists(#rentAmountMinor) AND #rentCurrency = :v2' +
         ' AND #rentAmountMinor >= :v3 AND #rentAmountMinor <= :v4' +
         ' AND #roomsHalf >= :v5 AND #areaMinor <= :v6' +
-        ' AND #cityNorm = :v7 AND #postalCode = :v8' +
-        ' AND #listingType IN (:v9, :v10)' +
-        ' AND (contains(#tourHosts, :v11) OR contains(#tourHosts, :v12))',
+        ' AND #cityNorm = :v7 AND #postalCode = :v8 AND #country = :v9' +
+        ' AND #listingType IN (:v10, :v11)' +
+        ' AND (contains(#tourHosts, :v12) OR contains(#tourHosts, :v13))',
     );
     expect(input?.ExpressionAttributeValues).toEqual({
       ':v0': 'L',
@@ -127,10 +128,11 @@ describe('DynamoDbSearchProvider.search', () => {
       ':v6': 9000,
       ':v7': 'köln',
       ':v8': '50667',
-      ':v9': 'APARTMENT',
-      ':v10': 'LOFT',
-      ':v11': 'my.matterport.com',
-      ':v12': 'kuula.co',
+      ':v9': 'DE',
+      ':v10': 'APARTMENT',
+      ':v11': 'LOFT',
+      ':v12': 'my.matterport.com',
+      ':v13': 'kuula.co',
     });
     for (const [placeholder, name] of Object.entries(input?.ExpressionAttributeNames ?? {})) {
       expect(placeholder).toBe(`#${name}`);

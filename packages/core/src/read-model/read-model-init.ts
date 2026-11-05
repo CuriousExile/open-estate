@@ -23,6 +23,7 @@ import { ConfigError } from '../config/config-error';
 import { loadConfig, SSM_PARAMETER_SUFFIX, type ConfigSources } from '../config/config-provider';
 import { DynamoDbAgencyStore } from '../management/agency-store';
 import { createListingService, type ListingService } from '../search/listing-service';
+import { createLocationService, type LocationService } from '../search/location-service';
 import { createOpenSearchClient } from '../search/opensearch-client';
 import {
   createSearchProvider,
@@ -119,6 +120,8 @@ export interface ReadModel {
   tourProviders: TourProvidersConfig;
   search: SearchService;
   listings: ListingService;
+  /** Countries and cities with public listings (`GET /locations`). */
+  locations: LocationService;
 }
 
 const EMPTY_TOUR_PROVIDERS: TourProvidersConfig = { providers: [] };
@@ -302,6 +305,7 @@ export function createReadModel(parts: ReadModelParts): ReadModel {
       usage,
     }),
     listings: createListingService({ provider, taxonomy, suspendedAgencies, usage }),
+    locations: createLocationService({ provider, suspendedAgencies }),
   };
 }
 

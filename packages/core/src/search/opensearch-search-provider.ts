@@ -1,9 +1,12 @@
-import type { Listing } from '@open-estate/shared';
+import type { Listing, LocationsDocument } from '@open-estate/shared';
 import { DOWNSTREAM_DEADLINE_MS } from '../deadlines';
 import { toSearchDocument, type SearchDocument } from './search-document';
 import {
+  compareCities,
+  compareCodePoints,
   effectivePageSize,
   type IntRange,
+  type LocationQuery,
   type ResolvedQuery,
   type SearchProvider,
   type SearchResult,
@@ -104,6 +107,7 @@ export function buildOpenSearchFilter(q: ResolvedQuery): OpenSearchFilterClause[
   range('areaMinor', q.areaMinor, filter);
   if (q.cityNorm !== undefined) filter.push({ term: { cityNorm: q.cityNorm } });
   if (q.postalCode !== undefined) filter.push({ term: { postalCode: q.postalCode } });
+  if (q.country !== undefined) filter.push({ term: { country: q.country } });
   if (q.listingTypes !== undefined) filter.push({ terms: { listingType: [...q.listingTypes] } });
   // `terms` on the multi-valued keyword field: at least one host in the current allow-list.
   if (q.tourHosts !== undefined) filter.push({ terms: { tourHosts: [...q.tourHosts] } });
@@ -229,7 +233,16 @@ export class OpenSearchSearchProvider implements SearchProvider {
     return found ?? null;
   }
 
-  private async query(body: Record<string, unknown>): Promise<StoredListing[]> {
+  async locations(q: LocationQuery): Promise<LocationsDocument> {
+    return this.request(buildOpenSearchLocationsBody(q), locationsOf);
+  }
+
+  private query(body: Record<string, unknown>): Promise<StoredListing[]> {
+    return this.request(body, storedListingsOf);
+  }
+
+  /** One `search` request under the deadline; a malformed response (`parse` throws) fails too. */
+  private async request<T>(body: Record<string, unknown>, parse: (body: unknown) => T): Promise<T> {
     const signal = this.deadlineSignal(this.deadlineMs);
     try {
       signal.throwIfAborted();
@@ -246,7 +259,7 @@ export class OpenSearchSearchProvider implements SearchProvider {
         signal.addEventListener('abort', onAbort, { once: true });
         request.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
       });
-      return storedListingsOf(response.body);
+      return parse(response.body);
     } catch (cause) {
       const message = signal.aborted
         ? `OpenSearch deadline of ${this.deadlineMs} ms exceeded`
@@ -254,4 +267,72 @@ export class OpenSearchSearchProvider implements SearchProvider {
       throw new ServiceUnavailableError(message, { cause });
     }
   }
+}
+
+/** Bucket limits of the `/locations` aggregation (OpenSearch provider). */
+export const OPENSEARCH_LOCATION_LIMITS = { countries: 250, citiesPerCountry: 1000 } as const;
+
+/**
+ * Aggregation for `GET /locations` (pure): `terms` on `country`, nested `terms` on `cityNorm`
+ * and one `top_hits` per city for a stored spelling of `address.city`. No hits are returned.
+ */
+export function buildOpenSearchLocationsBody(q: LocationQuery): Record<string, unknown> {
+  const excluded = q.excludeAgencies ?? [];
+  return {
+    size: 0,
+    track_total_hits: false,
+    query: {
+      bool: {
+        filter: [],
+        ...(excluded.length > 0 ? { must_not: [{ terms: { agencyId: [...excluded] } }] } : {}),
+      },
+    },
+    aggs: {
+      countries: {
+        terms: { field: 'country', size: OPENSEARCH_LOCATION_LIMITS.countries },
+        aggs: {
+          cities: {
+            terms: { field: 'cityNorm', size: OPENSEARCH_LOCATION_LIMITS.citiesPerCountry },
+            aggs: { name: { top_hits: { size: 1, _source: ['listing.address.city'] } } },
+          },
+        },
+      },
+    },
+  };
+}
+
+interface TermsBucket<T> {
+  key?: unknown;
+  doc_count?: unknown;
+  cities?: T;
+  name?: { hits?: { hits?: { _source?: { listing?: { address?: { city?: unknown } } } }[] } };
+}
+
+/** Parses the aggregation of {@link buildOpenSearchLocationsBody}; malformed → throws. */
+export function locationsOf(body: unknown): LocationsDocument {
+  const aggregations = (body as { aggregations?: unknown } | undefined)?.aggregations as
+    { countries?: { buckets?: TermsBucket<{ buckets?: TermsBucket<never>[] }>[] } } | undefined;
+  const buckets = aggregations?.countries?.buckets;
+  if (!Array.isArray(buckets)) throw new Error('OpenSearch response without country buckets');
+  const countries: LocationsDocument['countries'] = [];
+  const cities: LocationsDocument['cities'] = [];
+  for (const bucket of buckets) {
+    const { key: code, doc_count: count } = bucket;
+    if (typeof code !== 'string' || typeof count !== 'number') {
+      throw new Error('OpenSearch country bucket without key or count');
+    }
+    countries.push({ code, count });
+    for (const city of bucket.cities?.buckets ?? []) {
+      const name = city.name?.hits?.hits?.[0]?._source?.listing?.address?.city;
+      const cityCount = city.doc_count;
+      if (typeof name !== 'string' || typeof cityCount !== 'number') {
+        throw new Error('OpenSearch city bucket without name or count');
+      }
+      cities.push({ name, country: code, count: cityCount });
+    }
+  }
+  return {
+    countries: countries.sort((a, b) => compareCodePoints(a.code, b.code)),
+    cities: cities.sort(compareCities),
+  };
 }

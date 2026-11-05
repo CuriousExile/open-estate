@@ -4,7 +4,8 @@ import {
   type DynamoDBDocumentClient,
   type QueryCommandInput,
 } from '@aws-sdk/lib-dynamodb';
-import { ListingStatusSchema, type Listing } from '@open-estate/shared';
+import { ListingStatusSchema, type Listing, type LocationsDocument } from '@open-estate/shared';
+import { systemClock, TtlCache, type Clock } from '../access/ttl-cache';
 import { DOWNSTREAM_DEADLINE_MS } from '../deadlines';
 import {
   fromListingItem,
@@ -14,8 +15,11 @@ import {
   LISTINGS_BY_ID_PK_VALUE,
 } from './listings-table';
 import {
+  aggregateLocations,
   effectivePageSize,
   type IntRange,
+  type LocationEntry,
+  type LocationQuery,
   type ResolvedQuery,
   type SearchProvider,
   type SearchResult,
@@ -35,6 +39,41 @@ export interface DynamoDbSearchProviderOptions {
   deadlineMs?: number;
   /** Creates the deadline signal; injectable for tests. Defaults to `AbortSignal.timeout`. */
   deadlineSignal?: (ms: number) => AbortSignal;
+  /** Clock of the locations cache; injectable for tests. */
+  clock?: Clock;
+  /** Lifetime of the cached location rows; default {@link DYNAMODB_LOCATIONS_CACHE_TTL_MS}. */
+  locationsCacheTtlMs?: number;
+}
+
+/** `GET /locations` reads all public listings at most once per 5 minutes per Lambda instance. */
+export const DYNAMODB_LOCATIONS_CACHE_TTL_MS = 5 * 60_000;
+
+/** Projection query on `byId` that reads only country, city and owner of every `ACTIVE` listing. */
+export function buildLocationsQueryInput(tableName: string): QueryCommandInput {
+  return {
+    TableName: tableName,
+    IndexName: LISTINGS_BY_ID_INDEX,
+    KeyConditionExpression: '#pk = :pk',
+    ProjectionExpression: '#country, #address.#city, #agencyId',
+    ExpressionAttributeNames: {
+      '#pk': LISTINGS_BY_ID_PK_ATTRIBUTE,
+      '#country': 'country',
+      '#address': 'address',
+      '#city': 'city',
+      '#agencyId': 'agencyId',
+    },
+    ExpressionAttributeValues: { ':pk': LISTINGS_BY_ID_PK_VALUE },
+  };
+}
+
+/** Location row of a projected item; items without country or city are skipped. */
+function locationEntryOf(item: Record<string, unknown>): LocationEntry | undefined {
+  const address = item['address'] as Record<string, unknown> | undefined;
+  const city = address?.['city'];
+  const country = item['country'];
+  const agencyId = item['agencyId'];
+  if (typeof city !== 'string' || typeof country !== 'string') return undefined;
+  return { country, city, ...(typeof agencyId === 'string' && { agencyId }) };
 }
 
 type Values = Record<string, unknown>;
@@ -86,6 +125,7 @@ function addFilter(q: ResolvedQuery, b: ExpressionBuilder): string | undefined {
   if (q.postalCode !== undefined) {
     parts.push(`${b.name('postalCode')} = ${b.value(q.postalCode)}`);
   }
+  if (q.country !== undefined) parts.push(`${b.name('country')} = ${b.value(q.country)}`);
   // Non-empty here (empty sets short-circuit in `search`); ≤ 50 types and a small tour allow-list
   // stay well below DynamoDB's limit of 100 IN operands.
   if (q.listingTypes !== undefined) {
@@ -145,17 +185,21 @@ export class DynamoDbSearchProvider implements SearchProvider {
   private readonly tableName: string;
   private readonly deadlineMs: number;
   private readonly deadlineSignal: (ms: number) => AbortSignal;
+  private readonly locationCache: TtlCache<'all', LocationEntry[]>;
 
   constructor({
     client,
     tableName,
     deadlineMs = DYNAMODB_REQUEST_DEADLINE_MS,
     deadlineSignal = (ms) => AbortSignal.timeout(ms),
+    clock = systemClock,
+    locationsCacheTtlMs = DYNAMODB_LOCATIONS_CACHE_TTL_MS,
   }: DynamoDbSearchProviderOptions) {
     this.client = client;
     this.tableName = tableName;
     this.deadlineMs = deadlineMs;
     this.deadlineSignal = deadlineSignal;
+    this.locationCache = new TtlCache(clock, locationsCacheTtlMs, 1);
   }
 
   async search(q: ResolvedQuery): Promise<SearchResult> {
@@ -203,6 +247,37 @@ export class DynamoDbSearchProvider implements SearchProvider {
     );
     if (result.Item === undefined) return null;
     return { listing: fromListingItem(result.Item), visibility: visibilityOf(result.Item) };
+  }
+
+  /**
+   * Reads country, city and owner of every `ACTIVE` listing (projection query on `byId`, all
+   * pages) and caches the rows per Lambda instance for {@link DYNAMODB_LOCATIONS_CACHE_TTL_MS};
+   * suspended agencies are applied per call. Linear read cost per cache miss (docs/known-issues.md).
+   */
+  async locations(q: LocationQuery): Promise<LocationsDocument> {
+    const rows = await this.locationCache.get('all', () => this.readLocationEntries());
+    return aggregateLocations(rows, q);
+  }
+
+  private readLocationEntries(): Promise<LocationEntry[]> {
+    return this.withDeadline(async (abortSignal) => {
+      const input = buildLocationsQueryInput(this.tableName);
+      const rows: LocationEntry[] = [];
+      let exclusiveStartKey: Record<string, unknown> | undefined;
+      do {
+        abortSignal.throwIfAborted();
+        const page = await this.client.send(
+          new QueryCommand({ ...input, ExclusiveStartKey: exclusiveStartKey }),
+          { abortSignal },
+        );
+        for (const item of page.Items ?? []) {
+          const entry = locationEntryOf(item);
+          if (entry !== undefined) rows.push(entry);
+        }
+        exclusiveStartKey = page.LastEvaluatedKey;
+      } while (exclusiveStartKey !== undefined);
+      return rows;
+    });
   }
 
   private async withDeadline<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {

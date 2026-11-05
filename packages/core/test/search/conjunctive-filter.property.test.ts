@@ -32,6 +32,7 @@ const schemas = buildSchemas(taxonomy, {
 // Small value pools so that filters hit often, including case and Unicode-form variants.
 const CITIES = ['Berlin', 'BERLIN', 'berlin', 'München', 'MÜNCHEN', 'Mu\u0308nchen', 'Köln'];
 const POSTAL_CODES = ['10115', '10117', '80331', '50667'];
+const COUNTRIES = ['DE', 'AT', 'TH'];
 const TOUR_HOSTS = ['my.matterport.com', 'kuula.co', 'tours.other.example', 'vr.example.org'];
 const AREA_MIN = 40_00;
 const AREA_MAX = 42_00;
@@ -57,13 +58,14 @@ const arbFilterListing: fc.Arbitrary<Listing> = fc
     arbListing(),
     fc.constantFrom(...CITIES),
     fc.constantFrom(...POSTAL_CODES),
+    fc.constantFrom(...COUNTRIES),
     arbRooms,
     arbAreaMinor,
     fc.array(arbTour, { maxLength: 3 }),
   )
-  .map(([listing, city, postalCode, rooms, area, tours]) => ({
+  .map(([listing, city, postalCode, country, rooms, area, tours]) => ({
     ...listing,
-    address: { ...listing.address, city, postalCode },
+    address: { ...listing.address, city, postalCode, country },
     rooms,
     area,
     tours,
@@ -109,6 +111,7 @@ function arbRange<T extends number>(value: fc.Arbitrary<T>): fc.Arbitrary<Range<
 interface Filters {
   city: string | undefined;
   postalCode: string | undefined;
+  country: string | undefined;
   rooms: Range;
   areaMinor: Range;
   hasTour: boolean | undefined;
@@ -121,6 +124,7 @@ const arbFilters: fc.Arbitrary<Filters> = fc.record({
     ABSENT,
   ),
   postalCode: fc.option(fc.oneof(fc.constantFrom(...POSTAL_CODES), fc.constant('10115 ')), ABSENT),
+  country: fc.option(fc.constantFrom(...COUNTRIES, 'FR'), ABSENT),
   rooms: arbRange(arbRooms),
   areaMinor: arbRange(fc.integer({ min: AREA_MIN - 10, max: AREA_MAX + 10 })),
   hasTour: fc.option(fc.boolean(), ABSENT),
@@ -135,6 +139,7 @@ function rawQuery(f: Filters): Record<string, unknown> {
   const raw: Record<string, unknown> = { pageSize: String(f.pageSize) };
   if (f.city !== undefined) raw['city'] = f.city;
   if (f.postalCode !== undefined) raw['postalCode'] = f.postalCode;
+  if (f.country !== undefined) raw['country'] = f.country;
   if (f.rooms.min !== undefined) raw['roomsMin'] = String(f.rooms.min);
   if (f.rooms.max !== undefined) raw['roomsMax'] = String(f.rooms.max);
   if (f.areaMinor.min !== undefined) raw['areaMin'] = decimal(f.areaMinor.min);
@@ -155,6 +160,7 @@ const within = (v: number, r: Range): boolean =>
 function referenceMatches(l: Listing, f: Filters, allowList: TourProvidersConfig): boolean {
   if (f.city !== undefined && foldCity(l.address.city) !== foldCity(f.city)) return false;
   if (f.postalCode !== undefined && l.address.postalCode !== f.postalCode) return false;
+  if (f.country !== undefined && l.address.country !== f.country) return false;
   if (!within(l.rooms, f.rooms) || !within(l.area, f.areaMinor)) return false;
   if (f.hasTour === true) {
     const allowed = allowList.providers.flatMap((p) => p.hostnames.map((h) => h.toLowerCase()));

@@ -174,6 +174,7 @@ function liveProvider(listings: Map<string, Listing>): SearchProvider {
   return {
     search: (q) => snapshot().search(q),
     getById: (id) => snapshot().getById(id),
+    locations: (q) => snapshot().locations(q),
   };
 }
 

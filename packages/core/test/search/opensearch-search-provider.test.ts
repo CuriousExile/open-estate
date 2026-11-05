@@ -111,12 +111,14 @@ describe('buildOpenSearchFilter', () => {
       buildOpenSearchFilter({
         cityNorm: 'köln',
         postalCode: '50667',
+        country: 'TH',
         listingTypes: ['house', 'villa'],
         tourHosts: ['tour.example'],
       }),
     ).toEqual([
       { term: { cityNorm: 'köln' } },
       { term: { postalCode: '50667' } },
+      { term: { country: 'TH' } },
       { terms: { listingType: ['house', 'villa'] } },
       { terms: { tourHosts: ['tour.example'] } },
     ]);
@@ -336,7 +338,7 @@ describe('builder ≡ matchesQuery (in-memory evaluation of bool.filter)', () =>
       id: fc.string(),
       cityNorm: fc.constantFrom('berlin', 'köln'),
       postalCode: fc.constantFrom('10115', '50667'),
-      country: fc.constant('DE'),
+      country: fc.constantFrom('DE', 'TH'),
       listingType: arbCode,
       saleAmountMinor: small,
       saleCurrency: arbCurrency,
@@ -383,6 +385,7 @@ describe('builder ≡ matchesQuery (in-memory evaluation of bool.filter)', () =>
           areaMinor: arbRange,
           cityNorm: fc.constantFrom('berlin', 'köln'),
           postalCode: fc.constantFrom('10115', '50667'),
+          country: fc.constantFrom('DE', 'TH'),
           listingTypes: fc.uniqueArray(arbCode, { maxLength: 3 }),
           tourHosts: fc.uniqueArray(arbHost, { maxLength: 3 }),
         },

@@ -1,6 +1,6 @@
-import type { Cursor, Listing, OfferType } from '@open-estate/shared';
+import type { CityFacet, Cursor, Listing, LocationsDocument, OfferType } from '@open-estate/shared';
 import type { ListingVisibility } from './listings-table';
-import type { SearchDocument } from './search-document';
+import { normalizeCity, type SearchDocument } from './search-document';
 
 // SearchProvider contract (design: "Domänenkern", "Indexierungs-Strategie und Ordnung").
 // The SearchService (Task 6.4) resolves a validated `SearchQuery` into primitive conditions:
@@ -42,6 +42,8 @@ export type ResolvedQuery = OfferCondition & {
   cityNorm?: string;
   /** Exact match (Req 1.4). */
   postalCode?: string;
+  /** `address.country`, ISO 3166-1 alpha-2, exact match. */
+  country?: string;
   /** Listing type must be one of these codes (from `group` or `types`, Req 15.5, 15.6). */
   listingTypes?: readonly string[];
   /** `hasTour=true`: at least one tour host must be in this lowercase set (Req 16.9). */
@@ -99,6 +101,77 @@ export interface SearchProvider {
   search(q: ResolvedQuery): Promise<SearchResult>;
   /** The stored listing regardless of visibility; the ListingService applies `isPublic`. */
   getById(id: string): Promise<StoredListing | null>;
+  /**
+   * Countries and cities of the `ACTIVE` listings with their counts (`GET /locations`); same
+   * visibility as {@link search} without any other filter.
+   */
+  locations(q: LocationQuery): Promise<LocationsDocument>;
+}
+
+/** Visibility conditions of {@link SearchProvider.locations}. */
+export interface LocationQuery {
+  /** Suspended agencies (non-empty when set), as in {@link ResolvedQuery.excludeAgencies}. */
+  excludeAgencies?: readonly string[];
+}
+
+/** Location fields of one `ACTIVE` listing, input of {@link aggregateLocations}. */
+export interface LocationEntry {
+  country: string;
+  /** `address.city` as stored. */
+  city: string;
+  agencyId?: string;
+}
+
+/**
+ * Reference aggregation of `GET /locations` (pure): drops listings of excluded agencies, counts
+ * listings per country and per city. Cities are grouped per country by {@link normalizeCity} —
+ * the same case-insensitive match as the `city` filter — so every name filters to its count; the
+ * most frequent spelling is shown (ties: lowest in code point order). Countries are ordered by
+ * code, cities by country, then name.
+ */
+export function aggregateLocations(
+  entries: Iterable<LocationEntry>,
+  q: LocationQuery = {},
+): LocationsDocument {
+  const excluded = new Set(q.excludeAgencies ?? []);
+  const countries = new Map<string, number>();
+  const cities = new Map<string, { country: string; count: number; names: Map<string, number> }>();
+  for (const entry of entries) {
+    if (entry.agencyId !== undefined && excluded.has(entry.agencyId)) continue;
+    countries.set(entry.country, (countries.get(entry.country) ?? 0) + 1);
+    const key = `${entry.country}\u0000${normalizeCity(entry.city)}`;
+    const city = cities.get(key) ?? { country: entry.country, count: 0, names: new Map() };
+    city.count += 1;
+    city.names.set(entry.city, (city.names.get(entry.city) ?? 0) + 1);
+    cities.set(key, city);
+  }
+  return {
+    countries: [...countries]
+      .map(([code, count]) => ({ code, count }))
+      .sort((a, b) => compareCodePoints(a.code, b.code)),
+    cities: [...cities.values()]
+      .map(({ country, count, names }) => ({ name: preferredName(names), country, count }))
+      .sort(compareCities),
+  };
+}
+
+function preferredName(names: ReadonlyMap<string, number>): string {
+  let best: [string, number] | undefined;
+  for (const candidate of names) {
+    if (
+      best === undefined ||
+      candidate[1] > best[1] ||
+      (candidate[1] === best[1] && compareCodePoints(candidate[0], best[0]) < 0)
+    ) {
+      best = candidate;
+    }
+  }
+  return best?.[0] ?? '';
+}
+
+/** Order of `cities` in a {@link LocationsDocument}: country, then name (code points). */
+export function compareCities(a: CityFacet, b: CityFacet): number {
+  return compareCodePoints(a.country, b.country) || compareCodePoints(a.name, b.name);
 }
 
 /**
@@ -166,6 +239,7 @@ export function matchesQuery(doc: SearchDocument, q: ResolvedQuery): boolean {
     inRange(doc.areaMinor, q.areaMinor) &&
     (q.cityNorm === undefined || doc.cityNorm === q.cityNorm) &&
     (q.postalCode === undefined || doc.postalCode === q.postalCode) &&
+    (q.country === undefined || doc.country === q.country) &&
     (q.listingTypes === undefined || q.listingTypes.includes(doc.listingType)) &&
     (q.tourHosts === undefined || doc.tourHosts.some((h) => q.tourHosts?.includes(h))) &&
     (q.excludeAgencies === undefined ||

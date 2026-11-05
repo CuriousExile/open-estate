@@ -111,6 +111,7 @@ export function createSearchService(deps: SearchServiceDeps): SearchService {
       ...(areaMinor && { areaMinor }),
       ...(q.city !== undefined && { cityNorm: normalizeCity(q.city) }),
       ...(q.postalCode !== undefined && { postalCode: q.postalCode }),
+      ...(q.country !== undefined && { country: q.country }),
       ...(types !== undefined && { listingTypes: types }),
       // Only `hasTour=true` filters (Req 16.9); `false` means "no tour filter", not "without
       // tour". An empty allow-list yields no matches.

@@ -2,11 +2,14 @@ import {
   fromManagedListingItem,
   InMemorySearchProvider,
   type InMemoryManagedListingStore,
+  type LocationQuery,
   type ResolvedQuery,
   type SearchProvider,
   type SearchResult,
   type StoredListing,
 } from '@open-estate/core';
+
+type LocationsDocument = Awaited<ReturnType<SearchProvider['locations']>>;
 
 // DEV ONLY: the search index of the local demo. In AWS the `Listings` table is mirrored into the
 // index by the stream indexer (asynchronously, via DynamoDB Streams). Locally every read
@@ -36,5 +39,9 @@ export class ManagedListingProjection implements SearchProvider {
 
   getById(id: string): Promise<StoredListing | null> {
     return this.snapshot().getById(id);
+  }
+
+  locations(query: LocationQuery): Promise<LocationsDocument> {
+    return this.snapshot().locations(query);
   }
 }

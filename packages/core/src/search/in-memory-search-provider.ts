@@ -1,10 +1,12 @@
-import type { Listing } from '@open-estate/shared';
+import type { Listing, LocationsDocument } from '@open-estate/shared';
 import type { ListingVisibility } from './listings-table';
 import { toSearchDocument, type SearchDocument } from './search-document';
 import {
+  aggregateLocations,
   compareById,
   matchesQuery,
   paginate,
+  type LocationQuery,
   type ResolvedQuery,
   type SearchProvider,
   type SearchResult,
@@ -54,5 +56,18 @@ export class InMemorySearchProvider implements SearchProvider {
   async getById(id: string): Promise<StoredListing | null> {
     const entry = this.entries.get(id);
     return entry === undefined ? null : { listing: entry.listing, visibility: entry.visibility };
+  }
+
+  async locations(q: LocationQuery): Promise<LocationsDocument> {
+    return aggregateLocations(
+      [...this.entries.values()]
+        .filter(({ visibility }) => visibility.status === 'ACTIVE')
+        .map(({ listing, visibility }) => ({
+          country: listing.address.country,
+          city: listing.address.city,
+          ...(visibility.agencyId !== undefined && { agencyId: visibility.agencyId }),
+        })),
+      q,
+    );
   }
 }
