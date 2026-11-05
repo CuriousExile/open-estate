@@ -1,3 +1,9 @@
 {
-  "apiBaseUrl": "/api"
+  "apiBaseUrl": "/api",
+  "portal": {
+    "issuer": "https://cognito-idp.example.org/local_userpool",
+    "cognitoDomainUrl": "https://auth.example.org",
+    "clientId": "local-portal-client",
+    "managementApiUrl": "/management"
+  }
 }

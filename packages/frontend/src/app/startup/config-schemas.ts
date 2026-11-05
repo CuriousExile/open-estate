@@ -39,9 +39,30 @@ export type Translation = z.infer<typeof TranslationSchema>;
 /**
  * `runtime-config.json`: deployment-specific values of the SPA (Req 11.1 — nothing hard-coded).
  * `apiBaseUrl` may be absolute (`https://api.example.org`) or relative to the SPA (`/api`).
+ * `portal` is kept raw and validated by the Agentur_Portal ({@link PortalConfigSchema}): a missing
+ * or invalid portal block must not break the public search.
  */
-export const RuntimeConfigSchema = z.object({ apiBaseUrl: z.string().trim().min(1) });
+export const RuntimeConfigSchema = z.object({
+  apiBaseUrl: z.string().trim().min(1),
+  portal: z.unknown().optional(),
+});
 export type RuntimeConfig = z.infer<typeof RuntimeConfigSchema>;
+
+/**
+ * `runtime-config.json` → `portal`: OIDC login against Cognito and the Management_API (values from
+ * the IdentityStack outputs and the ManagementStack, design: Agentur_Portal).
+ */
+export const PortalConfigSchema = z.object({
+  /** OIDC issuer = `https://cognito-idp.<region>.amazonaws.com/<userPoolId>` (discovery document). */
+  issuer: z.url({ protocol: /^https?$/ }),
+  /** Cognito domain (`CognitoDomainUrl` output); its `/logout` ends the Managed Login session. */
+  cognitoDomainUrl: z.url({ protocol: /^https?$/ }),
+  /** Public portal app client (`PortalClientId` output; no client secret, Code + PKCE). */
+  clientId: z.string().trim().min(1),
+  /** Base URL of the Management_API, absolute or relative to the SPA (`/management`). */
+  managementApiUrl: z.string().trim().min(1),
+});
+export type PortalConfig = z.infer<typeof PortalConfigSchema>;
 
 /** Compact, single-line description of Zod issues for logs and error pages. */
 export function describeIssues(error: z.ZodError): string {
