@@ -4,10 +4,12 @@ import {
   computed,
   DestroyRef,
   inject,
+  input,
   signal,
+  type OnInit,
 } from '@angular/core';
 import { NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
-import { RouterLink } from '@angular/router';
+import { ActivatedRoute, RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
 import {
   LISTING_STATUSES,
@@ -28,6 +30,7 @@ import {
   formatTimestamp,
   nextPage,
   previousPage,
+  validateAgencyFilter,
   validateFilters,
   type FilterError,
   type ListingFilterField,
@@ -49,7 +52,9 @@ import {
       <header class="head">
         <h1 id="listings-title" class="label">{{ 'portal.listings.title' | transloco }}</h1>
         @if (session.can('listing:write')) {
-          <a class="pill primary" routerLink="new">{{ 'portal.listings.new' | transloco }}</a>
+          <a class="pill primary" routerLink="/portal/listings/new">{{
+            'portal.listings.new' | transloco
+          }}</a>
         }
       </header>
 
@@ -60,6 +65,18 @@ import {
         novalidate
         [attr.aria-label]="'portal.listings.filter.label' | transloco"
       >
+        @if (agencyFilter()) {
+          <div class="field">
+            <label for="filter-agencyId">{{ 'portal.admin.listingsAgency' | transloco }}</label>
+            <input
+              id="filter-agencyId"
+              [value]="agencyInput()"
+              [attr.aria-invalid]="agencyError() ? 'true' : null"
+              [attr.aria-describedby]="agencyError() ? 'filter-error-agencyId' : null"
+              (input)="agencyInput.set(inputValue($event))"
+            />
+          </div>
+        }
         <div class="field wide">
           <label for="filter-q">{{ 'portal.listings.filter.q' | transloco }}</label>
           <input
@@ -138,8 +155,11 @@ import {
             {{ 'portal.listings.filter.reset' | transloco }}
           </button>
         </div>
-        @if (filterErrors().length > 0) {
+        @if (filterErrors().length > 0 || agencyError()) {
           <ul class="errors" role="alert">
+            @if (agencyError(); as key) {
+              <li id="filter-error-agencyId">{{ key | transloco }}</li>
+            }
             @for (error of filterErrors(); track error.field) {
               <li [id]="'filter-error-' + error.field">
                 {{ error.messageKey | transloco: error.params ?? {} }}
@@ -168,6 +188,9 @@ import {
           <thead>
             <tr>
               <th scope="col">{{ 'portal.field.title' | transloco }}</th>
+              @if (agencyFilter()) {
+                <th scope="col">{{ 'portal.admin.listingsAgency' | transloco }}</th>
+              }
               <th scope="col">{{ 'portal.field.status' | transloco }}</th>
               <th scope="col">{{ 'portal.listings.column.origin' | transloco }}</th>
               <th scope="col">{{ 'portal.field.customId' | transloco }}</th>
@@ -187,8 +210,19 @@ import {
             @for (row of rows(); track row.id) {
               <tr>
                 <th scope="row">
-                  <a [routerLink]="row.id">{{ row.title }}</a>
+                  <a [routerLink]="['/portal/listings', row.id]">{{ row.title }}</a>
                 </th>
+                @if (agencyFilter()) {
+                  <td>
+                    @if (row.agencyId) {
+                      <a [routerLink]="['/portal/admin/agencies', row.agencyId]">{{
+                        row.agencyId
+                      }}</a>
+                    } @else {
+                      {{ 'portal.admin.noAgency' | transloco }}
+                    }
+                  </td>
+                }
                 <td>
                   <span class="badge" [class.active]="row.status === 'ACTIVE'">
                     {{ 'portal.listings.status.' + row.status | transloco }}
@@ -208,7 +242,7 @@ import {
                 @if (session.can('listing:write')) {
                   <td>
                     <a
-                      [routerLink]="[row.id, 'edit']"
+                      [routerLink]="['/portal/listings', row.id, 'edit']"
                       [attr.aria-label]="
                         'portal.listings.editNamed' | transloco: { title: row.title }
                       "
@@ -220,7 +254,9 @@ import {
             } @empty {
               @if (!loading() && errorText() === undefined) {
                 <tr>
-                  <td colspan="8" class="empty">{{ 'portal.listings.empty' | transloco }}</td>
+                  <td [attr.colspan]="agencyFilter() ? 9 : 8" class="empty">
+                    {{ 'portal.listings.empty' | transloco }}
+                  </td>
                 </tr>
               }
             }
@@ -398,7 +434,16 @@ import {
     }
   `,
 })
-export class ListingTableComponent {
+export class ListingTableComponent implements OnInit {
+  /**
+   * Admin_Modus (route data, Req 10.4): cross-agency overview with an agency filter (initially
+   * from `?agencyId=`) and an agency column.
+   */
+  readonly agencyFilter = input(false);
+  private readonly route = inject(ActivatedRoute);
+  protected readonly agencyInput = signal('');
+  protected readonly agencyError = signal<string | undefined>(undefined);
+
   private readonly api = inject(ManagementApiClient);
   private readonly locale = inject(LocaleService);
   protected readonly session = inject(PortalSession);
@@ -421,28 +466,54 @@ export class ListingTableComponent {
 
   /** Filters of the shown list; changed only by a valid submit or reset. */
   private query: ListingQuery = {};
+  /** Agency filter of the shown list (Admin_Modus only). */
+  private agencyId: string | undefined;
   private controller: AbortController | undefined;
 
   constructor() {
     inject(DestroyRef).onDestroy(() => this.controller?.abort());
+  }
+
+  /** First load after the inputs are bound, so the Admin_Modus starts with its agency filter. */
+  ngOnInit(): void {
+    if (this.agencyFilter()) {
+      const agency = validateAgencyFilter(this.route.snapshot.queryParamMap.get('agencyId') ?? '');
+      if (agency.ok && agency.agencyId !== undefined) {
+        this.agencyInput.set(agency.agencyId);
+        this.agencyId = agency.agencyId;
+      }
+    }
     void this.load(FIRST_PAGE);
+  }
+
+  protected inputValue(event: Event): string {
+    return (event.target as HTMLInputElement).value;
   }
 
   protected applyFilters(): void {
     const result = validateFilters(this.filters.getRawValue());
+    const agency = this.agencyFilter()
+      ? validateAgencyFilter(this.agencyInput())
+      : ({ ok: true, agencyId: undefined } as const);
+    this.agencyError.set(agency.ok ? undefined : agency.messageKey);
     if (!result.ok) {
       this.filterErrors.set(result.errors);
       return;
     }
     this.filterErrors.set([]);
+    if (!agency.ok) return;
     this.query = result.query;
+    this.agencyId = agency.agencyId;
     void this.load(FIRST_PAGE);
   }
 
   protected resetFilters(): void {
     this.filters.reset({ ...EMPTY_FILTERS });
     this.filterErrors.set([]);
+    this.agencyInput.set('');
+    this.agencyError.set(undefined);
     this.query = {};
+    this.agencyId = undefined;
     void this.load(FIRST_PAGE);
   }
 
@@ -479,7 +550,11 @@ export class ListingTableComponent {
     this.errorText.set(undefined);
     const token = currentToken(pager);
     const result = await this.api.get('/listings', {
-      query: { ...this.query, ...(token !== undefined && { pageToken: token }) },
+      query: {
+        ...this.query,
+        ...(this.agencyId !== undefined && { agencyId: this.agencyId }),
+        ...(token !== undefined && { pageToken: token }),
+      },
       signal: controller.signal,
       parse: (value) => ListingPage.parse(value),
     });

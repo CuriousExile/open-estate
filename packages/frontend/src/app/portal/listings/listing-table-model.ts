@@ -1,7 +1,12 @@
 // Framework-free model of the listing overview (design: ListingTableComponent; Req 4.14, 5.2).
 // Filters are validated with the `ListListingsQuery` schema of the Management_API; paging follows
 // the opaque `nextPageToken` and remembers the tokens of earlier pages for "previous".
-import { ListListingsQuery, LISTING_BOUNDS, MANAGEMENT_BOUNDS } from '@open-estate/shared';
+import {
+  EntityId,
+  ListListingsQuery,
+  LISTING_BOUNDS,
+  MANAGEMENT_BOUNDS,
+} from '@open-estate/shared';
 
 /** Filter inputs as typed; `''` = no filter. */
 export interface ListingFilterValues {
@@ -75,6 +80,17 @@ export function validateFilters(
     );
   }
   return { ok: false, errors: LISTING_FILTER_FIELDS.flatMap((f) => errors.get(f) ?? []) };
+}
+
+/** Agency filter of the Admin_Modus' cross-agency overview (Req 10.4): `''` = all agencies. */
+export function validateAgencyFilter(
+  value: string,
+): { ok: true; agencyId: string | undefined } | { ok: false; messageKey: string } {
+  const agencyId = value.trim();
+  if (agencyId === '') return { ok: true, agencyId: undefined };
+  return EntityId.safeParse(agencyId).success
+    ? { ok: true, agencyId }
+    : { ok: false, messageKey: 'portal.admin.error.invalid' };
 }
 
 /**
