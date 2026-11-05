@@ -1,4 +1,7 @@
+import type { DroppedMediaKind, FieldIssue } from '@open-estate/core';
 import type { ConnectorType } from './connector';
+
+export type { DroppedMediaKind, FieldIssue };
 
 /**
  * Structured, value-free run log (Req 11.5, 18.2).
@@ -11,13 +14,6 @@ import type { ConnectorType } from './connector';
  */
 export type LogLevel = 'info' | 'warn' | 'error';
 export type RunStatus = 'SUCCESS' | 'FAILURE';
-export type DroppedMediaKind = 'media' | 'tour';
-
-export interface FieldIssue {
-  /** Dot-separated field path, e.g. `offers.0.price`. */
-  readonly field: string;
-  readonly reason: string;
-}
 
 /** One compliance check of a crawl target (Req 6.6, 6.7, 11.7). */
 export interface CrawlCheck {

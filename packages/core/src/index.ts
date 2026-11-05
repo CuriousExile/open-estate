@@ -22,6 +22,9 @@ export * from './access/api-key-store';
 export * from './access/rate-limit-counter-store';
 export * from './access/access-guard';
 export * from './read-model/read-model-init';
+export * from './content/pii-filter';
+export * from './content/media-cleanup';
+export * from './content/prepare-content';
 // Lambda entry `indexer/handler` is bundled separately and not re-exported (module-level init).
 export * from './indexer/search-index-writer';
 export * from './indexer/stream-indexer';

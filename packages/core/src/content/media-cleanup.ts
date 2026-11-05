@@ -1,7 +1,8 @@
-import { hostOf } from '@open-estate/core';
 import { HttpsUrl, LISTING_BOUNDS } from '@open-estate/shared';
-import type { DroppedMediaKind } from '../run-logger';
+import { hostOf } from '../search/search-document';
 import { isRecord, type Candidate } from './pii-filter';
+
+export type DroppedMediaKind = 'media' | 'tour';
 
 export interface MediaDrop {
   readonly kind: DroppedMediaKind;
