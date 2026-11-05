@@ -20,9 +20,12 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 
 ## Frontend
 
-- **Bundle size.** The initial bundle is about 990 kB: over the 700 kB warning budget and close to
-  the 1 MB error. zod (~520 kB) and `angular-auth-oidc-client` (~131 kB, must be provided at root)
-  are the main parts. New code outside the lazy portal chunks can break the build.
+- **Bundle size.** The initial bundle is about 650 kB, under the 700 kB warning budget. The main
+  parts are Angular (~395 kB incl. router and forms), `angular-auth-oidc-client` (~135 kB) and zod
+  (~130 kB). The OIDC client cannot move into the lazy portal chunks: its services are
+  `providedIn: 'root'` and need `StsConfigLoader` and the storage/logger tokens at root, and its
+  bundle does not tree-shake, so any root import pulls all of it. zod stays small only with
+  `import * as z from 'zod'` (enforced by lint) and `sideEffects: false` in shared.
 - **Two diff views.** The listing form uses `portal/shared/diff-view`, the workspace its own
   `workspace/version-diff.component.ts`. Merge them.
 - **`toPublicDetailModel`** lives in the workspace folder and mirrors the Search_API's
