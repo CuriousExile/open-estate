@@ -36,8 +36,9 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Full tier: all suites, property tests with their full run counts (npm test is the quick tier).
       - name: Test
-        run: npm test
+        run: npm run test:full
 
       - name: Build
         run: npm run build
