@@ -14,7 +14,8 @@ and needs no internet access beyond the npm registry (or mirror) for `npm ci`. I
 for a failed step, read `logs/run-everything/<step>.log`. The summary is in
 `logs/run-everything/summary.md`. Run it once before you change anything (baseline) and once when
 you are done. `SKIP` for integration tests (no Docker) and e2e tests (no AWS) is expected, not a
-failure.
+failure. Property tests run with one fixed seed there, so the baseline is reproducible: a test
+that fails after your change failed because of your change.
 
 If the install step fails with `ETARGET` / `No matching version found` / `404`, the registry
 mirror lacks a locked version (all of them are at least four weeks old). Keep the exact error

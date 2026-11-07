@@ -5,6 +5,7 @@
 //   node scripts/run-everything.mjs            everything that can run on this machine
 //   node scripts/run-everything.mjs --quick    install, lint, quick tests only (~1 min)
 //   node scripts/run-everything.mjs --no-docker  skip the Docker integration tests
+//   node scripts/run-everything.mjs --random   random property-test inputs instead of the fixed seed
 //
 // No AWS account or credentials are needed. Logs: logs/run-everything/<step>.log, summary:
 // logs/run-everything/summary.md. Exit code 0 means no step failed.
@@ -20,6 +21,16 @@ const args = new Set(process.argv.slice(2));
 const QUICK = args.has('--quick');
 const NO_DOCKER = args.has('--no-docker');
 const WINDOWS = process.platform === 'win32';
+
+/**
+ * Property tests use one fixed fast-check seed here, so every machine tests the same inputs and
+ * gets the same result (CI and plain `npm test` stay random to keep exploring). Override with
+ * OPEN_ESTATE_FC_SEED=<n>, or pass --random.
+ */
+const FC_SEED = args.has('--random')
+  ? undefined
+  : (process.env['OPEN_ESTATE_FC_SEED'] ?? '20261107');
+const SEED_ENV = FC_SEED === undefined ? {} : { OPEN_ESTATE_FC_SEED: FC_SEED };
 
 if (args.has('--help') || args.has('-h')) {
   console.log(
@@ -290,6 +301,7 @@ const STEPS = [
     id: 'test-quick',
     title: 'Tests, quick tier (npm test)',
     cmd: npx('jest', '--silent'),
+    env: SEED_ENV,
     needs: ['install'],
     only: 'quick',
   },
@@ -310,7 +322,7 @@ const STEPS = [
     id: 'test-full',
     title: 'Tests, full tier (npm run test:full)',
     cmd: npx('jest', '--silent'),
-    env: { OPEN_ESTATE_TEST_TIER: 'full' },
+    env: { OPEN_ESTATE_TEST_TIER: 'full', ...SEED_ENV },
     needs: ['install'],
   },
   {
@@ -357,6 +369,9 @@ const STEPS = [
 console.log(
   `\nOpenEstate: run everything${QUICK ? ' (--quick)' : ''} — Node ${process.versions.node}, ${process.platform}`,
 );
+console.log(
+  `Property tests: ${FC_SEED === undefined ? 'random inputs (--random)' : `fixed seed ${FC_SEED} (same inputs on every machine)`}`,
+);
 console.log(`Logs: ${relative(ROOT, LOG_DIR)}/\n`);
 
 const results = [];
@@ -396,7 +411,7 @@ const total = Math.round((Date.now() - started) / 1000);
 const summary = [
   `# run-everything summary`,
   '',
-  `Node ${process.versions.node}, ${process.platform}, ${total} s${QUICK ? ', --quick' : ''}`,
+  `Node ${process.versions.node}, ${process.platform}, ${total} s${QUICK ? ', --quick' : ''}, fast-check seed ${FC_SEED ?? 'random'}`,
   '',
   '| Step | Result | Time | Log / reason |',
   '| --- | --- | --- | --- |',

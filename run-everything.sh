@@ -7,6 +7,8 @@
 #   ./run-everything.sh             everything
 #   ./run-everything.sh --quick     install, lint, quick tests only
 #   ./run-everything.sh --no-docker skip the Docker integration tests
+#   ./run-everything.sh --random    random property-test inputs (default: one fixed seed, so every
+#                                   machine runs the same inputs and gets the same result)
 #
 # Needs bash (macOS or Linux; on Windows use WSL) and Node.js 22.12+ or 24+. Works offline when
 # npm can reach a registry (or mirror) for `npm ci`. Only if the installed Node.js is missing or

@@ -94,6 +94,8 @@ only if no step failed. Logs are in `logs/run-everything/<step>.log`, the summar
   version is at least four weeks old, so mirrors that lack recent releases work.
 - **Docker is optional.** With Docker running, the DynamoDB Local / OpenSearch integration tests run
   too; without it they are `SKIP`. Use `--no-docker` to skip them anyway.
+- **Same result on every machine.** Property tests (fast-check) use one fixed seed here, so every
+  run tests the same inputs. `--random` uses random inputs instead (CI and `npm test` always do).
 - `./run-everything.sh --quick` runs only install, lint and the quick tests (about a minute).
 - Needs bash: macOS or Linux. On Windows use WSL.
 
