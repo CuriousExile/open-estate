@@ -16,6 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Dry run of removing a Plattform_Admin could answer `LAST_PLATFORM_ADMIN` for an admin that a concurrent request had just removed; it now re-reads the membership (fast-check seed 713905340).
+
 - `tsc -b` failed on a fresh checkout because `tsconfig.tsbuildinfo` files were committed without their `dist/`; build info now lives in `dist/` and is git-ignored.
 
 ### Changed

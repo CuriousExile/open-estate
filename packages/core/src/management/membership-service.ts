@@ -280,7 +280,14 @@ export class MembershipService<Op> {
         return this.reject(actor, 'platform-admin.remove', target, undefined, notFound(), dryRun);
       }
       if (dryRun) {
-        const lastAdmin = (await this.deps.platformCounters.platformAdmins()) <= 1;
+        const admins = await this.deps.platformCounters.platformAdmins();
+        // Membership and counter are two reads. Re-read the membership: if it is unchanged, both
+        // values held when the counter was read; if a concurrent removal took it, retry (→ 404).
+        // Without this a dry run racing a real removal could answer LAST_PLATFORM_ADMIN for an
+        // admin that is already gone (fast-check seed 713905340).
+        const again = await this.deps.memberships.get(userId);
+        if (again === null || again.role !== 'PLATFORM_ADMIN') return 'retry';
+        const lastAdmin = admins <= 1;
         return {
           done: lastAdmin ? err([lastPlatformAdmin()]) : ok({ dryRun: true, affectedUsers: 1 }),
         };
