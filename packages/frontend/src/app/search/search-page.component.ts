@@ -154,7 +154,7 @@ export class SearchPageComponent {
     );
   });
   /** Id of the listing opened from the results (`listing=` in the URL). */
-  private readonly selectedId = computed(() => listingIdFromQuery(this.query()));
+  protected readonly selectedId = computed(() => listingIdFromQuery(this.query()));
   /** The listing as clicked in the results; saves a request when it is opened from there. */
   private readonly clicked = signal<LocalizedListing | undefined>(undefined);
   /** Listing loaded for a `listing=` URL that was not opened by a click (reload, deep link). */

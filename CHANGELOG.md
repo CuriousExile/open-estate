@@ -20,4 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Node.js `engines` raised to `^22.22.3 || ^24.15.0 || >=26.0.0` (Angular CLI); added `.nvmrc`.
+- Node.js `engines` set to `^22.12.0 || >=24.0.0` (was `>=20.19.0`, which the Angular CLI never supported); `.nvmrc` pins 22.21.0, the version the checks are tested with.
+- Frontend on Angular 21.2 (was 22.2) and TypeScript 5.9 (was 6.0): Angular 22 refuses Node below 22.22.3, and Angular 21 needs TypeScript < 6.0. Templates no longer read `private` members.
+- Every dependency pinned to a release at least four weeks old and the lockfile regenerated with `npm install --before=2026-10-10`, so `npm ci` works from registry mirrors that lack recent versions.

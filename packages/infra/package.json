@@ -24,18 +24,18 @@
     "@open-estate/management": "0.0.0",
     "@open-estate/mcp": "0.0.0",
     "@open-estate/shared": "0.0.0",
-    "aws-cdk-lib": "2.275.0",
+    "aws-cdk-lib": "2.273.0",
     "constructs": "10.8.1"
   },
   "devDependencies": {
-    "@aws-sdk/client-cloudformation": "3.1162.0",
-    "@aws-sdk/client-cloudwatch": "3.1162.0",
-    "@aws-sdk/client-cognito-identity-provider": "3.1162.0",
-    "@aws-sdk/client-dynamodb": "3.1162.0",
-    "@aws-sdk/client-lambda": "3.1162.0",
-    "@aws-sdk/client-s3": "3.1162.0",
-    "@aws-sdk/lib-dynamodb": "3.1162.0",
-    "aws-cdk": "2.1147.0",
+    "@aws-sdk/client-cloudformation": "3.1149.0",
+    "@aws-sdk/client-cloudwatch": "3.1149.0",
+    "@aws-sdk/client-cognito-identity-provider": "3.1149.0",
+    "@aws-sdk/client-dynamodb": "3.1149.0",
+    "@aws-sdk/client-lambda": "3.1149.0",
+    "@aws-sdk/client-s3": "3.1149.0",
+    "@aws-sdk/lib-dynamodb": "3.1149.0",
+    "aws-cdk": "2.1145.0",
     "esbuild": "0.28.2"
   }
 }

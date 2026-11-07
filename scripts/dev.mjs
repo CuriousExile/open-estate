@@ -17,9 +17,9 @@ const DEV_PORT = process.env.DEV_PORT ?? '4310';
 const HEALTH_URL = `http://127.0.0.1:${DEV_PORT}/health`;
 
 const [major, minor] = process.versions.node.split('.').map(Number);
-if (major < 22 || (major === 22 && minor < 22)) {
+if (major < 22 || (major === 22 && minor < 12)) {
   console.error(
-    `[dev] Node ${process.versions.node}: the Angular CLI needs Node 22.22.3+ or 24.15+. ` +
+    `[dev] Node ${process.versions.node}: the Angular CLI needs Node 22.12+ or 24+. ` +
       'Run `npm run dev:server` for the backend only.',
   );
   process.exit(1);
