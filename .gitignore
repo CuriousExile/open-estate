@@ -31,3 +31,10 @@ Thumbs.db
 
 # Kiro task execution state (local)
 .kiro/specs/*/tasks.meta.json
+
+# TypeScript incremental build state (must never ship without the dist/ it describes)
+*.tsbuildinfo
+
+# run-everything.sh: portable Node.js and logs
+.tools/
+logs/
