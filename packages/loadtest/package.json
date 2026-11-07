@@ -11,9 +11,9 @@
     "k6:all": "k6 run -e SCENARIO=all k6/api-load.js"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudformation": "3.1162.0",
-    "@aws-sdk/client-dynamodb": "3.1162.0",
-    "@aws-sdk/lib-dynamodb": "3.1162.0",
+    "@aws-sdk/client-cloudformation": "3.1149.0",
+    "@aws-sdk/client-dynamodb": "3.1149.0",
+    "@aws-sdk/lib-dynamodb": "3.1149.0",
     "@open-estate/infra": "0.0.0",
     "@open-estate/shared": "0.0.0",
     "fast-check": "4.10.2"

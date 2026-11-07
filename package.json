@@ -9,7 +9,7 @@
     "url": "https://github.com/CuriousExile/open-estate.git"
   },
   "engines": {
-    "node": ">=20.19.0",
+    "node": "^22.12.0 || >=24.0.0",
     "npm": ">=10"
   },
   "workspaces": [
@@ -35,10 +35,20 @@
     "docs:permissions": "tsc -b packages/shared && node scripts/generate-permission-matrix.mjs",
     "format": "prettier --write .",
     "test": "jest",
+    "test:full": "OPEN_ESTATE_TEST_TIER=full jest",
+    "test:shared": "jest --selectProjects shared",
+    "test:search": "jest --selectProjects search",
+    "test:management": "jest --selectProjects management",
+    "test:ingestion": "jest --selectProjects ingestion",
+    "test:platform": "jest --selectProjects platform",
+    "test:frontend": "jest --selectProjects frontend",
+    "test:infra": "jest --selectProjects infra",
     "typecheck:tests": "tsc -p tsconfig.test.json && tsc -p packages/infra/tsconfig.test.json && tsc -p packages/frontend/tsconfig.test.json",
-    "test:integration": "DYNAMODB_ENDPOINT=${DYNAMODB_ENDPOINT:-http://localhost:8000} OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT:-http://localhost:9200} jest --forceExit --testPathPatterns '\\.integration\\.test\\.ts$'",
-    "test:e2e": "jest --forceExit --runInBand --testPathPatterns '\\.e2e\\.test\\.ts$'",
-    "synth": "npm run synth --workspace @open-estate/infra"
+    "test:integration": "DYNAMODB_ENDPOINT=${DYNAMODB_ENDPOINT:-http://localhost:8000} OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT:-http://localhost:9200} OPEN_ESTATE_TEST_TIER=full jest --forceExit --testPathPatterns '\\.integration\\.test\\.ts$'",
+    "test:e2e": "OPEN_ESTATE_TEST_TIER=full jest --forceExit --runInBand --testPathPatterns '\\.e2e\\.test\\.ts$'",
+    "synth": "npm run synth --workspace @open-estate/infra",
+    "verify": "npm run lint && npm run build && npm run typecheck:tests && npm run test:full && npm run synth",
+    "everything": "node scripts/run-everything.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
@@ -47,14 +57,14 @@
     "@types/node": "20.19.43",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "eslint": "10.14.0",
+    "eslint": "10.12.0",
     "eslint-config-prettier": "10.1.8",
     "fast-check": "4.10.2",
-    "globals": "17.14.0",
+    "globals": "17.13.0",
     "jest": "30.5.2",
-    "prettier": "3.9.10",
-    "ts-jest": "29.4.15",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.72.1"
+    "prettier": "3.9.9",
+    "ts-jest": "29.4.14",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1"
   }
 }

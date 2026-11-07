@@ -13,7 +13,7 @@
 ## Checklist
 
 - [ ] Tests added or updated (property-based tests for correctness properties where relevant)
-- [ ] Lint and tests pass locally
+- [ ] `./run-everything.sh` ends with `RESULT: OK`
 - [ ] No hard-coded endpoints, credentials or environment values
 - [ ] Docs and `CHANGELOG.md` (Unreleased) updated if user-facing
 - [ ] For connectors: legal basis for the data source is stated

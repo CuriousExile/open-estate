@@ -13,7 +13,7 @@ Thanks for your interest! This project is early, so feedback on the design is ju
 
 1. Fork the repository and create a branch from `main`: `feat/<short-name>` or `fix/<short-name>`.
 2. Make your change with tests (see below).
-3. Run lint and tests locally.
+3. Run `./run-everything.sh` (all checks, one command) and make sure it ends with `RESULT: OK`.
 4. Open a pull request and fill in the template.
 
 Small, focused PRs get reviewed faster. For larger changes, open an issue first so we can agree on the approach.
@@ -37,6 +37,20 @@ docs: describe theme-config.json color formats
 
 ## Tests
 
+- **Two tiers.** `npm test` is the quick tier for the edit-test loop: every area except `infra`, no
+  integration or e2e suites, none of the suites in `FULL_ONLY` in [`jest.config.js`](jest.config.js),
+  and every `fc.assert` capped at `OPEN_ESTATE_QUICK_RUNS` runs (default 10). `npm run test:full`
+  (and CI) runs everything at the full run counts. Run it, or `npm run verify`, before you open a
+  PR.
+- **Areas.** Each test directory belongs to exactly one area (Jest project) in `AREAS` in
+  `jest.config.js`: `npm run test:shared`, `test:search`, `test:management`, `test:ingestion`,
+  `test:platform`, `test:frontend`, `test:infra`. If you add a test directory, add it to an area;
+  the Jest config fails to load if a test file is outside every area.
+- **Flagging a suite as full-only.** Add it to `FULL_ONLY` with a one-line reason. Do this only if
+  it is slow *and* either covered by a faster check or tests tooling rather than product code.
+  Never use it to hide a flaky or failing test.
+- **Replaying a property-test failure.** Copy `seed` and `path` from the failure message and run
+  `OPEN_ESTATE_TEST_TIER=full OPEN_ESTATE_FC_SEED=<seed> OPEN_ESTATE_FC_PATH="<path>" npx jest <file>`.
 - Unit tests with Jest for concrete examples and edge cases.
 - Property-based tests with [fast-check](https://github.com/dubzzz/fast-check) for the correctness properties in the [design](.kiro/specs/real-estate-platform/design.md). Run at least 100 iterations and tag each test:
 

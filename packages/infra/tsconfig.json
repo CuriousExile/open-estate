@@ -4,6 +4,7 @@
     "composite": true,
     "rootDir": "src",
     "outDir": "dist",
+    "tsBuildInfoFile": "dist/tsconfig.tsbuildinfo",
     // aws-cdk-lib typings break under this flag (e.g. `Bucket` vs `IBucket.isWebsite`).
     "exactOptionalPropertyTypes": false
   },

@@ -10,7 +10,7 @@ Connect provider in place of Cognito, and the Angular SPA via `ng serve`.
 
 ## Run it
 
-Requires Node.js `^22.22.3` or `^24.15.0` (Angular CLI) and an `npm ci`.
+Requires Node.js `^22.12.0` or `>=24` (Angular CLI) and an `npm ci`.
 
 ```bash
 npm ci

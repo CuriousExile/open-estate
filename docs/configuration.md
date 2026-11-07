@@ -329,7 +329,7 @@ To try a locale locally, run `npm start --workspace @open-estate/frontend`. The 
 `public/` directly.
 
 Code changes follow one rule: component templates must not contain literal visible text (Req 13.2).
-`packages/frontend/scripts/check-template-i18n.mjs` enforces it and runs as part of `npm test`. You
+`packages/frontend/scripts/check-template-i18n.mjs` enforces it and runs as part of `npm run test:full` (not the quick `npm test`). You
 can also run it on its own:
 
 ```bash

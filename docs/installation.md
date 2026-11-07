@@ -19,7 +19,7 @@ To try the platform in the browser **without AWS**, run the in-memory local demo
 
 | Requirement                  | Notes                                                                                                                                                                                                                                                       |
 | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Node.js `^22.22.3`, `^24.15.0` or `>=26` | Required by the Angular 22 build of `packages/frontend` (its `engines` field). The root `engines` (`>=20.19.0`) covers the backend only; `npm run build` fails on older versions. CI uses Node 22.x. Lambdas run on `nodejs22.x`. |
+| Node.js `^22.12.0` or `>=24` | Required by the Angular 21 build of `packages/frontend` and the root `engines`; `npm run build` fails on older versions. Tested with 22.21.0 (`.nvmrc`). CI uses Node 22.x. Lambdas run on `nodejs22.x`. |
 | npm `>=10`                   | Ships with Node. The repository is an npm workspace; use `npm ci` for a reproducible install.                                                                                                                                                               |
 | AWS account and credentials  | Any credential source of the AWS CLI/SDK chain (`AWS_PROFILE`, SSO, environment). The deploying principal needs CloudFormation and the rights to create the resources (in practice `AdministratorAccess` for the first deployment).                        |
 | AWS CLI v2                   | Used below to read stack outputs, attach policies and subscribe to topics. Not needed by `cdk deploy` itself.                                                                                                                                              |
@@ -41,7 +41,7 @@ deleted with the stack). Replace `123456789012` and `eu-central-1` with your acc
    ```bash
    git clone https://github.com/CuriousExile/open-estate.git
    cd open-estate
-   node --version   # must be >= 22.22.3 (see Prerequisites)
+   node --version   # must be >= 22.12 (see Prerequisites)
    npm ci
    ```
 
@@ -55,7 +55,7 @@ deleted with the stack). Replace `123456789012` and `eu-central-1` with your acc
 3. **Test (recommended).** Unit and property tests need no AWS account and no Docker.
 
    ```bash
-   npm test
+   npm run test:full   # all suites; `npm test` is the quicker subset for development
    npm run synth   # validates config files and synthesizes all stacks, no AWS access needed
    ```
 
@@ -374,10 +374,9 @@ aws logs tail "/aws/lambda/$(echo "$OPEN_ESTATE_RELOAD_FUNCTIONS" | cut -d, -f1)
 ### Node version errors
 
 - **Symptom:** `npm run build` stops with `Node.js version v20.x detected. The Angular CLI
-  requires a minimum Node.js version of v22.22.3 or v24.15.0 or v26.0.0.`; `npm ci` may print
-  `EBADENGINE` warnings.
-- **Cause:** Angular 22 needs a newer Node than the backend packages.
-- **Fix:** install Node 22.22.3+ (or 24.15+), e.g. `nvm install 22 && nvm use 22`, then
+  requires a minimum Node.js version of v22.12.0 ...`; `npm ci` may print `EBADENGINE` warnings.
+- **Cause:** Angular 21 needs Node 22.12+ or 24+.
+- **Fix:** install Node 22.12+ (or 24+), e.g. `nvm install && nvm use` (reads `.nvmrc`), then
   `npm ci && npm run build`.
 
 ### CDK bootstrap missing
