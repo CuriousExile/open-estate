@@ -72,9 +72,58 @@ docs/          # Installation, API, MCP, connector and configuration guides
 See the [documentation index](docs/README.md): installation and troubleshooting, Search API, MCP
 server, connectors, theming, translations, taxonomy and 3D tour providers.
 
-## Getting started
+## Run everything with one command
 
-Requires Node.js 22.22.3+ (Angular 22), an AWS account and a bootstrapped CDK environment. Full steps, configuration overrides and troubleshooting: [docs/installation.md](docs/installation.md).
+```bash
+git clone https://github.com/CuriousExile/open-estate.git && cd open-estate
+./run-everything.sh
+```
+
+That's all. It installs dependencies, lints, type-checks, builds, runs every test, synthesizes all
+CDK stacks and smoke-tests the local demo (Search API, MCP server, Management API, login), then
+prints `PASS` / `FAIL` / `SKIP` per step and `RESULT: OK` or `RESULT: FAILED`. The exit code is 0
+only if no step failed. Logs are in `logs/run-everything/<step>.log`, the summary is in
+`logs/run-everything/summary.md`.
+
+- **No AWS needed.** Only the e2e tests against a deployed stack need AWS; they are reported as
+  `SKIP`.
+- **No Node.js setup needed.** If Node.js is missing or older than required, the script downloads
+  the version pinned in `.nvmrc` (checksum-verified) into `.tools/` and uses it for this run. Nothing
+  is installed system-wide.
+- **Docker is optional.** With Docker running, the DynamoDB Local / OpenSearch integration tests run
+  too; without it they are `SKIP`. Use `--no-docker` to skip them anyway.
+- `./run-everything.sh --quick` runs only install, lint and the quick tests (about a minute).
+- Needs bash, curl and tar: macOS or Linux. On Windows use WSL.
+
+## Getting started without AWS
+
+You don't need an AWS account, AWS credentials or Docker to build, test or run OpenEstate.
+AWS is only needed to deploy it. Requires Node.js 22.22.3+ or 24.15+ (`nvm use` picks up
+`.nvmrc`; `./run-everything.sh` fetches it for you).
+
+```bash
+npm ci
+npm run build   # TypeScript packages + Angular SPA
+npm test        # quick test tier, offline (see "Testing" below)
+npm run dev     # local demo: SPA, Search API, MCP server, Management API, in memory
+```
+
+`npm run dev` serves the SPA at <http://127.0.0.1:4200> and the APIs at `http://127.0.0.1:4310`
+(`/api/listings`, `/mcp`, `/management`), with demo data and a password-less local login (DEV
+ONLY, never expose it): [docs/local-demo.md](docs/local-demo.md). On Node 20 only the backend runs:
+`npm run dev:server`.
+
+| Works offline                                   | Needs AWS                                  |
+| ----------------------------------------------- | ------------------------------------------ |
+| Build, lint, unit and property tests            | `npm run deploy`, `npm run seed`           |
+| `npm run synth` (synthesizes every CDK stack)   | `npm run test:e2e` (a deployed stack)      |
+| Local demo (`npm run dev`, `npm run dev:server`) | Cognito login, CloudWatch, real S3 media  |
+| `npm run test:integration` (needs Docker)       |                                            |
+
+## Deploying to AWS
+
+Requires an AWS account and a bootstrapped CDK environment. Full steps, configuration overrides and
+troubleshooting: [docs/installation.md](docs/installation.md).
 
 ```bash
 npm ci
@@ -84,8 +133,27 @@ npm run deploy --workspace @open-estate/infra -- -c env=dev
 npm run seed --workspace @open-estate/infra -- --env dev   # sample listings
 ```
 
-No AWS account at hand? `npm run dev` starts an in-memory local demo with sample data and a local
-login (DEV ONLY): [docs/local-demo.md](docs/local-demo.md).
+## Testing
+
+Tests are split into two tiers and into functional areas, so you don't have to run the full
+suite for every small change.
+
+| Command                       | What runs                                                         | When                    |
+| ----------------------------- | ----------------------------------------------------------------- | ----------------------- |
+| `npm test`                    | Quick tier: every area except `infra`, property tests capped at 10 runs | After each change |
+| `npm run test:<area>`         | One area (quick tier)                                             | While working in it     |
+| `npm test -- <path or name>`  | Single files, e.g. `npm test -- search-service`                   | Tight loop              |
+| `npm run test:full`           | Everything, property tests at full run counts (CI runs this)      | Before a commit / PR    |
+| `npm run verify`              | Lint, build, test typecheck, full tests, synth                    | Final check             |
+
+Areas: `shared`, `search` (search and read model, Search API, MCP), `management` (agencies,
+listing versions, Management and Admin API), `ingestion` (connectors, crawler, import pipeline),
+`platform` (config, observability, dev server, load test), `frontend`, `infra` (CDK stacks,
+full tier only). The quick tier also skips a few slow suites that a faster check already covers,
+listed with their reason in `FULL_ONLY` in [`jest.config.js`](jest.config.js).
+`OPEN_ESTATE_TEST_TIER=full` switches any command to the full tier, for example
+`OPEN_ESTATE_TEST_TIER=full npm run test:search`. Details:
+[CONTRIBUTING.md](CONTRIBUTING.md#tests).
 
 ## Legal notice on crawling
 

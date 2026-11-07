@@ -55,7 +55,7 @@ deleted with the stack). Replace `123456789012` and `eu-central-1` with your acc
 3. **Test (recommended).** Unit and property tests need no AWS account and no Docker.
 
    ```bash
-   npm test
+   npm run test:full   # all suites; `npm test` is the quicker subset for development
    npm run synth   # validates config files and synthesizes all stacks, no AWS access needed
    ```
 

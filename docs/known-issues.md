@@ -15,9 +15,6 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 - **No integration tests** (task 16.1): role changes, suspensions and revocations within 60 s,
   visibility in DynamoDB and OpenSearch search, deletion of versions and S3 snapshots, usage lines
   reaching the counters within 15 min.
-- **Node version.** `package.json` allows Node ≥ 20.19, but the Angular CLI needs Node ≥ 22 and the
-  AWS SDK warns that releases from January 2027 require Node 22. Raise `engines` and the CI image.
-
 ## Frontend
 
 - **Bundle size.** The initial bundle is about 690 kB, under the 700 kB warning budget (the
