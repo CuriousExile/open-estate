@@ -171,9 +171,14 @@ function toFullInput(listing: Listing): Input {
   };
 }
 
-/** What the pipeline must store for l: l with this run's provenance. */
-const enriched = (listing: Listing): Listing => ({
+/**
+ * What the pipeline must store for l: l with this run's provenance. An empty `contact: {}` has no
+ * content path (`contentPaths` in shared/src/content.ts), so the field-wise merge does not store
+ * it: it equals an absent contact (seed 1776548573 found the mismatch).
+ */
+const enriched = ({ contact, ...listing }: Listing): Listing => ({
   ...listing,
+  ...(contact !== undefined && Object.keys(contact).length > 0 && { contact }),
   source: SOURCE,
   lastImportedAt: NOW.toISOString(),
   lastRunId: RUN_ID,
