@@ -35,10 +35,10 @@ if (args.has('--help') || args.has('-h')) {
 
 const REQUIRED = readFileSync(join(ROOT, '.nvmrc'), 'utf8').trim();
 const [major, minor] = process.versions.node.split('.').map(Number);
-const nodeOk = (major === 22 && minor >= 22) || (major === 24 && minor >= 15) || major >= 26;
+const nodeOk = (major === 22 && minor >= 12) || major >= 24;
 if (!nodeOk) {
   console.error(
-    `\nNode.js ${process.versions.node} is too old (need ${REQUIRED} or newer 22.x / 24.15+).\n` +
+    `\nNode.js ${process.versions.node} is too old (need 22.12+ or 24+; tested with ${REQUIRED}).\n` +
       'Start ./run-everything.sh instead: it downloads the right Node.js into .tools/ by itself.\n',
   );
   process.exit(1);
@@ -93,7 +93,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;]*m/g;
 const KEY_LINE =
-  /^(FAIL |\s+● |\s+\{ seed: |\s+Counterexample: |.*error TS\d+|npm (ERR!|error) |BAD )/;
+  /^(FAIL |\s+● |\s+\{ seed: |\s+Counterexample: |.*error TS\d+|.*\[ERROR\]|\s+\S+\.(ts|html|scss):\d+:\d+:|\s+\d+:\d+\s+error\s|\/\S+\.(ts|js|mjs)$|\[warn\] |.*Error: |npm (ERR!|error) |BAD )/;
 
 /**
  * The lines that matter in a failed step's log: failing suites and tests, fast-check seeds with a

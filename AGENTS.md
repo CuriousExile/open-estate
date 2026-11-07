@@ -1,7 +1,7 @@
 # Notes for AI coding agents
 
 OpenEstate is an npm-workspaces TypeScript monorepo (`packages/*`). Everything except deploying
-runs offline: no AWS account, credentials or Docker needed. Node.js 22.22.3+ (`.nvmrc`).
+runs offline: no AWS account, credentials or Docker needed. Node.js 22.12+ or 24+ (tested with 22.21.0, `.nvmrc`).
 
 ## Start here
 
@@ -10,14 +10,22 @@ runs offline: no AWS account, credentials or Docker needed. Node.js 22.22.3+ (`.
 ```
 
 It runs every check (install, lint, typecheck, build, all tests, CDK synth, local demo smoke test)
-and fetches the right Node.js by itself if needed. It ends with `RESULT: OK` or `RESULT: FAILED`;
+and needs no internet access beyond the npm registry (or mirror) for `npm ci`. It ends with `RESULT: OK` or `RESULT: FAILED`;
 for a failed step, read `logs/run-everything/<step>.log`. The summary is in
 `logs/run-everything/summary.md`. Run it once before you change anything (baseline) and once when
 you are done. `SKIP` for integration tests (no Docker) and e2e tests (no AWS) is expected, not a
 failure.
 
-If `node -v` is older than 22.22.3, put the Node.js that the script downloaded on your `PATH`
-before running other npm commands: `export PATH="$PWD/$(ls -d .tools/node-*/ | head -1)bin:$PATH"`.
+If the install step fails with `ETARGET` / `No matching version found` / `404`, the registry
+mirror lacks a locked version (all of them are at least four weeks old). Keep the exact error
+lines for your report, then let npm pick versions the mirror has and run everything again:
+
+```bash
+rm package-lock.json && npm install --no-audit --no-fund && ./run-everything.sh
+```
+
+If a version pinned in a `package.json` is missing, lower that one pin to the newest version the
+mirror has (`npm view <package> versions`) and repeat. Don't change anything else.
 
 ## Setup for working on the code
 

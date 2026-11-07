@@ -87,19 +87,20 @@ only if no step failed. Logs are in `logs/run-everything/<step>.log`, the summar
 
 - **No AWS needed.** Only the e2e tests against a deployed stack need AWS; they are reported as
   `SKIP`.
-- **No Node.js setup needed.** If Node.js is missing or older than required, the script downloads
-  the version pinned in `.nvmrc` (checksum-verified) into `.tools/` and uses it for this run. Nothing
-  is installed system-wide.
+- **Node.js 22.12+ or 24+** (tested with 22.21.0, see `.nvmrc`). Only if Node.js is missing or
+  too old and the machine is online, the script downloads the `.nvmrc` version (checksum-verified)
+  into `.tools/` for this run; nothing is installed system-wide.
+- **No internet needed** beyond the npm registry or a registry mirror for `npm ci`. Every locked
+  version is at least four weeks old, so mirrors that lack recent releases work.
 - **Docker is optional.** With Docker running, the DynamoDB Local / OpenSearch integration tests run
   too; without it they are `SKIP`. Use `--no-docker` to skip them anyway.
 - `./run-everything.sh --quick` runs only install, lint and the quick tests (about a minute).
-- Needs bash, curl and tar: macOS or Linux. On Windows use WSL.
+- Needs bash: macOS or Linux. On Windows use WSL.
 
 ## Getting started without AWS
 
 You don't need an AWS account, AWS credentials or Docker to build, test or run OpenEstate.
-AWS is only needed to deploy it. Requires Node.js 22.22.3+ or 24.15+ (`nvm use` picks up
-`.nvmrc`; `./run-everything.sh` fetches it for you).
+AWS is only needed to deploy it. Requires Node.js 22.12+ or 24+ (tested with 22.21.0, see `.nvmrc`).
 
 ```bash
 npm ci
