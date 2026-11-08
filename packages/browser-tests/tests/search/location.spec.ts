@@ -25,7 +25,7 @@ test.describe('city suggestions', () => {
     await expect(search.city).toHaveAttribute('aria-expanded', 'true');
     await expect(list.getByRole('option')).toHaveCount(1);
     await expect(list.getByRole('option')).toContainText('Berlin');
-    await expect(list.getByRole('option')).toContainText('Germany · listings: 4');
+    await expect(list.getByRole('option')).toContainText('Germany · listings: 5');
   });
 
   test('keyboard: arrow down and Enter take a suggestion', async ({ search }) => {
@@ -82,7 +82,7 @@ test.describe('country filter', () => {
     await select.click();
     const options = search.page.getByRole('listbox', { name: 'Country' }).getByRole('option');
     // Austria only has listings of the suspended agency, so it is not offered.
-    await expect(options).toHaveText([/All countries/, /Germany\s*9/, /Thailand\s*2/]);
+    await expect(options).toHaveText([/All countries/, /Germany\s*10/, /Thailand\s*2/]);
   });
 
   test('choosing a country re-runs the search with it', async ({ search }) => {

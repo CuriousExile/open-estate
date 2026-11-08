@@ -48,7 +48,7 @@ test('suspending an agency takes its listings offline and locks its users out; r
   request,
 }) => {
   consoleGuard.allow(/Failed to load resource: .* 403 /);
-  expect(await publicSales(request)).toBe(6);
+  expect(await publicSales(request)).toBe(7);
   await new PortalPage(page).signIn(
     USERS.paula,
     `/portal/admin/agencies/${AGENCIES.nordlicht.agencyId}`,
@@ -58,7 +58,8 @@ test('suspending an agency takes its listings offline and locks its users out; r
   const dialog = page.getByRole('dialog', {
     name: `Suspend the agency ${AGENCIES.nordlicht.displayName}?`,
   });
-  await expect(dialog).toContainText('Affected listings: 14');
+  // 14 seeded plus the repost and the neighbour of the duplicate detection demo.
+  await expect(dialog).toContainText('Affected listings: 16');
   await expect(dialog).toContainText('Affected users: 2');
   await dialog.getByRole('button', { name: 'Suspend', exact: true }).click();
   await expect(agency.notice).toContainText('The agency was suspended.');
@@ -78,7 +79,7 @@ test('suspending an agency takes its listings offline and locks its users out; r
   await agency.reactivate.click();
   await expect(agency.notice).toHaveText('The agency was reactivated.');
   await expect(agency.state).toHaveText('Active');
-  await expect.poll(() => publicSales(request), EFFECT).toBe(6);
+  await expect.poll(() => publicSales(request), EFFECT).toBe(7);
 });
 
 test('reactivating the suspended agency publishes its listings and lets its users in', async ({
@@ -147,7 +148,7 @@ test('access mode "API keys required" closes the public API; "Open" opens it aga
     .selectOption({ label: 'Open (no API key needed)' });
   await modeForm.getByRole('button', { name: 'Save' }).click();
   await expect(access.getByText('Saved.')).toBeVisible();
-  await expect.poll(() => publicSales(request), EFFECT).toBe(6);
+  await expect.poll(() => publicSales(request), EFFECT).toBe(7);
 });
 
 test('a deletion request removes a listing with all versions, everywhere (Req 9.x, 18.4)', async ({
@@ -227,7 +228,8 @@ test('platform admins (de)activate listings of every agency', async ({ page, req
     .getByRole('button', { name: `Deactivate ${mitte}` })
     .click();
   await expect(portal.row(table, mitte).getByRole('cell').nth(1)).toHaveText('Inactive');
-  expect(await publicSales(request, 'Berlin')).toBe(0);
+  // Only its neighbour in the same building (another unit) stays public in Berlin.
+  expect(await publicSales(request, 'Berlin')).toBe(1);
 
   // A listing of the (suspended) Alpenblick agency.
   const schwabing = '[DEMO] 2-Zimmer-Wohnung in Schwabing';
@@ -248,5 +250,5 @@ test('platform admins (de)activate listings of every agency', async ({ page, req
     .getByRole('button', { name: `Activate ${mitte}` })
     .click();
   await expect(portal.row(table, mitte).getByRole('cell').nth(1)).toHaveText('Active');
-  expect(await publicSales(request, 'Berlin')).toBe(1);
+  expect(await publicSales(request, 'Berlin')).toBe(2);
 });

@@ -16,7 +16,7 @@ test.describe('language', () => {
     search,
   }) => {
     await search.goto({ offerType: 'SALE', city: 'Berlin' });
-    await search.expectTitles([LISTINGS.berlinMitte.title]);
+    await search.expectTitles([LISTINGS.berlinMitte.title, LISTINGS.berlinMitteNeighbour.title]);
     const navigations: string[] = [];
     page.on('framenavigated', (frame) => navigations.push(frame.url()));
 
@@ -47,6 +47,7 @@ test.describe('language', () => {
     const results = page.getByRole('region', { name: 'Suchergebnisse' });
     await expect(results.getByRole('heading', { level: 3 })).toHaveText([
       LISTINGS.berlinMitte.title,
+      LISTINGS.berlinMitteNeighbour.title,
     ]);
 
     // … the next search delivers the German version.
@@ -57,6 +58,7 @@ test.describe('language', () => {
     await german;
     await expect(results.getByRole('heading', { level: 3 })).toHaveText([
       LISTINGS.berlinMitte.titleDe,
+      LISTINGS.berlinMitteNeighbour.title,
     ]);
   });
 
@@ -138,11 +140,12 @@ test.describe('display currency', () => {
     const sent = new URL(response.url()).searchParams;
     expect(sent.get('currency')).toBe('USD');
     expect(sent.get('convertCurrency')).toBe('true');
-    // 500,000 $ ≈ 431,000 €: Rostock, Lübeck and Pattaya (≈ 110,800 €).
+    // 500,000 $ ≈ 431,000 €: Rostock, Lübeck, the Ackerstraße neighbour and Pattaya (≈ 110,800 €).
     await search.expectTitles([
       LISTINGS.rostock.title,
       LISTINGS.luebeck.title,
       LISTINGS.pattaya.title,
+      LISTINGS.berlinMitteNeighbour.title,
     ]);
     await expect.poll(() => search.query().get('currency')).toBe('USD');
   });
@@ -162,6 +165,7 @@ test.describe('display currency', () => {
       LISTINGS.rostock.title,
       LISTINGS.luebeck.title,
       LISTINGS.pattaya.title,
+      LISTINGS.berlinMitteNeighbour.title,
     ]);
   });
 });

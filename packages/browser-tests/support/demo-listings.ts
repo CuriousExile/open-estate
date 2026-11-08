@@ -31,6 +31,18 @@ export const LISTINGS = {
     area: 82.5,
     media: 4,
   },
+  berlinMitteNeighbour: {
+    // Another flat in the building of Berlin-Mitte (other unit): seeded as "no duplicate" by the
+    // duplicate detection demo, so it stays public. Its repost and the Alpenblick copy are not.
+    title: '[DEMO] 2-Zimmer-Wohnung im Dachgeschoss, Ackerstraße',
+    city: 'Berlin',
+    postalCode: '10115',
+    country: 'DE',
+    offerTypes: ['SALE'],
+    rooms: 2,
+    area: 64,
+    media: 1,
+  },
   hamburgWinterhude: {
     // Portal edit of the CRM listing CRM-4711; see the demo-data test about the missing [DEMO].
     title: '4-Zimmer-Wohnung mit Alsterblick – provisionsfrei',

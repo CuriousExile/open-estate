@@ -162,6 +162,6 @@ test.describe('start without optional endpoints', () => {
     await expect(options).toHaveCount(0);
     await search.city.fill('Berlin');
     await search.submit();
-    await search.expectTitles([LISTINGS.berlinMitte.title]);
+    await search.expectTitles([LISTINGS.berlinMitte.title, LISTINGS.berlinMitteNeighbour.title]);
   });
 });

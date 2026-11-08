@@ -94,7 +94,8 @@ test.describe('overview', () => {
       .getByRole('row')
       .locator('td:nth-child(2)')
       .allInnerTexts()) {
-      expect(status.trim()).toBe('Inactive');
+      // A flagged duplicate also shows its "Possible duplicate" badge in the cell.
+      expect(status.trim()).toMatch(/^Inactive\b/);
     }
   });
 

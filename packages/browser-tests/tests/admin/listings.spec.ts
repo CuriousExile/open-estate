@@ -54,11 +54,8 @@ test('the agency filter', async ({ page }) => {
   await l.filters.getByRole('textbox', { name: 'Agency' }).fill(AGENCIES.alpenblick.agencyId);
   await l.apply();
   const agencies = await l.agencies();
-  expect(agencies).toEqual([
-    AGENCIES.alpenblick.agencyId,
-    AGENCIES.alpenblick.agencyId,
-    AGENCIES.alpenblick.agencyId,
-  ]);
+  // Three listings plus its copy of Berlin-Mitte (duplicate detection demo).
+  expect(agencies).toEqual(Array(4).fill(AGENCIES.alpenblick.agencyId));
 });
 
 test('a listing of the suspended agency: active, but not public; the preview still works', async ({

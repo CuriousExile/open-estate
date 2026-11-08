@@ -30,11 +30,12 @@ test('admin areas: agencies, all listings, monitoring, operations, audit log', a
   await expect(areas).toHaveText([
     'Agencies',
     'All listings',
+    'Duplicates across agencies',
     'Platform monitoring',
     'Operations',
     'Platform audit log',
   ]);
-  await expect(areas.filter({ hasText: 'Agencies' })).toHaveAttribute('aria-current', 'page');
+  await expect(areas.filter({ hasText: /^Agencies$/ })).toHaveAttribute('aria-current', 'page');
 });
 
 test('the overview shows state, users and listings per agency', async ({ page }) => {
@@ -43,11 +44,11 @@ test('the overview shows state, users and listings per agency', async ({ page })
   expect(
     Number(await a.cell(AGENCIES.nordlicht.displayName, 1).innerText()),
   ).toBeGreaterThanOrEqual(2);
-  await expect(a.cell(AGENCIES.nordlicht.displayName, 2)).toHaveText('11'); // active listings
+  await expect(a.cell(AGENCIES.nordlicht.displayName, 2)).toHaveText('12'); // active listings
   await expect(a.cell(AGENCIES.alpenblick.displayName, 0)).toHaveText('Suspended');
   await expect(a.cell(AGENCIES.alpenblick.displayName, 1)).toHaveText('1');
   // Its listings stay ACTIVE; the suspension alone keeps them out of the public search.
-  await expect(a.cell(AGENCIES.alpenblick.displayName, 2)).toHaveText('3');
+  await expect(a.cell(AGENCIES.alpenblick.displayName, 2)).toHaveText('4');
   await expect(a.cell(AGENCIES.alpenblick.displayName, 3)).toHaveText('0');
 });
 

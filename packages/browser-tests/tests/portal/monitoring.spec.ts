@@ -35,12 +35,12 @@ test.beforeEach(async ({ page }) => {
 
 test('overview: listings by status and changes by channel', async ({ page }) => {
   const m = monitoring(page);
-  // No parallel test publishes a listing: 11 active (the 3 seeded drafts and newly created
-  // listings are inactive).
-  await expect(m.figure('Listings by status', 'Active')).toHaveText('11');
+  // No parallel test publishes a listing: 12 active (the 3 seeded drafts, the flagged repost of
+  // Berlin-Mitte and newly created listings are inactive).
+  await expect(m.figure('Listings by status', 'Active')).toHaveText('12');
   const inactive = Number(await m.figure('Listings by status', 'Inactive').innerText());
   expect(inactive).toBeGreaterThanOrEqual(3);
-  await expect(m.figure('Listings by status', 'Total')).toHaveText(String(11 + inactive));
+  await expect(m.figure('Listings by status', 'Total')).toHaveText(String(12 + inactive));
   // The CRM imports of the last 30 days.
   await expect(m.figure('Changes by channel (last 30 days)', 'Import')).toHaveText('6');
 });
@@ -109,7 +109,7 @@ test('agency members read the monitoring too', async ({ browser }) => {
   const page = await browser.newPage();
   try {
     await new PortalPage(page).signIn(USERS.max, '/portal/monitoring');
-    await expect(monitoring(page).figure('Listings by status', 'Active')).toHaveText('11');
+    await expect(monitoring(page).figure('Listings by status', 'Active')).toHaveText('12');
   } finally {
     await page.close();
   }

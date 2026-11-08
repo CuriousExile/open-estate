@@ -116,11 +116,12 @@ test.describe('searching', () => {
     expect(sent.get('priceMax')).toBe('400000');
     expect(sent.get('currency')).toBe('EUR');
     expect(sent.get('convertCurrency')).toBe('true');
-    // 349,000 € and 395,000 €, plus the Pattaya condo: 4,200,000 THB ≈ 110,800 € at the demo rate.
+    // 349,000 € (Rostock and the Ackerstraße neighbour) and 395,000 €, plus the Pattaya condo: 4,200,000 THB ≈ 110,800 € at the demo rate.
     await search.expectTitles([
       LISTINGS.rostock.title,
       LISTINGS.luebeck.title,
       LISTINGS.pattaya.title,
+      LISTINGS.berlinMitteNeighbour.title,
     ]);
     await expect.poll(() => search.query().get('currency')).toBe('EUR');
   });

@@ -92,7 +92,8 @@ test.describe('"More filters"', () => {
     const more = await openMoreFilters(search);
     await more.postalCode.fill(LISTINGS.berlinMitte.postalCode);
     await more.apply.click();
-    await search.expectTitles([LISTINGS.berlinMitte.title]);
+    // The Ackerstraße neighbour has the same postal code.
+    await search.expectTitles([LISTINGS.berlinMitte.title, LISTINGS.berlinMitteNeighbour.title]);
   });
 
   test('maximum rooms combines with the offer type', async ({ search }) => {
