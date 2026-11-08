@@ -45,10 +45,14 @@ test.describe('language', () => {
     await search.chooseOption(languageSelect(search), 'Deutsch');
     // Listing content already shown stays in the language it was loaded in (known issue) …
     const results = page.getByRole('region', { name: 'Suchergebnisse' });
-    await expect(results.getByRole('heading', { level: 3 })).toHaveText([
-      LISTINGS.berlinMitte.title,
-      LISTINGS.berlinMitteNeighbour.title,
-    ]);
+    // Results are ordered by id, which the demo assigns anew on every reset: compare as a set.
+    const headings = async () =>
+      (await results.getByRole('heading', { level: 3 }).allInnerTexts())
+        .map((title) => title.trim())
+        .sort();
+    await expect
+      .poll(headings)
+      .toEqual([LISTINGS.berlinMitte.title, LISTINGS.berlinMitteNeighbour.title].sort());
 
     // … the next search delivers the German version.
     const german = page.waitForResponse(
@@ -56,10 +60,9 @@ test.describe('language', () => {
     );
     await page.getByRole('button', { name: 'Suchen', exact: true }).click();
     await german;
-    await expect(results.getByRole('heading', { level: 3 })).toHaveText([
-      LISTINGS.berlinMitte.titleDe,
-      LISTINGS.berlinMitteNeighbour.title,
-    ]);
+    await expect
+      .poll(headings)
+      .toEqual([LISTINGS.berlinMitte.titleDe, LISTINGS.berlinMitteNeighbour.title].sort());
   });
 
   test('the choice is remembered across reloads', async ({ page, search }) => {
