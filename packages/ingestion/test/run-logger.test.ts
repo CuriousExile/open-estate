@@ -26,6 +26,7 @@ describe('RunLogger', () => {
       updated: 1,
       unchanged: 4,
       rejected: 2,
+      flagged: 1,
     });
     expect(lines.every((l) => !l.includes('\n'))).toBe(true);
     expect(entries()).toEqual([
@@ -50,6 +51,7 @@ describe('RunLogger', () => {
         updated: 1,
         unchanged: 4,
         rejected: 2,
+        flagged: 1,
       },
     ]);
   });
@@ -119,6 +121,7 @@ describe('RunLogger', () => {
       updated: 0,
       unchanged: 0,
       rejected: 1,
+      flagged: 0,
       ...{ record: { contact: { email: secret } } },
     });
     expect(lines.join('\n')).not.toContain(secret);

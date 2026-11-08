@@ -257,6 +257,36 @@ describe('DynamoDbManagedListingStore.query', () => {
     expect(command.input).toEqual({ TableName: 'Listings', Limit: LISTING_QUERY_BATCH });
   });
 
+  it('filters by Markierungscode in DynamoDB and again after parsing (Req 7.5)', async () => {
+    const c = client();
+    const flagged = item('f', {
+      flags: [
+        {
+          code: 'DUPLICATE',
+          updatedAt: '2026-01-02T10:00:00.000Z',
+          detectedBy: 'CREATE',
+          originalId: 'a',
+          matches: [{ listingId: 'a', score: 0.9, reasons: ['SAME_ADDRESS'] }],
+        },
+      ],
+    });
+    const send = jest
+      .spyOn(c, 'send')
+      .mockImplementation(async () => ({ Items: [item('a'), flagged] }));
+    const store = new DynamoDbManagedListingStore({ client: c, tableName: 'Listings' });
+
+    const page = await store.query({ agencyId: 'agy-1', flag: 'DUPLICATE' }, { limit: 20 });
+
+    // `a` has no flag: it is dropped even if DynamoDB returned it.
+    expect(page.items.map((m) => m.listing.id)).toEqual(['f']);
+    const command = send.mock.calls[0]?.[0] as QueryCommand;
+    expect(command.input).toMatchObject({
+      FilterExpression: 'contains(#f_flagCodes, :f_flag)',
+      ExpressionAttributeNames: { '#pk': 'agencyId', '#f_flagCodes': 'flagCodes' },
+      ExpressionAttributeValues: { ':pk': 'agy-1', ':f_flag': 'DUPLICATE' },
+    });
+  });
+
   it('rejects a cursor of another agency before reading', async () => {
     const c = client();
     const send = jest.spyOn(c, 'send');
@@ -358,6 +388,7 @@ describe('ListingQueryService', () => {
       listingType: 'apartment_unit',
       version: 1,
       updatedAt: '2026-03-01T10:00:00.000Z',
+      flagCodes: [],
     });
   });
 

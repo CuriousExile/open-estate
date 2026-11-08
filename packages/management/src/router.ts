@@ -7,7 +7,7 @@ import {
   type Result,
 } from '@open-estate/shared';
 import type { ZodType } from 'zod';
-import { failure, type Reply } from './http';
+import { failure, findHeader, type Reply } from './http';
 
 // Router of the Management_API (design: "Management_API"). One Lambda serves all routes; a route
 // is method + path template (`/listings/{id}`). Path parameters, query and body are parsed with
@@ -25,6 +25,8 @@ export interface RouteContext<P, Q, B> {
   body: B;
   /** Aborted when the request deadline (4.5 s) is exceeded; pass it to downstream calls. */
   signal: AbortSignal;
+  /** Request header by name, case-insensitive (e.g. `Idempotency-Key`). */
+  header(name: string): string | undefined;
 }
 
 /** Validated input of a public route (no authentication, e.g. `/openapi.json`). */
@@ -59,6 +61,8 @@ export interface RawRouteInput {
   /** Body text (already base64-decoded); `''` if absent. */
   body: string;
   signal: AbortSignal;
+  /** Request headers as received; read them with a case-insensitive lookup. */
+  headers?: Readonly<Record<string, string | undefined>>;
 }
 
 /** Type-erased route as registered in the router. */
@@ -113,6 +117,11 @@ function parseInput<P, Q, B>(
   return ok({ params: params.value, query: query.value, body: body.value });
 }
 
+const headerLookup =
+  (headers: Readonly<Record<string, string | undefined>> | undefined) =>
+  (name: string): string | undefined =>
+    findHeader(headers, name);
+
 /** Authenticated route (Bearer JWT or machine access). */
 export function defineRoute<P = Record<string, string>, Q = Record<string, string>, B = unknown>(
   spec: RouteSpec<P, Q, B>,
@@ -126,7 +135,12 @@ export function defineRoute<P = Record<string, string>, Q = Record<string, strin
       if (principal === undefined) throw new Error(`${spec.method} ${spec.path}: no principal`);
       const parsed = parseInput(spec, input);
       if (!parsed.ok) return failure(parsed.error);
-      return spec.handle({ ...parsed.value, principal, signal: input.signal });
+      return spec.handle({
+        ...parsed.value,
+        principal,
+        signal: input.signal,
+        header: headerLookup(input.headers),
+      });
     },
   };
 }
@@ -145,7 +159,11 @@ export function definePublicRoute<
     async run(input) {
       const parsed = parseInput(spec, input);
       if (!parsed.ok) return failure(parsed.error);
-      return spec.handle({ ...parsed.value, signal: input.signal });
+      return spec.handle({
+        ...parsed.value,
+        signal: input.signal,
+        header: headerLookup(input.headers),
+      });
     },
   };
 }

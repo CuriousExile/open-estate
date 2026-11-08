@@ -3,6 +3,7 @@ import { ListingTableComponent } from '../listings/listing-table.component';
 import { AdminAgenciesComponent } from './admin-agencies.component';
 import { AdminAgencyDetailComponent } from './admin-agency-detail.component';
 import { AdminAuditComponent } from './admin-audit.component';
+import { AdminDuplicatesComponent } from './admin-duplicates.component';
 import { AdminMonitoringComponent } from './admin-monitoring.component';
 import { AdminOperationsComponent } from './admin-operations.component';
 import { AdminShellComponent } from './admin-shell.component';
@@ -24,6 +25,8 @@ export const ADMIN_ROUTES: Routes = [
       { path: 'monitoring', component: AdminMonitoringComponent },
       { path: 'operations', component: AdminOperationsComponent },
       { path: 'audit', component: AdminAuditComponent },
+      // Agenturübergreifende_Treffer of the Duplikat_Abgleich (duplicate-detection Req 11.7).
+      { path: 'duplicates', component: AdminDuplicatesComponent },
     ],
   },
 ];

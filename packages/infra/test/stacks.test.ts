@@ -374,13 +374,14 @@ describe('DataStack', () => {
       DestinationBucketName: { Ref: Match.stringLikeRegexp('^ConfigBucket') },
       Prune: false,
     });
-    // One source per validated file: the six defaults (incl. exchange-rates.json) + i18n mirror.
+    // One source per validated file: the seven defaults (incl. exchange-rates.json and
+    // duplicate-detection.json) + i18n mirror.
     const [deployment] = Object.values(
       dev.data.findResources('Custom::CDKBucketDeployment', {
         Properties: { DestinationBucketName: { Ref: Match.stringLikeRegexp('^ConfigBucket') } },
       }),
     ) as { Properties: { SourceObjectKeys: unknown[] } }[];
-    expect(deployment?.Properties.SourceObjectKeys).toHaveLength(7);
+    expect(deployment?.Properties.SourceObjectKeys).toHaveLength(8);
   });
 
   it('creates the SSM parameters with documented defaults (Req 9.3, 17.1)', () => {
@@ -391,6 +392,7 @@ describe('DataStack', () => {
       '/open-estate/dev/rate-limit': '{"requests":60,"windowSeconds":60}',
       '/open-estate/dev/config-bucket': expect.anything(),
       '/open-estate/dev/search-provider': 'dynamodb',
+      '/open-estate/dev/duplicate-detection': 'enabled',
     });
     dev.data.hasResourceProperties('AWS::SSM::Parameter', {
       Name: '/open-estate/dev/config-bucket',
@@ -455,6 +457,7 @@ describe('DataStack config validation at synth (Req 15.4)', () => {
     expect(files.map((f) => f.key)).toEqual([
       'connectors.json',
       'crawler-allowlist.json',
+      'duplicate-detection.json',
       'exchange-rates.json',
       'i18n-config.json',
       'pii-allowlist.json',
@@ -1178,6 +1181,7 @@ describe('resolvePlatformSettings', () => {
       defaultCurrency: 'EUR',
       accessMode: 'open',
       rateLimit: { requests: 60, windowSeconds: 60 },
+      duplicateDetection: 'enabled',
       searchProvider: 'dynamodb',
       configDir: DEFAULT_CONFIG_DIR,
       i18nConfigFile: DEFAULT_I18N_CONFIG_FILE,
@@ -1198,6 +1202,17 @@ describe('resolvePlatformSettings', () => {
       rateLimit: { requests: 10_000, windowSeconds: 3_600 },
       configDir: path.resolve('cfg'),
     });
+  });
+
+  it('starts the duplicate detection switched off with -c duplicateDetection=disabled', () => {
+    expect(resolvePlatformSettings(from({ duplicateDetection: 'disabled' }))).toMatchObject({
+      duplicateDetection: 'disabled',
+    });
+    expect(() => resolvePlatformSettings(from({ duplicateDetection: 'off' }))).toThrow(
+      /"duplicateDetection".*enabled, disabled/,
+    );
+    const { data } = synth('dev', { duplicateDetection: 'disabled' });
+    expect(parameters(data)['/open-estate/dev/duplicate-detection']).toBe('disabled');
   });
 
   it('defaults observability to INFO with metrics enabled', () => {
@@ -1244,6 +1259,7 @@ describe('resolvePlatformSettings', () => {
           defaultCurrency: 'XYZ',
           accessMode: 'closed',
           rateLimit: '{"requests":0,"windowSeconds":60}',
+          duplicateDetection: 'maybe',
           searchProvider: 'elastic',
           configDir: ' ',
           i18nConfigFile: '',
@@ -1256,7 +1272,7 @@ describe('resolvePlatformSettings', () => {
         }),
       ),
     ).toThrow(
-      /"defaultCurrency".*\n.*"accessMode".*\n.*"rateLimit".*\n.*"searchProvider".*\n.*"configDir".*\n.*"i18nConfigFile".*\n.*"wafRateLimit".*\n.*"frontendAssetDir".*\n.*"frontendPriceClass".*\n.*"corsAllowedOrigins".*\n.*"logLevel".*\n.*"metricsDisabled"/,
+      /"defaultCurrency".*\n.*"accessMode".*\n.*"rateLimit".*\n.*"duplicateDetection".*\n.*"searchProvider".*\n.*"configDir".*\n.*"i18nConfigFile".*\n.*"wafRateLimit".*\n.*"frontendAssetDir".*\n.*"frontendPriceClass".*\n.*"corsAllowedOrigins".*\n.*"logLevel".*\n.*"metricsDisabled"/,
     );
   });
 

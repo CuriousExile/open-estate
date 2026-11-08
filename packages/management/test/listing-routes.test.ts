@@ -22,6 +22,7 @@ import {
   type AgencyRecord,
 } from '@open-estate/core';
 import { createRouter, replyStatus, type Reply } from '@open-estate/management';
+import { assertValidTaxonomy } from '@open-estate/shared';
 import type { Principal, Taxonomy } from '@open-estate/shared';
 import {
   createListingRouteGroup,
@@ -31,7 +32,9 @@ import {
 
 const ORIGIN = 'https://estate.example';
 const T0 = Date.parse('2026-03-01T10:00:00.000Z');
-const TAXONOMY: Taxonomy = { groups: [{ code: 'residential', types: ['apartment_unit'] }] };
+const TAXONOMY: Taxonomy = assertValidTaxonomy({
+  groups: [{ code: 'residential', types: ['apartment_unit'] }],
+});
 
 const member: Principal = {
   kind: 'user',
@@ -346,6 +349,8 @@ describe('listing route group wiring', () => {
     [LISTING_ROUTES_ENV.agenciesTable]: 'Agencies',
     [LISTING_ROUTES_ENV.snapshotBucket]: 'version-snapshots',
     [LISTING_ROUTES_ENV.configBucket]: 'config-bucket',
+    [LISTING_ROUTES_ENV.duplicateIndexTable]: 'DuplicateIndex',
+    [LISTING_ROUTES_ENV.idempotencyKeysTable]: 'IdempotencyKeys',
   };
   const REGION = 'eu-central-1';
 
@@ -392,6 +397,7 @@ describe('listing route group wiring', () => {
       'PUT /listings/{id}',
       'PUT /listings/{id}/status',
       'PUT /listings/{id}/agency',
+      'DELETE /listings/{id}/flags/{code}',
       'GET /listings/{id}/versions',
       'GET /listings/{id}/versions/{n}',
       'GET /listings/{id}/diff',
@@ -413,7 +419,12 @@ describe('listing route group wiring', () => {
     expect(reads.mock.calls.length).toBeGreaterThan(loadsAfterFailure);
     const keys = reads.mock.calls.map(([c]) => (c as GetObjectCommand).input.Key);
     expect(new Set(keys)).toEqual(
-      new Set(['taxonomy.json', 'tour-providers.json', 'pii-allowlist.json']),
+      new Set([
+        'taxonomy.json',
+        'tour-providers.json',
+        'pii-allowlist.json',
+        'duplicate-detection.json',
+      ]),
     );
   });
 });

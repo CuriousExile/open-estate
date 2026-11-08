@@ -256,7 +256,10 @@ describe('POST /mcp: get_listing and list_property_types', () => {
 
     const res = await callTool('list_property_types');
 
-    expect(res.tool.structuredContent).toEqual({ groups: DEFAULT_TAXONOMY_CONFIG.groups });
+    // The tool publishes codes and types; Objektmerkmale per group are part of `/meta`.
+    expect(res.tool.structuredContent).toEqual({
+      groups: DEFAULT_TAXONOMY_CONFIG.groups.map((g) => ({ code: g.code, types: g.types })),
+    });
   });
 });
 

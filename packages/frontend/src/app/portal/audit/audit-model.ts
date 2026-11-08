@@ -116,6 +116,8 @@ export function actorDisplay(actor: AuditRecord['actor']): ActorDisplay | undefi
       return { kindKey, name: actor.connectorId, id: actor.runId };
     case 'iam':
       return { kindKey, name: actor.userArn, id: undefined };
+    case 'system':
+      return { kindKey, name: actor.job, id: actor.runId };
   }
 }
 

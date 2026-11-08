@@ -1,9 +1,12 @@
 import {
   AssignAgencyRequest,
   CreateListingRequest,
+  DuplicateDetectionRequest,
   ReplaceContentRequest,
   RestoreRequest,
   SetStatusRequest,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENT_REPLAYED_HEADER,
   type ErrorCode,
   type Permission,
 } from '@open-estate/shared';
@@ -20,6 +23,20 @@ import type { ComponentName } from './components';
 /** `authenticated`: any principal (no permission); `public`: no authentication at all. */
 export type RequiredPermission = Permission | 'authenticated' | 'public';
 
+/** A header of a request or a response. */
+export interface HeaderDoc {
+  name: string;
+  description: string;
+  schema: {
+    type: 'string';
+    pattern?: string;
+    minLength?: number;
+    maxLength?: number;
+    enum?: string[];
+  };
+  required?: boolean;
+}
+
 export interface SuccessDoc {
   status: number;
   description: string;
@@ -27,6 +44,8 @@ export interface SuccessDoc {
   schema?: ComponentName;
   /** Alternative body (e.g. the `dryRun=true` preview), documented as `oneOf`. */
   alternative?: ComponentName;
+  /** Response headers of this success. */
+  headers?: readonly HeaderDoc[];
 }
 
 export interface OperationDoc {
@@ -37,6 +56,8 @@ export interface OperationDoc {
   permission: RequiredPermission;
   /** Body schema for routes that validate the body inside the use case. */
   body?: z.ZodType;
+  /** Request headers the operation reads. */
+  headers?: readonly HeaderDoc[];
   responses: readonly SuccessDoc[];
   /** 404 codes; default `NOT_FOUND` for routes with path parameters or an `agencyId` filter. */
   notFound?: readonly ErrorCode[];
@@ -64,6 +85,16 @@ const dryRunnable = (schema: ComponentName): SuccessDoc => ({
   schema,
   alternative: 'DryRunResponse',
 });
+
+/** `Idempotency-Key` of `POST /listings` (duplicate-detection Req 9.2–9.6). */
+const IDEMPOTENCY_KEY_DOC: HeaderDoc = {
+  name: IDEMPOTENCY_KEY_HEADER,
+  description:
+    'Optional key of the request, e.g. your CRM id of the listing. A repetition with the same ' +
+    'key and body within 24 hours returns the listing created first; another body answers 409 ' +
+    '`IDEMPOTENCY_KEY_REUSED`. Keys are per caller.',
+  schema: { type: 'string', pattern: '^[\\x21-\\x7E]{1,128}$', minLength: 1, maxLength: 128 },
+};
 
 const LISTING_WRITE_CONFLICTS = [
   'VERSION_CONFLICT',
@@ -215,12 +246,29 @@ const LISTINGS: Record<string, OperationDoc> = {
     summary: 'Create a listing (status INACTIVE unless given)',
     description:
       'The content passes the PII filter and the media/tour cleanup of the import; dropped ' +
-      'fields are named in `droppedFields`. Plattform_Admins choose the agency with `agencyId`.',
+      'fields (also Objektmerkmale the property group does not allow) are named in ' +
+      '`droppedFields`. Plattform_Admins choose the agency with `agencyId`. A listing that ' +
+      'duplicates an older one of the same agency is stored `INACTIVE` with a `DUPLICATE` ' +
+      'flag whatever status was requested; only the older one stays public. With ' +
+      '`Idempotency-Key`, a repetition of the same request by the same caller within 24 hours ' +
+      'answers with the listing it created.',
     tag: 'Listings',
     permission: 'listing:write',
     body: CreateListingRequest,
-    responses: [created('ListingView')],
-    conflicts: ['CUSTOM_ID_TAKEN', 'DELETION_BLOCKED'],
+    headers: [IDEMPOTENCY_KEY_DOC],
+    responses: [
+      {
+        ...created('ListingView'),
+        headers: [
+          {
+            name: IDEMPOTENT_REPLAYED_HEADER,
+            description: '`true` if this answer repeats an earlier request with the same key.',
+            schema: { type: 'string', enum: ['true'] },
+          },
+        ],
+      },
+    ],
+    conflicts: ['CUSTOM_ID_TAKEN', 'DELETION_BLOCKED', 'IDEMPOTENCY_KEY_REUSED'],
   },
   'GET /listings/by-custom-id/{customId}': {
     operationId: 'getListingByCustomId',
@@ -254,6 +302,17 @@ const LISTINGS: Record<string, OperationDoc> = {
     body: SetStatusRequest,
     responses: [ok('ListingView')],
     conflicts: ['VERSION_CONFLICT', 'DELETION_BLOCKED'],
+  },
+  'DELETE /listings/{id}/flags/{code}': {
+    operationId: 'dismissListingFlag',
+    summary: 'Dismiss a flag (e.g. DUPLICATE) without changing the status',
+    description:
+      'Removes the flag and records that the listing is no duplicate of its current matches, ' +
+      'so they are never flagged again for each other. Creates no version. Without such a flag ' +
+      'the call succeeds without a change.',
+    tag: 'Listings',
+    permission: 'listing:status',
+    responses: [ok('ListingView')],
   },
   'PUT /listings/{id}/agency': {
     operationId: 'assignListingAgency',
@@ -453,10 +512,73 @@ const PLATFORM: Record<string, OperationDoc> = {
   },
   'POST /platform/reload': {
     operationId: 'reloadConfiguration',
-    summary: 'Restart the API, MCP and connector functions to load new configuration',
+    summary:
+      'Restart the API, MCP, connector and Management API functions to load new configuration',
+    description:
+      'The Management API restarts itself last; this request still runs on the old configuration.',
     tag: 'Platform',
     permission: 'platform:operate',
     responses: [ok('ReloadResult')],
+  },
+  // Duplikat-Erkennung (duplicate-detection Req 10.2, 11.3–11.5).
+  'GET /platform/duplicate-reports': {
+    operationId: 'listDuplicateReports',
+    summary: 'Possible duplicates across agencies, by descending match score',
+    description:
+      'Pairs of listings of different agencies that the daily duplicate check found to be the ' +
+      'same property. `state` defaults to `OPEN`; `agencyId` keeps pairs with a listing of that ' +
+      'agency. Listings and their status are never changed by these reports.',
+    tag: 'Duplicates',
+    permission: 'duplicate:review',
+    responses: [ok('DuplicateReportPage')],
+  },
+  'POST /platform/duplicate-reports/{reportId}/dismiss': {
+    operationId: 'dismissDuplicateReport',
+    summary: 'Dismiss a possible duplicate across agencies',
+    description:
+      'The report becomes `DISMISSED` and is not reopened by later checks while both listings ' +
+      'exist. Dismissing a dismissed report succeeds without a change.',
+    tag: 'Duplicates',
+    permission: 'duplicate:review',
+    responses: [ok('DuplicateReportView')],
+  },
+  'POST /platform/duplicate-sweeps': {
+    operationId: 'startDuplicateSweep',
+    summary: 'Start the duplicate check of all listings now',
+    description:
+      'Starts a run unless one is running; then the running one is returned with ' +
+      '`alreadyRunning: true`. The check also runs daily at the configured time (UTC).',
+    tag: 'Duplicates',
+    permission: 'platform:operate',
+    responses: [
+      {
+        status: 202,
+        description: 'The started or the running check.',
+        schema: 'DuplicateSweepStarted',
+      },
+    ],
+    conflicts: ['DUPLICATE_DETECTION_DISABLED'],
+  },
+  'GET /platform/duplicate-detection': {
+    operationId: 'getDuplicateDetection',
+    summary: 'Whether duplicate detection is switched on',
+    tag: 'Duplicates',
+    permission: 'platform:operate',
+    responses: [ok('DuplicateDetectionView')],
+  },
+  'PUT /platform/duplicate-detection': {
+    operationId: 'setDuplicateDetection',
+    summary: 'Switch duplicate detection on or off for the whole platform',
+    description:
+      'Off: creations and changes are stored without duplicate check and without flags, the ' +
+      'duplicate index is not maintained and the daily check ends right after its start. ' +
+      'Existing flags and reports stay and can still be released or dismissed. On: a duplicate ' +
+      'check is started to rebuild the index and renew every flag (`sweep`). Running functions ' +
+      'see the change within 60 seconds.',
+    tag: 'Duplicates',
+    permission: 'platform:operate',
+    body: DuplicateDetectionRequest,
+    responses: [ok('DuplicateDetectionView')],
   },
 };
 

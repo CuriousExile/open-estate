@@ -2,6 +2,10 @@ import {
   CustomId,
   EntityId,
   FieldSourcesSchema,
+  flagCodes,
+  ListingFlagsSchema,
+  type FlagCode,
+  type ListingFlag,
   IsoDateTime,
   ListingBase,
   ListingStatusSchema,
@@ -105,6 +109,14 @@ export interface ListingManagement {
   fieldSources: FieldSources;
   /** ISO-8601 with offset; time of the current version. */
   updatedAt: string;
+  /**
+   * Anlagezeitpunkt: time of version 1, never changed afterwards (duplicate-detection Req 4.3).
+   * The writer always sets it; read it through {@link creationTime}, which falls back for items
+   * written without it.
+   */
+  createdAt?: string;
+  /** Markierungen (duplicate-detection Req 7); absent = none. */
+  flags?: ListingFlag[];
 }
 
 export const listingManagementSchema = z.object({
@@ -116,10 +128,34 @@ export const listingManagementSchema = z.object({
   contentHash: z.string().regex(/^[0-9a-f]{64}$/),
   fieldSources: FieldSourcesSchema,
   updatedAt: IsoDateTime,
+  createdAt: IsoDateTime.optional(),
+  flags: ListingFlagsSchema.optional(),
 });
 
+/**
+ * Attribute holding the codes of `flags` (a list of strings), so list queries can filter by
+ * Markierungscode with `contains` (duplicate-detection Req 7.5). Derived on every write by
+ * {@link toManagedListingItem}, never set by callers, so it cannot drift from `flags`.
+ */
+export const LISTING_FLAG_CODES_ATTRIBUTE = 'flagCodes';
+
+/**
+ * Anlagezeitpunkt of a managed listing (duplicate-detection Req 4.3): `createdAt`, else the
+ * provenance timestamp (items written without `createdAt`, e.g. test fixtures).
+ */
+export function creationTime({
+  listing,
+  management,
+}: {
+  listing: Pick<Listing, 'lastImportedAt'>;
+  management: Pick<ListingManagement, 'createdAt'>;
+}): string {
+  return management.createdAt ?? listing.lastImportedAt;
+}
+
 /** Stored item of a managed listing: listing item plus {@link ListingManagement}. */
-export type ManagedListingItem = ListingItem & ListingManagement;
+export type ManagedListingItem = ListingItem &
+  ListingManagement & { [LISTING_FLAG_CODES_ATTRIBUTE]?: FlagCode[] };
 
 // Management attributes must not collide with listing or search attributes, otherwise one would
 // overwrite the other in the flat item (compile-time check like `sharedKeysAreKnown`). The only
@@ -139,10 +175,18 @@ export function toManagedListingItem(
   management: ListingManagement,
 ): ManagedListingItem {
   const attributes: Partial<ListingManagement> = { ...management };
-  // Absent optional attributes are omitted instead of being written as `undefined`.
+  // Absent optional attributes are omitted instead of being written as `undefined`; an empty
+  // flag list is stored as no attribute at all, so listings without flags look as before.
   if (attributes.agencyId === undefined) delete attributes.agencyId;
   if (attributes.customId === undefined) delete attributes.customId;
-  return { ...toListingItem(listing, management), ...(attributes as ListingManagement) };
+  if (attributes.createdAt === undefined) delete attributes.createdAt;
+  const flags = attributes.flags ?? [];
+  if (flags.length === 0) delete attributes.flags;
+  return {
+    ...toListingItem(listing, management),
+    ...(attributes as ListingManagement),
+    ...(flags.length > 0 && { [LISTING_FLAG_CODES_ATTRIBUTE]: flagCodes(flags) }),
+  };
 }
 
 /**

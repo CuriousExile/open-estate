@@ -14,6 +14,7 @@ import {
   resolveIdentitySettings,
 } from './identity-stack';
 import { connectorsFromConfigFiles, IngestionStack } from './ingestion-stack';
+import { duplicateSweepSettings } from './duplicate-sweep';
 import { ManagementDataStack, ManagementStack, portalConnectOrigins } from './management-stack';
 import { MonitoringStack } from './monitoring-stack';
 import { SearchStack } from './search-stack';
@@ -108,6 +109,7 @@ export function buildPlatform(app: App, env?: Environment): PlatformStacks {
     configBucket: data.configBucket,
     connectors: connectorsFromConfigFiles(data.configFiles),
     versioning: managementData.versioning,
+    duplicateDetectionParameter: data.parameterNames.duplicateDetection,
     removalPolicy: config.removalPolicy,
     observability: settings.observability,
   });
@@ -191,6 +193,8 @@ export function buildPlatform(app: App, env?: Environment): PlatformStacks {
     reloadableFunctions,
     deletionStateMachine: admin.deletionStateMachine,
     alarmNamePrefix: `${monitoringStackId}-`,
+    alarmTopic: monitoring.alarmTopic,
+    duplicateSweep: duplicateSweepSettings(data.configFiles),
     wafRateLimit: settings.wafRateLimit,
     rateLimit: settings.rateLimit,
     ...(identitySettings.initialPlatformAdminEmail !== undefined && {

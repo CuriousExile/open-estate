@@ -103,6 +103,8 @@ describe('VersionedListingWriter: creation', () => {
         contentPaths(content).map((path) => [path, { channel: 'PORTAL', actor: USER, version: 1 }]),
       ),
       updatedAt: '2026-03-01T10:00:00.000Z',
+      // Anlagezeitpunkt of version 1 (duplicate-detection Req 4.3).
+      createdAt: '2026-03-01T10:00:00.000Z',
     });
     expect(stored?.listing).toMatchObject({
       id: ID,

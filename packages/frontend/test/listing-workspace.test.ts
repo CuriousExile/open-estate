@@ -1,4 +1,4 @@
-import { ListingView, VersionEntry, type Taxonomy } from '@open-estate/shared';
+import { assertValidTaxonomy, ListingView, VersionEntry, type Taxonomy } from '@open-estate/shared';
 import { toListingDetail } from '../src/app/listing/listing-detail-model';
 import {
   fieldProvenanceRows,
@@ -23,7 +23,9 @@ import {
   type ParsedVersionEntry,
 } from '../src/app/portal/workspace/workspace-model';
 
-const taxonomy: Taxonomy = { groups: [{ code: 'apartment', types: ['loft'] }] };
+const taxonomy: Taxonomy = assertValidTaxonomy({
+  groups: [{ code: 'apartment', types: ['loft'] }],
+});
 
 const portalUser = { kind: 'user', userId: 'u-1', displayName: 'Mia Member' } as const;
 const connector = { kind: 'connector', connectorId: 'crm-feed', runId: 'run-7' } as const;
@@ -59,6 +61,8 @@ function view(overrides: Partial<ListingView> = {}) {
     source: 'crm-feed',
     lastImportedAt: '2026-03-01T10:00:00.000Z',
     lastRunId: 'run-7',
+    createdAt: '2026-01-01T10:00:00.000Z',
+    flags: [],
     ...overrides,
   });
 }

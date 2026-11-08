@@ -8,6 +8,9 @@ import {
   Money,
   MONEY_MAX_MINOR,
   MONEY_MIN_MINOR,
+  PLOT_AREA_MAX_MINOR,
+  PLOT_AREA_MIN_MINOR,
+  PlotArea,
 } from '../money';
 import { err, ok, type Result } from '../result';
 import {
@@ -16,10 +19,10 @@ import {
   TAXONOMY_CODE_MIN_LENGTH,
   type Taxonomy,
 } from '../taxonomy';
-import { maxItems } from './non-aborting';
+import { integer, maxItems } from './non-aborting';
 
 // Money/Area live in ../money (pure decimal logic); re-exported for importers of this module.
-export { Area, Money } from '../money';
+export { Area, Money, PlotArea } from '../money';
 
 // Listing data model (Req 4, 12, 14.1, 14.2, 16.1, 16.2). Every schema accepts the API/raw
 // representation (amounts and area as decimal strings) and outputs the internal representation
@@ -46,6 +49,18 @@ export const LISTING_BOUNDS = {
   city: { min: 1, max: 200 },
   postalCode: { min: 1, max: 10 },
   street: { min: 1, max: 200 },
+  // Objektmerkmale (duplicate-detection Req 1.1): all optional, all part of the Listing_Inhalt.
+  houseNumber: { min: 1, max: 20 },
+  unit: { min: 1, max: 50 },
+  /** 0 = ground floor; negative values are basement levels. */
+  floor: { min: -5, max: 200 },
+  totalFloors: { min: 1, max: 200 },
+  yearBuilt: { min: 1000, max: 2100 },
+  /** Plot area in hundredths of m²: 1–10,000,000 m². */
+  plotArea: { minMinor: PLOT_AREA_MIN_MINOR, maxMinor: PLOT_AREA_MAX_MINOR },
+  bedrooms: { min: 0, max: 99 },
+  bathrooms: { min: 0, max: 99 },
+  parcelId: { min: 1, max: 100 },
   lat: { min: -90, max: 90 },
   lon: { min: -180, max: 180 },
   url: { min: 1, max: 2048 },
@@ -63,6 +78,10 @@ const B = LISTING_BOUNDS;
 
 const boundedString = (bounds: { readonly min: number; readonly max: number }) =>
   z.string().min(bounds.min).max(bounds.max);
+
+/** Bounded integer via the non-aborting {@link integer}, so all field errors are reported. */
+const boundedInteger = (bounds: { readonly min: number; readonly max: number }) =>
+  integer().min(bounds.min).max(bounds.max);
 
 // ---------------------------------------------------------------------------------------------
 // PII markers (Req 18.1–18.3): the import pipeline finds PII fields generically via the schema.
@@ -194,11 +213,18 @@ export const Offers = maxItems(z.array(Offer).min(B.offers.min), B.offers.max).s
 /** Number of rooms 0–99.5 in steps of 0.5 (Req 4.4); stored as a plain decimal number. */
 export const Rooms = z.number().min(B.rooms.min).max(B.rooms.max).multipleOf(B.rooms.step);
 
+/**
+ * Address. `street` may carry the house number (Req 4.2 `real-estate-platform`); `houseNumber`
+ * and `unit` are optional Objektmerkmale (duplicate-detection Req 1.1, 1.8). Both spellings are
+ * equivalent for the duplicate detection, which normalizes them.
+ */
 export const Address = z.object({
   city: boundedString(B.city),
   postalCode: boundedString(B.postalCode),
   country: CountryCode,
   street: boundedString(B.street).optional(),
+  houseNumber: boundedString(B.houseNumber).optional(),
+  unit: boundedString(B.unit).optional(),
 });
 
 /** Decimal places kept for coordinates: 1e-6° ≈ 0.1 m. */
@@ -290,6 +316,18 @@ export const ListingBase = z.object({
   /** Up to 10 tours (Req 16.2). */
   tours: maxItems(z.array(Tour), B.tours.max),
   contact: Contact.optional(),
+  // Objektmerkmale (duplicate-detection Req 1.1): optional, never defaulted. An absent merkmal
+  // stays absent in storage and in the API representation (Req 1.5).
+  /** Floor of the unit; 0 = ground floor, negative = basement. */
+  floor: boundedInteger(B.floor).optional(),
+  /** Floors of the whole building; must be at least `floor` (Req 1.2). */
+  totalFloors: boundedInteger(B.totalFloors).optional(),
+  yearBuilt: boundedInteger(B.yearBuilt).optional(),
+  plotArea: PlotArea.optional(),
+  bedrooms: boundedInteger(B.bedrooms).optional(),
+  bathrooms: boundedInteger(B.bathrooms).optional(),
+  /** Cadastral/land-registry reference of the plot (e.g. Flurstück). */
+  parcelId: boundedString(B.parcelId).optional(),
   // Provenance, set by the import pipeline (Req 4.12, 11.5).
   source: boundedString(B.source),
   lastImportedAt: IsoDateTime,
@@ -333,12 +371,36 @@ function uniqueLocalesInclOriginal(listing: unknown, ctx: z.core.$RefinementCtx<
   });
 }
 
+/**
+ * A unit cannot sit above the building it is in (duplicate-detection Req 1.2). Reported on
+ * `floor`; like {@link uniqueLocalesInclOriginal} it runs after field issues, so only values that
+ * passed their own field check are compared.
+ */
+function floorWithinBuilding(listing: unknown, ctx: z.core.$RefinementCtx<unknown>): void {
+  if (!isRecord(listing)) return;
+  const failed = new Set(ctx.issues.map((issue) => (issue.path ?? []).join('.')));
+  const checked = (key: string): number | undefined => {
+    const value = listing[key];
+    return typeof value === 'number' && !failed.has(key) ? value : undefined;
+  };
+  const floor = checked('floor');
+  const totalFloors = checked('totalFloors');
+  if (floor === undefined || totalFloors === undefined || floor <= totalFloors) return;
+  ctx.addIssue({
+    code: 'custom',
+    path: ['floor'],
+    message: `floor ${floor} must not be greater than totalFloors ${totalFloors}`,
+  });
+}
+
 /** Adds the listing's cross-field rules to `ListingBase` or an extension of it. */
 export function refineListing<
   T extends z.ZodType<{ originalLocale: string; translations: readonly { locale: string }[] }>,
 >(schema: T): T {
   // `when`: run even after field issues (default would skip object refinements then).
-  return schema.superRefine(uniqueLocalesInclOriginal, { when: () => true });
+  return schema
+    .superRefine(uniqueLocalesInclOriginal, { when: () => true })
+    .superRefine(floorWithinBuilding, { when: () => true });
 }
 
 /** Full listing schema: input = API/raw representation, output = internal (minor units). */
@@ -417,6 +479,14 @@ export function serialize(
     area: formatDecimal(listing.area),
     address: { ...listing.address },
     ...(listing.geo !== undefined && { geo: { ...listing.geo } }),
+    // Objektmerkmale: present ones are delivered, absent ones stay absent (Req 1.5).
+    ...(listing.floor !== undefined && { floor: listing.floor }),
+    ...(listing.totalFloors !== undefined && { totalFloors: listing.totalFloors }),
+    ...(listing.yearBuilt !== undefined && { yearBuilt: listing.yearBuilt }),
+    ...(listing.plotArea !== undefined && { plotArea: formatDecimal(listing.plotArea) }),
+    ...(listing.bedrooms !== undefined && { bedrooms: listing.bedrooms }),
+    ...(listing.bathrooms !== undefined && { bathrooms: listing.bathrooms }),
+    ...(listing.parcelId !== undefined && { parcelId: listing.parcelId }),
     sourceUrl: listing.sourceUrl,
     media: listing.media.map((m) => ({ ...m })),
     tours: listing.tours.map((t) => ({ ...t })),

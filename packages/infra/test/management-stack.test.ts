@@ -9,6 +9,19 @@ import {
   CONNECTOR_RUNS_SK_ATTRIBUTE,
   CONNECTOR_RUNS_TTL_ATTRIBUTE,
   DEFAULT_RATE_LIMIT,
+  DUPLICATE_INDEX_BLOCK_ATTRIBUTE,
+  DUPLICATE_INDEX_BLOCK_SK_ATTRIBUTE,
+  DUPLICATE_INDEX_BY_BLOCK,
+  DUPLICATE_INDEX_PK,
+  DUPLICATE_INDEX_SK,
+  DUPLICATE_REPORTS_BY_STATE,
+  DUPLICATE_REPORTS_PK,
+  DUPLICATE_REPORTS_STATE_ATTRIBUTE,
+  DUPLICATE_REPORTS_STATE_SK_ATTRIBUTE,
+  IDEMPOTENCY_KEYS_BY_LISTING,
+  IDEMPOTENCY_KEYS_LISTING_ATTRIBUTE,
+  IDEMPOTENCY_KEYS_PK,
+  IDEMPOTENCY_KEYS_TTL_ATTRIBUTE,
   LISTING_KEYS_PK_ATTRIBUTE,
   LISTING_VERSIONS_PK_ATTRIBUTE,
   LISTING_VERSIONS_SK_ATTRIBUTE,
@@ -25,7 +38,7 @@ import {
   USAGE_AGGREGATOR_ENV,
   USAGE_LOG_FILTER_PATTERN,
 } from '@open-estate/core';
-import { MANAGEMENT_ENV } from '@open-estate/management';
+import { DUPLICATE_SWEEP_ENV, DUPLICATES_ENV, MANAGEMENT_ENV } from '@open-estate/management';
 import { App } from 'aws-cdk-lib';
 import { Match, Template } from 'aws-cdk-lib/assertions';
 import { DEFAULT_CONFIG_DIR, ENV_CONTEXT_KEY } from '../src/config';
@@ -112,14 +125,22 @@ function only(template: Template, type: string, prefix: string): Resource {
   return matches[0]?.[1] as Resource;
 }
 
-/** Statements of the policies attached to the role of the function `prefix`. */
+/**
+ * Statements of the policies attached to the role of the function `prefix`: inline policies and
+ * the managed policies CDK splits off when the inline policy would exceed the IAM size limit.
+ */
 function roleStatements(template: Template, prefix: string): Statement[] {
   const role = (
     only(template, 'AWS::Lambda::Function', prefix).Properties['Role'] as {
       'Fn::GetAtt': [string];
     }
   )['Fn::GetAtt'][0];
-  return Object.values(template.findResources('AWS::IAM::Policy'))
+  return [
+    ...Object.values(template.findResources('AWS::IAM::Policy')),
+    ...Object.values(template.findResources('AWS::IAM::ManagedPolicy')).filter(
+      (p) => (p as { Properties: { Roles?: unknown } }).Properties.Roles !== undefined,
+    ),
+  ]
     .map(
       (p) =>
         (
@@ -164,8 +185,8 @@ const md = templateOf(app, 'managementData');
 describe('ManagementDataStack (task 12.2)', () => {
   const table = (prefix: string) => only(md, 'AWS::DynamoDB::GlobalTable', prefix);
 
-  it('defines the nine on-demand tables with PITR', () => {
-    md.resourceCountIs('AWS::DynamoDB::GlobalTable', 9);
+  it('defines the twelve on-demand tables with PITR', () => {
+    md.resourceCountIs('AWS::DynamoDB::GlobalTable', 12);
     for (const resource of Object.values(md.findResources('AWS::DynamoDB::GlobalTable'))) {
       expect(resource).toMatchObject({
         Properties: {
@@ -190,6 +211,9 @@ describe('ManagementDataStack (task 12.2)', () => {
     ['MetricCounters', METRIC_COUNTERS_PK_ATTRIBUTE, [METRIC_COUNTERS_SK_ATTRIBUTE, 'S']],
     ['ConnectorRuns', CONNECTOR_RUNS_PK_ATTRIBUTE, [CONNECTOR_RUNS_SK_ATTRIBUTE, 'S']],
     ['RunRejections', RUN_REJECTIONS_PK_ATTRIBUTE, [RUN_REJECTIONS_SK_ATTRIBUTE, 'N']],
+    ['DuplicateIndex', DUPLICATE_INDEX_PK, [DUPLICATE_INDEX_SK, 'S']],
+    ['IdempotencyKeys', IDEMPOTENCY_KEYS_PK, undefined],
+    ['DuplicateReports', DUPLICATE_REPORTS_PK, undefined],
   ] as const)('%s uses the key schema of the core store', (name, pk, sk) => {
     const props = table(name).Properties;
     expect(props['KeySchema']).toEqual([
@@ -214,9 +238,39 @@ describe('ManagementDataStack (task 12.2)', () => {
     expect(indexes('MachineAccess')).toEqual([MACHINE_ACCESS_BY_AGENCY_INDEX]);
     expect(indexes('ConnectorRuns')).toEqual([CONNECTOR_RUNS_BY_AGENCY_INDEX]);
     expect(indexes('ListingVersions')).toEqual([]);
+    expect(indexes('DuplicateIndex')).toEqual([DUPLICATE_INDEX_BY_BLOCK]);
+    expect(indexes('IdempotencyKeys')).toEqual([IDEMPOTENCY_KEYS_BY_LISTING]);
+    expect(indexes('DuplicateReports')).toEqual([DUPLICATE_REPORTS_BY_STATE]);
   });
 
-  it('expires daily counters, runs and rejections via TTL (Req 13.2), nothing else', () => {
+  it('projects only keys into the duplicate GSIs (duplicate-detection task 11.5)', () => {
+    const gsi = (name: string) =>
+      (table(name).Properties['GlobalSecondaryIndexes'] as Record<string, unknown>[])[0];
+    expect(gsi('DuplicateIndex')).toMatchObject({
+      IndexName: DUPLICATE_INDEX_BY_BLOCK,
+      KeySchema: [
+        { AttributeName: DUPLICATE_INDEX_BLOCK_ATTRIBUTE, KeyType: 'HASH' },
+        { AttributeName: DUPLICATE_INDEX_BLOCK_SK_ATTRIBUTE, KeyType: 'RANGE' },
+      ],
+      Projection: { ProjectionType: 'KEYS_ONLY' },
+    });
+    expect(gsi('IdempotencyKeys')).toMatchObject({
+      IndexName: IDEMPOTENCY_KEYS_BY_LISTING,
+      KeySchema: [{ AttributeName: IDEMPOTENCY_KEYS_LISTING_ATTRIBUTE, KeyType: 'HASH' }],
+      Projection: { ProjectionType: 'KEYS_ONLY' },
+    });
+    // The Treffer list shows every attribute, by descending score.
+    expect(gsi('DuplicateReports')).toMatchObject({
+      IndexName: DUPLICATE_REPORTS_BY_STATE,
+      KeySchema: [
+        { AttributeName: DUPLICATE_REPORTS_STATE_ATTRIBUTE, KeyType: 'HASH' },
+        { AttributeName: DUPLICATE_REPORTS_STATE_SK_ATTRIBUTE, KeyType: 'RANGE' },
+      ],
+      Projection: { ProjectionType: 'ALL' },
+    });
+  });
+
+  it('expires daily counters, runs, rejections and idempotency keys via TTL, nothing else', () => {
     const ttl = Object.fromEntries(
       Object.entries(md.findResources('AWS::DynamoDB::GlobalTable')).map(([id, r]) => [
         id.replace(/[0-9A-F]{8}$/, ''),
@@ -230,7 +284,18 @@ describe('ManagementDataStack (task 12.2)', () => {
     for (const name of ['ConnectorRuns', 'RunRejections']) {
       expect(ttl[name]).toEqual({ AttributeName: CONNECTOR_RUNS_TTL_ATTRIBUTE, Enabled: true });
     }
-    for (const name of ['ListingVersions', 'ListingKeys', 'Agencies', 'Memberships']) {
+    expect(ttl['IdempotencyKeys']).toEqual({
+      AttributeName: IDEMPOTENCY_KEYS_TTL_ATTRIBUTE,
+      Enabled: true,
+    });
+    for (const name of [
+      'ListingVersions',
+      'ListingKeys',
+      'Agencies',
+      'Memberships',
+      'DuplicateIndex',
+      'DuplicateReports',
+    ]) {
       expect(ttl[name]).toBeUndefined();
     }
   });
@@ -340,6 +405,7 @@ describe('ManagementStack (task 12.2)', () => {
     expect(MANAGEMENT_ROUTE_ENV.listings).toEqual(LISTING_ROUTES_ENV);
     expect(MANAGEMENT_ROUTE_ENV.monitoring).toEqual(MONITORING_ENV);
     expect(MANAGEMENT_ROUTE_ENV.platform).toEqual(PLATFORM_ENV);
+    expect(MANAGEMENT_ROUTE_ENV.duplicates).toEqual(DUPLICATES_ENV);
     expect(MANAGEMENT_CONFIG_FILES).toEqual(LISTING_CONFIG_FILES);
   });
 
@@ -373,17 +439,50 @@ describe('ManagementStack (task 12.2)', () => {
     expect(actionsOn(statements(), 'AuditLog')).toEqual(['dynamodb:PutItem', 'dynamodb:Query']);
   });
 
-  it('may reload only the API, MCP and connector functions (Req 10.7)', () => {
+  it('may reload only the API, MCP and connector functions and itself (Req 10.7)', () => {
     const reload = statements().filter((s) =>
       actions(s).includes('lambda:UpdateFunctionConfiguration'),
     );
-    expect(reload).toHaveLength(1);
-    const resources = [reload[0]?.Resource].flat().map((r) => JSON.stringify(r));
-    expect(resources).toHaveLength(3);
+    expect(reload).toHaveLength(2);
+    const resources = reload.flatMap((s) => [s.Resource].flat()).map((r) => JSON.stringify(r));
+    expect(resources).toHaveLength(4);
     expect(resources.filter((r) => /ListingsFunction/.test(r))).toHaveLength(1);
     expect(resources.filter((r) => /McpFunction/.test(r))).toHaveLength(1);
     expect(resources.filter((r) => /Connectorpartnerdb/.test(r))).toHaveLength(1);
+    // Itself via a separate policy (the default policy may not reference the function).
+    expect(resources.filter((r) => /ManagementFunction/.test(r))).toHaveLength(1);
     expect(JSON.stringify(env()['RELOAD_FUNCTION_NAMES'])).toMatch(/ListingsFunction/);
+    expect(JSON.stringify(env()['RELOAD_FUNCTION_NAMES'])).not.toMatch(/ManagementFunction/);
+  });
+
+  it('outputs every reload target for the admin CLI, including itself', () => {
+    const output = JSON.stringify(m.findOutputs('ReloadFunctionNames'));
+    for (const name of [
+      'ListingsFunction',
+      'McpFunction',
+      'Connectorpartnerdb',
+      'ManagementFunction',
+    ]) {
+      expect(output).toContain(name);
+    }
+  });
+
+  it('offers administrators a managed policy to reload the management function from the CLI', () => {
+    // Not attached to any role of the stack: administrators attach it themselves.
+    const policies = (
+      Object.values(m.findResources('AWS::IAM::ManagedPolicy')) as {
+        Properties: { Roles?: unknown; PolicyDocument: { Statement: Statement[] } };
+      }[]
+    ).filter((p) => p.Properties.Roles === undefined);
+    expect(policies).toHaveLength(1);
+    const [statement, ...rest] = policies[0]?.Properties.PolicyDocument.Statement ?? [];
+    expect(rest).toEqual([]);
+    expect(statement && actions(statement)).toEqual([
+      'lambda:GetFunctionConfiguration',
+      'lambda:UpdateFunctionConfiguration',
+    ]);
+    expect(JSON.stringify(statement?.Resource)).toMatch(/ManagementFunction/);
+    expect(JSON.stringify(m.findOutputs('ReloadPolicyArn'))).toMatch(/ManagementReloadPolicy/);
   });
 
   it('grants the platform operations of the Admin-API and the Cognito calls', () => {
@@ -457,6 +556,170 @@ describe('ManagementStack (task 12.2)', () => {
   it('creates no Plattform_Admin bootstrap without initialPlatformAdminEmail', () => {
     expect(app.stacks.management.bootstrap).toBeUndefined();
     expect(JSON.stringify(m.toJSON())).not.toContain('INITIAL_PLATFORM_ADMIN_EMAIL');
+  });
+});
+
+describe('Duplikat_Abgleich in the ManagementStack (duplicate-detection task 11.3, 11.5)', () => {
+  const m = templateOf(app, 'management');
+  const sweep = () => roleStatements(m, 'DuplicateSweepFunction');
+  const machine = () => only(m, 'AWS::StepFunctions::StateMachine', 'DuplicateSweepStateMachine');
+
+  it('runs the sweep Lambda for up to 15 minutes with its stores and the frontend origin', () => {
+    const fn = only(m, 'AWS::Lambda::Function', 'DuplicateSweepFunction').Properties;
+    expect(fn['Timeout']).toBe(900);
+    const vars = variables(m, 'DuplicateSweepFunction');
+    for (const name of Object.values(DUPLICATE_SWEEP_ENV)) expect(vars[name]).toBeDefined();
+    expect(JSON.stringify(vars[DUPLICATE_SWEEP_ENV.duplicateReportsTable])).toMatch(
+      /DuplicateReports/,
+    );
+    expect(vars['FRONTEND_ORIGIN_SSM_PARAMETER']).toBe('/open-estate/dev/frontend-origin');
+    expect(vars['POWERTOOLS_METRICS_NAMESPACE']).toBe('OpenEstate');
+  });
+
+  it('defines a standard state machine: 4 h timeout, Maps over the segments, retries (Req 10.8)', () => {
+    const definition = JSON.stringify(machine().Properties['DefinitionString']);
+    expect(definition).toContain('\\"TimeoutSeconds\\":14400');
+    for (const state of ['Prepare', 'INDEXPhase', 'ORPHANPhase', 'MATCHPhase', 'RESOLVEStep']) {
+      expect(definition).toContain(`\\"${state}\\"`);
+    }
+    expect(definition).toContain('\\"ItemsPath\\":\\"$.run.segments\\"');
+    expect(definition).toContain('\\"MaxAttempts\\":3');
+    expect(definition).toContain('\\"ReportFailure\\"');
+    expect(machine().Properties['StateMachineType']).toBe('STANDARD');
+  });
+
+  it('renders valid task states: object parameters, the part state as the step input', () => {
+    const definition = machine().Properties['DefinitionString'] as {
+      'Fn::Join': [string, unknown[]];
+    };
+    const asl = JSON.parse(
+      definition['Fn::Join'][1].map((part) => (typeof part === 'string' ? part : 'ref')).join(''),
+    ) as { States: Record<string, Record<string, unknown>> };
+    const states: [string, Record<string, unknown>][] = [];
+    const collect = (all: Record<string, Record<string, unknown>>) => {
+      for (const [name, state] of Object.entries(all)) {
+        states.push([name, state]);
+        for (const branch of (state['Branches'] as { States: typeof all }[] | undefined) ?? []) {
+          collect(branch.States);
+        }
+        const processor = state['ItemProcessor'] as { States: typeof all } | undefined;
+        if (processor !== undefined) collect(processor.States);
+      }
+    };
+    collect(asl.States);
+    const tasks = states.filter(([, state]) => state['Type'] === 'Task');
+    expect(tasks.map(([name]) => name).sort()).toEqual([
+      'Finish',
+      'INDEXStep',
+      'MATCHStep',
+      'ORPHANStep',
+      'Prepare',
+      'RESOLVEStep',
+      'ReportFailure',
+    ]);
+    for (const [, state] of tasks) {
+      if ('Parameters' in state) expect(typeof state['Parameters']).toBe('object');
+    }
+    const byName = Object.fromEntries(states);
+    expect(byName['INDEXStep']).not.toHaveProperty('Parameters');
+    expect(byName['RESOLVEStep']).toMatchObject({
+      InputPath: '$.resolve',
+      ResultPath: '$.resolve',
+    });
+    expect(byName['INDEXPhase']).toMatchObject({
+      ItemsPath: '$.run.segments',
+      ItemSelector: { 'segment.$': '$$.Map.Item.Value', phase: 'INDEX' },
+      ResultSelector: { 'counts.$': '$[*].counts' },
+    });
+  });
+
+  it('starts it daily at the configured time (UTC, default 03:00; Req 10.1)', () => {
+    const schedule = only(m, 'AWS::Scheduler::Schedule', 'DuplicateSweepSchedule').Properties;
+    expect(schedule).toMatchObject({
+      ScheduleExpression: 'cron(0 3 * * ? *)',
+      ScheduleExpressionTimezone: 'UTC',
+      State: 'ENABLED',
+    });
+    expect(JSON.stringify(schedule['Target'])).toMatch(/DuplicateSweepStateMachine/);
+  });
+
+  it('alarms on failed and timed-out runs and notifies the platform topic (Req 10.8)', () => {
+    const alarm = only(m, 'AWS::CloudWatch::Alarm', 'DuplicateSweepRunFailed').Properties;
+    expect(alarm['AlarmName']).toBe('OpenEstate-dev-Monitoring-DuplicateSweepFailed');
+    const metrics = JSON.stringify(alarm['Metrics']);
+    expect(metrics).toContain('ExecutionsFailed');
+    expect(metrics).toContain('ExecutionsTimedOut');
+    expect(JSON.stringify(alarm['AlarmActions'])).toMatch(/AlarmTopic/);
+  });
+
+  it('grants the sweep Lambda least privilege: flags only, AuditLog append-only', () => {
+    const statements = sweep();
+    expect(actionsOn(statements, 'AuditLog').sort()).toEqual(['dynamodb:PutItem']);
+    // Cross-stack reference to the DataStack's `Listings` table.
+    const listings = actionsOn(statements, 'GetAttListings');
+    expect(listings).toEqual(
+      expect.arrayContaining(['dynamodb:Scan', 'dynamodb:BatchGetItem', 'dynamodb:UpdateItem']),
+    );
+    expect(listings).not.toContain('dynamodb:PutItem');
+    expect(listings).not.toContain('dynamodb:DeleteItem');
+    expect(actionsOn(statements, 'DuplicateReports')).toEqual(
+      expect.arrayContaining(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']),
+    );
+    expect(actionsOn(statements, 'MetricCounters')).toEqual(['dynamodb:UpdateItem']);
+    expect(statements.flatMap((s) => [s.Resource].flat())).not.toContain('*');
+  });
+
+  it('ends a run right after Prepare while the detection is switched off', () => {
+    const definition = machine().Properties['DefinitionString'] as {
+      'Fn::Join': [string, unknown[]];
+    };
+    const asl = JSON.parse(
+      definition['Fn::Join'][1].map((part) => (typeof part === 'string' ? part : 'ref')).join(''),
+    ) as { States: Record<string, { Branches: { States: Record<string, unknown> }[] }> };
+    const run = asl.States['Run']?.Branches[0]?.States ?? {};
+    expect(run['Prepare']).toMatchObject({ Next: 'DetectionEnabled' });
+    expect(run['DetectionEnabled']).toEqual({
+      Type: 'Choice',
+      Choices: [{ Variable: '$.run.enabled', BooleanEquals: false, Next: 'DetectionDisabled' }],
+      Default: 'INDEXPhase',
+    });
+    expect(run['DetectionDisabled']).toMatchObject({ Type: 'Succeed' });
+    const vars = variables(m, 'DuplicateSweepFunction');
+    expect(vars[DUPLICATE_SWEEP_ENV.duplicateDetectionParameter]).toBe(
+      '/open-estate/dev/duplicate-detection',
+    );
+    const read = sweep().find((st) => actions(st).includes('ssm:GetParameters'));
+    expect(JSON.stringify(read?.Resource)).toContain(
+      ':parameter/open-estate/dev/duplicate-detection',
+    );
+  });
+
+  it('lets the management Lambda read and switch the duplicate detection', () => {
+    expect(variables(m, 'ManagementFunction')['DUPLICATE_DETECTION_PARAMETER_NAME']).toBe(
+      '/open-estate/dev/duplicate-detection',
+    );
+    const all = roleStatements(m, 'ManagementFunction');
+    const read = all.find((st) => actions(st).includes('ssm:GetParameters'));
+    const put = all.find((st) => actions(st).includes('ssm:PutParameter'));
+    for (const statement of [read, put]) {
+      expect(JSON.stringify(statement?.Resource)).toContain(
+        ':parameter/open-estate/dev/duplicate-detection',
+      );
+    }
+  });
+
+  it('lets the management Lambda start the sweep and review the Treffer (Req 10.2, 11.3)', () => {
+    const statements = roleStatements(m, 'ManagementFunction');
+    expect(actionsOn(statements, 'DuplicateSweepStateMachine')).toEqual(
+      expect.arrayContaining(['states:ListExecutions', 'states:StartExecution']),
+    );
+    expect(actionsOn(statements, 'DuplicateReports')).toEqual(
+      expect.arrayContaining(['dynamodb:GetItem', 'dynamodb:PutItem', 'dynamodb:Query']),
+    );
+    expect(actionsOn(statements, 'DuplicateReports')).not.toContain('dynamodb:DeleteItem');
+    expect(
+      JSON.stringify(variables(m, 'ManagementFunction')['DUPLICATE_SWEEP_STATE_MACHINE_ARN']),
+    ).toMatch(/DuplicateSweepStateMachine/);
   });
 });
 

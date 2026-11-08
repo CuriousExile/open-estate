@@ -21,15 +21,19 @@ import {
 } from './listing-query-service';
 import type { ManagedListingStore } from './listing-store';
 import type { ListingVersionRecord, ListingVersionStore } from './listing-version-store';
-import { contentToInput } from './listing-view';
+import { contentToInput, showsStatusReason } from './listing-view';
 import type { SnapshotStore } from './snapshot-store';
 
 // Version history of a listing (design: "Management_API", "Diff", Req 7.5, 7.6). Version contents
 // come from the content-addressed snapshots; diffs are never stored but computed from two
 // snapshots (Req 9.2). Reads are audited only when rejected (Req 2.8).
 
-/** History entry of a version record (Req 7.5); the content is not part of the entry. */
-export function toVersionEntry(record: ListingVersionRecord): VersionEntry {
+/**
+ * History entry of a version record (Req 7.5); the content is not part of the entry. Without
+ * `showReason` a Statusbegründung is left out (it names a listing the viewer may not see).
+ */
+export function toVersionEntry(record: ListingVersionRecord, showReason = true): VersionEntry {
+  const statusReason = showReason ? record.statusReason : undefined;
   return {
     version: record.version,
     changeType: record.changeType,
@@ -41,6 +45,7 @@ export function toVersionEntry(record: ListingVersionRecord): VersionEntry {
     ...(record.agencyId !== undefined && { agencyId: record.agencyId }),
     changedPaths: structuredClone(record.changedPaths),
     ...(record.restoredFrom !== undefined && { restoredFrom: record.restoredFrom }),
+    ...(statusReason !== undefined && { statusReason: { ...statusReason } }),
   };
 }
 
@@ -80,7 +85,9 @@ export class VersionService {
       );
     }
     const result = await this.deps.versions.list(listingId, page);
-    return ok({ ...result, items: result.items.map(toVersionEntry) });
+    const items: VersionEntry[] = [];
+    for (const record of result.items) items.push(await this.entryFor(actor, record));
+    return ok({ ...result, items });
   }
 
   /** `GET /listings/{id}/versions/{n}`: entry plus the full Listing_Inhalt of the version. */
@@ -94,7 +101,10 @@ export class VersionService {
     if (!loaded.ok) return this.trail.reject(actor, 'version.get', target, undefined, loaded.error);
     const [state] = loaded.value;
     if (state === undefined) throw new Error('VersionService: version not loaded');
-    return ok({ ...toVersionEntry(state.record), content: contentToInput(state.content) });
+    return ok({
+      ...(await this.entryFor(actor, state.record)),
+      content: contentToInput(state.content),
+    });
   }
 
   /**
@@ -120,6 +130,18 @@ export class VersionService {
       b as unknown as VersionedState,
     );
     return ok({ from, to, entries });
+  }
+
+  /**
+   * Entry as the actor may see it: a Statusbegründung only while its Original belongs to the
+   * actor's agency (duplicate-detection Req 7.6); the listing may have moved since.
+   */
+  private async entryFor(actor: AgencyActor, record: ListingVersionRecord): Promise<VersionEntry> {
+    const reason = record.statusReason;
+    const show =
+      reason === undefined ||
+      (await showsStatusReason(reason.originalId, actor.principal, this.deps.listings));
+    return toVersionEntry(record, show);
   }
 
   /** Authorized listing, then the requested version records with their snapshot contents. */

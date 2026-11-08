@@ -12,6 +12,7 @@ import { NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
 import {
+  FLAG_CODES,
   LISTING_STATUSES,
   ListingPage,
   OFFER_TYPES,
@@ -173,6 +174,22 @@ import {
           }
         </div>
         <div class="field">
+          <label for="filter-flag">{{ 'portal.listings.filter.flag' | transloco }}</label>
+          <oe-select
+            variant="field"
+            triggerId="filter-flag"
+            formControlName="flag"
+            [label]="'portal.listings.filter.flag' | transloco"
+            [options]="
+              flagCodes
+                | codeOptions
+                  : 'portal.listings.flag.'
+                  : activeLocale()
+                  : 'portal.listings.filter.any'
+            "
+          />
+        </div>
+        <div class="field">
           <label for="filter-customId">{{ 'portal.field.customId' | transloco }}</label>
           <input
             id="filter-customId"
@@ -270,6 +287,11 @@ import {
                   <span class="badge" [class.active]="row.status === 'ACTIVE'">
                     {{ 'portal.listings.status.' + row.status | transloco }}
                   </span>
+                  @for (code of row.flagCodes; track code) {
+                    <span class="badge flag" [attr.data-flag]="code">
+                      {{ 'portal.listings.flag.' + code | transloco }}
+                    </span>
+                  }
                 </td>
                 <td>{{ 'portal.listings.origin.' + row.origin | transloco }}</td>
                 <td>{{ row.customId ?? '' }}</td>
@@ -495,6 +517,12 @@ import {
       background: var(--color-accent);
       color: var(--color-on-accent);
     }
+    /* Markierung (e.g. possible duplicate): gold hairline like the design's badges. */
+    .badge.flag {
+      margin-left: 0.35rem;
+      border-color: var(--color-gold);
+      color: var(--color-text);
+    }
     .empty,
     .status {
       color: var(--color-text-muted);
@@ -526,6 +554,7 @@ export class ListingTableComponent implements OnInit {
   protected readonly taxonomy = inject(StartupState).meta().taxonomy;
   protected readonly statuses = LISTING_STATUSES;
   protected readonly origins = ORIGINS;
+  protected readonly flagCodes = FLAG_CODES;
   protected readonly offerTypes = OFFER_TYPES;
   protected readonly activeLocale = this.locale.active;
   protected readonly previous = previousPage;

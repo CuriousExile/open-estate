@@ -23,6 +23,15 @@ export const CONTENT_FIELDS = [
   'media',
   'tours',
   'contact',
+  // Objektmerkmale (duplicate-detection Req 1.4); `address.houseNumber` and `address.unit` are
+  // Inhaltsfelder of the nested `address` object and therefore not listed here.
+  'floor',
+  'totalFloors',
+  'yearBuilt',
+  'plotArea',
+  'bedrooms',
+  'bathrooms',
+  'parcelId',
 ] as const;
 
 export type ContentField = (typeof CONTENT_FIELDS)[number];

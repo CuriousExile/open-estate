@@ -51,6 +51,8 @@ export const SSM_PARAMETERS = {
   rateLimit: 'rate-limit',
   configBucket: 'config-bucket',
   searchProvider: 'search-provider',
+  /** Ein/Aus of the Duplikat-Erkennung: `enabled` | `disabled` (duplicate-detection). */
+  duplicateDetection: 'duplicate-detection',
 } as const;
 export type SsmParameterKey = keyof typeof SSM_PARAMETERS;
 export type SsmParameterNames = Readonly<Record<SsmParameterKey, string>>;
@@ -248,6 +250,7 @@ export class DataStack extends Stack {
       rateLimit: JSON.stringify(settings.rateLimit),
       configBucket: configBucket.bucketName,
       searchProvider: settings.searchProvider,
+      duplicateDetection: settings.duplicateDetection,
     };
     for (const key of Object.keys(SSM_PARAMETERS) as SsmParameterKey[]) {
       new StringParameter(this, `${key[0]?.toUpperCase()}${key.slice(1)}Parameter`, {
@@ -265,6 +268,11 @@ export class DataStack extends Stack {
     new CfnOutput(this, 'ConfigBucketName', {
       description: 'Physical name of the private config bucket',
       value: configBucket.bucketName,
+    });
+    // The seed script writes through the import pipeline, which checks the deletion blocklist.
+    new CfnOutput(this, 'DeletionBlocklistTableName', {
+      description: 'Physical name of the DeletionBlocklist table',
+      value: this.deletionBlocklistTable.tableName,
     });
   }
 }

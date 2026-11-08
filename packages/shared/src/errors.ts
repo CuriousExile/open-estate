@@ -40,6 +40,8 @@ export const ERROR_CODES = [
   'USER_ALREADY_ASSIGNED',
   'INVALID_PERMISSION',
   'UNKNOWN_METRIC',
+  'IDEMPOTENCY_KEY_REUSED',
+  'DUPLICATE_DETECTION_DISABLED',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];
@@ -78,6 +80,8 @@ export const ERROR_HTTP_STATUS = {
   USER_ALREADY_ASSIGNED: 409,
   INVALID_PERMISSION: 400,
   UNKNOWN_METRIC: 400,
+  IDEMPOTENCY_KEY_REUSED: 409,
+  DUPLICATE_DETECTION_DISABLED: 409,
 } as const satisfies Record<Exclude<ErrorCode, 'UNKNOWN_TOOL'>, number>;
 
 export interface ApiError {

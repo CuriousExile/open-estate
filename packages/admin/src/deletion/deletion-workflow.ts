@@ -6,6 +6,7 @@ import {
   systemClock,
   type Clock,
   type DeletionWorkflowStarter,
+  type DuplicateDataPurge,
   type ListingHistoryStore,
 } from '@open-estate/core';
 import type { AuditLog } from '../audit-log';
@@ -37,6 +38,11 @@ export interface DeletionWorkflowDeps {
   blocklist: DeletionBlocklistStore & DeletionBlocklistBatch;
   /** `ListingVersions` and the snapshot prefix of each listing (Req 9.2). */
   history: ListingHistoryStore;
+  /**
+   * Duplikat_Index and Idempotenzschlüssel of each listing (duplicate-detection Req 12.3). Every
+   * production wiring sets it; a listing only counts as removed once this data is gone, too.
+   */
+  duplicates?: DuplicateDataPurge;
   audit: AuditLog;
   clock?: Clock;
   pageSize?: number;
@@ -117,11 +123,18 @@ export function createDeletionWorkflow(deps: DeletionWorkflowDeps): DeletionWork
     return record;
   }
 
+  /** Version history and duplicate data of a listing; complete only if both are gone. */
+  async function purgeListingData(listingId: string): Promise<{ complete: boolean }> {
+    const history = await deps.history.purge(listingId);
+    const duplicates = (await deps.duplicates?.purge(listingId)) ?? { complete: true };
+    return { complete: history.complete && duplicates.complete };
+  }
+
   /** One more attempt for every incomplete history; `true` if none remains incomplete. */
   async function purgeIncomplete(requestId: string): Promise<boolean> {
     let remaining = 0;
     for (const listingId of await deps.requests.incompleteListings(requestId)) {
-      if ((await deps.history.purge(listingId)).complete) {
+      if ((await purgeListingData(listingId)).complete) {
         await deps.requests.markComplete(requestId, listingId);
       } else {
         remaining += 1;
@@ -177,7 +190,7 @@ export function createDeletionWorkflow(deps: DeletionWorkflowDeps): DeletionWork
       }
       // Marked before the purge, so a crash or exhausted retries leave the request OPEN.
       await deps.requests.markIncomplete(requestId, listingId);
-      const { complete } = await deps.history.purge(listingId);
+      const { complete } = await purgeListingData(listingId);
       if (complete) await deps.requests.markComplete(requestId, listingId);
       return { removed, complete };
     },

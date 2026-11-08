@@ -37,6 +37,7 @@ Both `npm run dev` and `npm run dev:server` read these variables:
 | `DEV_FRONTEND_ORIGIN` | `http://127.0.0.1:<DEV_FRONTEND_PORT>`   | Only if the browser reaches the SPA under another origin |
 | `DEV_QUIET`           | unset                                    | `1`: no request log                                      |
 | `DEV_TEST_HOOKS`      | unset                                    | `1`: `POST /__test__/reset` re-seeds all state (browser tests) |
+| `DEV_DUPLICATE_DETECTION` | enabled                              | `disabled`: start with the duplicate detection switched off, like `-c duplicateDetection=disabled` of a deployment (the demo's repost is then not flagged); the platform admin switches it in the admin mode under **Operations** either way |
 
 For example, to run a second demo next to one on the default ports:
 
@@ -135,6 +136,7 @@ three APIs share one state:
 | CloudWatch Logs → UsageAggregator     | usage lines are counted in-process                             |
 | CloudWatch metrics and alarms         | **synthetic** series and alarms (deterministic fake values)    |
 | Step Functions deletion workflow      | runs in-process                                                |
+| SSM `duplicate-detection` (on/off)    | held in memory; start value from `DEV_DUPLICATE_DETECTION`     |
 | `POST /platform/reload`               | reports three simulated functions as reloaded                  |
 | Connectors (crawler, DB, API)         | not runnable; the seeded runs come from a built-in demo feed   |
 

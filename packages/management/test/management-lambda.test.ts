@@ -12,6 +12,7 @@ import {
   success,
   type ManagementInitOptions,
   type RouteGroup,
+  type RouteGroupContext,
 } from '@open-estate/management';
 
 const ENV = {
@@ -23,6 +24,7 @@ const ENV = {
   AUDIT_LOG_TABLE_NAME: 'AuditLog',
   RATE_LIMIT_COUNTERS_TABLE_NAME: 'RateLimitCounters',
   MANAGEMENT_RATE_LIMIT_PARAMETER_NAME: '/oe/test/management-rate-limit',
+  DUPLICATE_DETECTION_PARAMETER_NAME: '/oe/test/duplicate-detection',
   FRONTEND_ORIGIN_SSM_PARAMETER: '/oe/test/frontend-origin',
 };
 
@@ -127,6 +129,27 @@ describe('initManagementHandler', () => {
   });
 });
 
+describe('Ein/Aus of the Duplikat-Erkennung', () => {
+  it('hands one switch on DUPLICATE_DETECTION_PARAMETER_NAME to the route groups', async () => {
+    let switchOf: RouteGroupContext['shared']['duplicateDetection'];
+    const group: RouteGroup = {
+      name: 'test',
+      create: ({ shared }) => {
+        switchOf = shared.duplicateDetection;
+        return [];
+      },
+    };
+    const opts = options('https://portal.example.com', [group]);
+    await initManagementHandler(ENV, opts);
+    // Not stored yet: on, like before the switch existed.
+    expect(await switchOf?.isEnabled()).toBe(true);
+    const names = opts.ssmSend.mock.calls.flatMap(([command]) =>
+      command instanceof GetParametersCommand ? (command.input.Names ?? []) : [],
+    );
+    expect(names).toContain('/oe/test/duplicate-detection');
+  });
+});
+
 describe('createManagementHandlerFromEnv', () => {
   it('fails every invocation and logs the init failure once without values', async () => {
     const opts = options(undefined);
@@ -155,6 +178,7 @@ describe('route groups', () => {
       'listings',
       'monitoring',
       'platform',
+      'duplicates',
       'openapi',
     ]);
   });

@@ -7,6 +7,8 @@ import {
   crawlerAllowlistSchema,
 } from '@open-estate/ingestion';
 import {
+  DUPLICATE_CONFIG_FILE,
+  DuplicateConfig,
   ExchangeRatesConfig,
   FlatTaxonomyConfig,
   NestedTaxonomyConfig,
@@ -75,6 +77,8 @@ export const CONFIG_FILE_VALIDATORS: Readonly<Record<string, ConfigFileValidator
   [CONNECTOR_CONFIG_FILES.crawlerAllowlist]: schemaValidator(crawlerAllowlistSchema),
   // Also drives the IngestionStack (schedules, timeouts, secrets), see `connectorsFromConfigFiles`.
   [CONNECTOR_CONFIG_FILES.connectors]: schemaValidator(connectorsFileSchema),
+  // Optional; without it the duplicate detection uses the documented defaults (Req 3.8).
+  [DUPLICATE_CONFIG_FILE]: schemaValidator(DuplicateConfig),
 };
 
 /** Files the config bucket must receive (from the directory or mirrored). */

@@ -1,6 +1,14 @@
 import * as z from 'zod';
 import { CONTENT_MASK, ListingContent } from '../content';
 import type { ApiIssueParams } from '../errors';
+import { MATCH_REASONS } from '../duplicates/reasons';
+import {
+  DUPLICATE_REPORT_STATES,
+  FLAG_CODES,
+  FlagAuditDetailsSchema,
+  ListingFlagSchema,
+  StatusReasonSchema,
+} from '../flags';
 import {
   AGENCY_ROLES,
   AGENCY_STATES,
@@ -11,6 +19,7 @@ import {
   ORIGINS,
   PERMISSIONS,
   ROLES,
+  SYSTEM_JOBS,
   type Permission,
 } from '../management';
 import {
@@ -211,7 +220,16 @@ const ListingIdList = z
   .pipe(z.array(boundedString(LISTING_BOUNDS.id)).min(M.listingIds.min).max(M.listingIds.max));
 
 /** Filters of `GET /listings` that a lookup by `ids` cannot be combined with. */
-const LIST_FILTERS = ['status', 'origin', 'offerType', 'listingType', 'customId', 'q', 'agencyId'];
+const LIST_FILTERS = [
+  'status',
+  'origin',
+  'offerType',
+  'listingType',
+  'customId',
+  'q',
+  'agencyId',
+  'flag',
+];
 
 /**
  * `GET /listings`: filters of Req 4.14; `agencyId` only for Plattform_Admins (Req 10.4). Or a
@@ -227,6 +245,8 @@ export const ListListingsQuery = z
     customId: CustomId.optional(),
     q: boundedString(M.titleQuery).optional(),
     agencyId: EntityId.optional(),
+    /** Only listings with a Markierung of this code (duplicate-detection Req 7.5). */
+    flag: z.enum(FLAG_CODES).optional(),
     ids: ListingIdList.optional(),
     ...pagination,
   })
@@ -252,6 +272,17 @@ export type ListVersionsQuery = z.output<typeof ListVersionsQuery>;
 /** `GET /listings/{id}/diff?from=&to=`: any two versions (Req 7.6). */
 export const DiffQuery = z.object({ from: QueryVersionNumber, to: QueryVersionNumber });
 export type DiffQuery = z.output<typeof DiffQuery>;
+
+/**
+ * `GET /platform/duplicate-reports` (duplicate-detection Req 11.3): Agenturübergreifende_Treffer
+ * of one state (default `OPEN`), optionally only those naming a listing of `agencyId`.
+ */
+export const DuplicateReportsQuery = z.object({
+  state: z.enum(DUPLICATE_REPORT_STATES).default('OPEN'),
+  agencyId: EntityId.optional(),
+  ...pagination,
+});
+export type DuplicateReportsQuery = z.output<typeof DuplicateReportsQuery>;
 
 /** `?dryRun=true` on destructive operations (Req 10.8). */
 export const DryRunQuery = z.object({
@@ -369,6 +400,7 @@ export const ActorRefSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('machine'), keyId: z.string(), label: z.string() }),
   z.object({ kind: z.literal('connector'), connectorId: z.string(), runId: z.string() }),
   z.object({ kind: z.literal('iam'), userArn: z.string() }),
+  z.object({ kind: z.literal('system'), job: z.enum(SYSTEM_JOBS), runId: z.string() }),
 ]);
 
 export const FieldSourceSchema = z.object({
@@ -402,6 +434,13 @@ export const ListingView = z.object({
   lastRunId: boundedString(LISTING_BOUNDS.runId),
   /** PII fields and media dropped by the import rules in this request (Req 4.10). */
   droppedFields: z.array(z.string()).optional(),
+  /** Anlagezeitpunkt: time of version 1 (duplicate-detection Req 4.3). */
+  createdAt: IsoDateTime,
+  /**
+   * Markierungen of the listing (duplicate-detection Req 7.5); empty without any. Agency actors
+   * only ever see listing ids of their own agency in them (Req 7.6).
+   */
+  flags: z.array(ListingFlagSchema),
 });
 export type ListingView = z.input<typeof ListingView>;
 
@@ -417,6 +456,8 @@ export const ListingSummary = z.object({
   listingType: z.string(),
   version: VersionNumber,
   updatedAt: IsoDateTime,
+  /** Codes of the listing's Markierungen (duplicate-detection Req 13.1). */
+  flagCodes: z.array(z.enum(FLAG_CODES)),
 });
 export type ListingSummary = z.input<typeof ListingSummary>;
 
@@ -441,6 +482,8 @@ export const VersionEntry = z.object({
   agencyId: EntityId.optional(),
   changedPaths: z.array(ChangedPath),
   restoredFrom: VersionNumber.optional(),
+  /** Why the status differs from the requested one (duplicate-detection Req 5.4, 13.4). */
+  statusReason: StatusReasonSchema.optional(),
 });
 export type VersionEntry = z.input<typeof VersionEntry>;
 
@@ -523,6 +566,56 @@ export type MachineAccessView = z.input<typeof MachineAccessView>;
 export const CreatedMachineAccess = MachineAccessView.extend({ secret: z.string() });
 export type CreatedMachineAccess = z.input<typeof CreatedMachineAccess>;
 
+/**
+ * Agenturübergreifender_Treffer (duplicate-detection Req 11.1): two listings of different
+ * Prüfbereiche that are duplicates of each other. Identifiers, values, reasons and times only
+ * (Req 12.2). `listingA` < `listingB`; `agencyA`/`agencyB` are absent for listings without agency.
+ */
+export const DuplicateReportView = z.object({
+  reportId: z.string().regex(/^[0-9a-f]{64}$/),
+  listingA: boundedString(LISTING_BOUNDS.id),
+  listingB: boundedString(LISTING_BOUNDS.id),
+  agencyA: EntityId.optional(),
+  agencyB: EntityId.optional(),
+  score: z.number().min(0).max(1),
+  reasons: z.array(z.enum(MATCH_REASONS)),
+  state: z.enum(DUPLICATE_REPORT_STATES),
+  firstSeenAt: IsoDateTime,
+  lastSeenAt: IsoDateTime,
+  dismissedAt: IsoDateTime.optional(),
+});
+export type DuplicateReportView = z.input<typeof DuplicateReportView>;
+
+export const DuplicateReportPage = page(DuplicateReportView);
+
+/**
+ * `POST /platform/duplicate-sweeps` (duplicate-detection Req 10.2): the started run, or the one
+ * that is already running (`alreadyRunning`).
+ */
+export const DuplicateSweepStarted = z.object({
+  executionName: z.string().min(1).max(80),
+  alreadyRunning: z.boolean(),
+});
+export type DuplicateSweepStarted = z.input<typeof DuplicateSweepStarted>;
+
+/**
+ * `PUT /platform/duplicate-detection`: switches the Duplikat-Erkennung on or off for the whole
+ * platform (duplicate-detection design: "Ein- und Ausschalten").
+ */
+export const DuplicateDetectionRequest = z.strictObject({ enabled: z.boolean() });
+export type DuplicateDetectionRequest = z.input<typeof DuplicateDetectionRequest>;
+
+/**
+ * `GET`/`PUT /platform/duplicate-detection`: whether the Duplikat-Erkennung runs. After switching
+ * it on, `sweep` names the Duplikat_Abgleich started to rebuild the Duplikat_Index (absent if it
+ * could not be started).
+ */
+export const DuplicateDetectionView = z.object({
+  enabled: z.boolean(),
+  sweep: DuplicateSweepStarted.optional(),
+});
+export type DuplicateDetectionView = z.input<typeof DuplicateDetectionView>;
+
 /** Count of affected listings/users of a destructive operation with `dryRun=true` (Req 10.8). */
 export const DryRunResponse = z.object({
   dryRun: z.literal(true),
@@ -541,6 +634,8 @@ export const AuditEntry = z.object({
   target: z.string(),
   agencyId: EntityId.optional(),
   result: z.string(),
+  /** Codes of a Markierung change (duplicate-detection Req 7.7); only on `listing.flag.*`. */
+  details: FlagAuditDetailsSchema.optional(),
 });
 export type AuditEntry = z.input<typeof AuditEntry>;
 
@@ -588,6 +683,8 @@ export const ConnectorRunView = z.object({
   updated: integer().min(0),
   unchanged: integer().min(0),
   rejected: integer().min(0),
+  /** Created as duplicates; part of `imported` (duplicate-detection Req 5.5). */
+  flagged: integer().min(0).default(0),
 });
 export type ConnectorRunView = z.input<typeof ConnectorRunView>;
 

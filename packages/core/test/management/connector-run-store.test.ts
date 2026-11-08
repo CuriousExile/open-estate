@@ -26,6 +26,7 @@ const RUN = {
   updated: 1,
   unchanged: 4,
   rejected: 1,
+  flagged: 0,
 };
 const REJECTION = { listingId: 'L-1', customId: 'C-1', fields: ['price'], reason: 'Required' };
 const EXPIRES = Date.parse(RUN.startedAt) / 1000 + CONNECTOR_RUN_RETENTION_SECONDS;

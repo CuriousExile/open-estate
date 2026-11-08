@@ -17,6 +17,7 @@ import {
   BERLIN_MITTE_EXTRA_IMAGE,
   CRM_INVALID_RECORDS,
   CRM_RECORDS,
+  DUPLICATE_DEMOS,
   MANUAL_LISTINGS,
   markDemoContent,
   USERS,
@@ -260,6 +261,35 @@ export async function seedDemo(
     await services.commands.setStatus(anna, ids['hamburg-hafencity'] ?? '', { status: 'ACTIVE' }),
   );
 
+  // ---- Duplikat-Erkennung (duplicate-detection) ----------------------------------------------
+  // Max posts Berlin-Mitte again: stored INACTIVE with a Duplikat_Markierung (Req 5.2).
+  clock.set(at(12, 10));
+  ids['berlin-mitte-repost'] = unwrap(
+    'create repost of berlin-mitte',
+    await services.commands.create(max, {
+      content: markDemoContent(DUPLICATE_DEMOS.repost),
+      status: 'ACTIVE',
+    }),
+  ).id;
+  // Another flat of the same building: no duplicate (other unit).
+  clock.set(at(12, 10, 20));
+  ids['berlin-mitte-neighbour'] = unwrap(
+    'create neighbour of berlin-mitte',
+    await services.commands.create(anna, {
+      content: markDemoContent(DUPLICATE_DEMOS.neighbour),
+      status: 'ACTIVE',
+    }),
+  ).id;
+  // The same flat at Alpenblick: only the daily Duplikat_Abgleich compares agencies (Req 11).
+  clock.set(at(10, 15));
+  ids['berlin-mitte-alpenblick'] = unwrap(
+    'create berlin-mitte at alpenblick',
+    await services.commands.create(sepp, {
+      content: markDemoContent(DUPLICATE_DEMOS.otherAgency),
+      status: 'ACTIVE',
+    }),
+  ).id;
+
   // ---- connector runs (CRM feed of Nordlicht) ------------------------------------------------
   const connector: ConnectorConfig = connectorConfigSchema.parse({
     id: CRM_CONNECTOR_ID,
@@ -373,6 +403,14 @@ export async function seedDemo(
     }
   }
   await handleUsageBatch(events, { counters: stores.counters });
+
+  // ---- Duplikat_Abgleich of last night (in AWS: the daily schedule) -------------------------
+  // Switched off (`DEV_DUPLICATE_DETECTION=disabled`), the run would end at once.
+  if (await services.duplicateDetection.load()) {
+    clock.set(at(0, 3));
+    unwrap('start duplicate check', await services.duplicateReports.startSweep(admin));
+    await services.sweepIdle();
+  }
 
   clock.release();
   return { machineCredential: crmAccess.secret, listingIds: ids, runs };

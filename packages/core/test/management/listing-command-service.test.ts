@@ -16,6 +16,7 @@ import {
   type AgencyRecord,
 } from '@open-estate/core';
 import {
+  assertValidTaxonomy,
   ManualContentInput,
   publicDetailUrl,
   type ApiError,
@@ -28,9 +29,9 @@ import {
 
 const ORIGIN = 'https://estate.example';
 const T0 = Date.parse('2026-03-01T10:00:00.000Z');
-const TAXONOMY: Taxonomy = {
+const TAXONOMY: Taxonomy = assertValidTaxonomy({
   groups: [{ code: 'residential', types: ['apartment_unit', 'house'] }],
-};
+});
 
 const member: Principal = {
   kind: 'user',
@@ -401,7 +402,9 @@ describe('ListingCommandService.restore', () => {
     expect(errors(await s.svc.restore(member, 'l1', { version: 1, baseVersion: 2 }))[0]?.code).toBe(
       'VERSION_CONFLICT',
     );
-    const narrowed = s.service({ groups: [{ code: 'residential', types: ['house'] }] });
+    const narrowed = s.service(
+      assertValidTaxonomy({ groups: [{ code: 'residential', types: ['house'] }] }),
+    );
     expect(errors(await narrowed.restore(member, 'l1', { version: 1, baseVersion: 3 }))).toEqual([
       expect.objectContaining({ code: 'INVALID_PARAMETER', field: 'content.listingType' }),
     ]);

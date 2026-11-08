@@ -66,6 +66,8 @@ export function toActorView(actor: ActorRef): ActorView {
       return { kindKey, name: actor.connectorId, runId: actor.runId };
     case 'iam':
       return { kindKey, name: actor.userArn };
+    case 'system':
+      return { kindKey, name: actor.job, runId: actor.runId };
   }
 }
 

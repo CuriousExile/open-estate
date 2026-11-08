@@ -118,7 +118,13 @@ export function createManagementHandler(deps: ManagementHandlerDeps): Management
       return ip.ok ? notFound(method, event.path) : failure(ip.error);
     }
     const { route, params } = found;
-    const input = { params, query: queryOf(event), body: bodyText(event), signal };
+    const input = {
+      params,
+      query: queryOf(event),
+      body: bodyText(event),
+      signal,
+      ...(event.headers !== undefined && event.headers !== null && { headers: event.headers }),
+    };
 
     if (route.public) {
       const ip = await deps.guard.admitIp(sourceIp);

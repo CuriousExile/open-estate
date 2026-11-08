@@ -87,7 +87,11 @@ describe('InMemoryAuditService', () => {
   it('rejects unknown keys (no free-form details), unknown categories and empty targets', async () => {
     const audit = new InMemoryAuditService();
     await expect(
-      audit.append({ ...entry(), details: { email: 'x@example.com' } } as AuditAppendEntry),
+      // `details` only takes Markierung codes; anything else (here an e-mail) is refused.
+      audit.append({
+        ...entry(),
+        details: { email: 'x@example.com' },
+      } as unknown as AuditAppendEntry),
     ).rejects.toThrow();
     await expect(
       audit.append(entry({ category: 'deletion' as AuditAppendEntry['category'] })),

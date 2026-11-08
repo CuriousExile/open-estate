@@ -250,6 +250,7 @@ export const MESSAGE_CODES = [
   'INVALID_PERMISSION',
   'METRIC_NOT_ALLOWED',
   'UNKNOWN_METRIC',
+  'DUPLICATE_DETECTION_DISABLED',
 ] as const satisfies readonly ErrorCode[];
 
 const MESSAGE_CODE_SET: ReadonlySet<string> = new Set(MESSAGE_CODES);

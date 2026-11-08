@@ -16,6 +16,8 @@ export interface ListingFilterValues {
   offerType: string;
   listingType: string;
   customId: string;
+  /** Markierungscode, e.g. `DUPLICATE` (duplicate-detection Req 13.1). */
+  flag: string;
 }
 
 export const LISTING_FILTER_FIELDS = [
@@ -25,6 +27,7 @@ export const LISTING_FILTER_FIELDS = [
   'offerType',
   'listingType',
   'customId',
+  'flag',
 ] as const satisfies readonly (keyof ListingFilterValues)[];
 export type ListingFilterField = (typeof LISTING_FILTER_FIELDS)[number];
 
@@ -35,6 +38,7 @@ export const EMPTY_FILTERS: ListingFilterValues = {
   offerType: '',
   listingType: '',
   customId: '',
+  flag: '',
 };
 
 export interface FilterError {

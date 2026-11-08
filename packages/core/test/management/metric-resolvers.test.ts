@@ -19,6 +19,8 @@ import {
   type ManagedListing,
   type MetricDefinition,
   type MetricResolverDeps,
+  CROSS_AGENCY_OPEN_COUNTER,
+  PLATFORM_SCOPE,
 } from '@open-estate/core';
 import { MetricQuery, type ConnectorRunView } from '@open-estate/shared';
 
@@ -72,6 +74,7 @@ function setup(
 }
 
 const PERIOD = { from: '2026-03-01T00:00:00Z', to: '2026-03-03T12:00:00Z' };
+const isoTo = new Date(PERIOD.to).toISOString();
 
 describe('periodDays', () => {
   it('lists every UTC day touched by the period', () => {
@@ -91,6 +94,7 @@ describe('createMetricDefinitions', () => {
     expect([...definitions.values()].map((d) => [d.code, d.scope])).toEqual([
       ['listing.count', 'agency'],
       ['listing.changes', 'agency'],
+      ['listing.duplicate_flags', 'agency'],
       ['listing.detail_views', 'agency'],
       ['listing.search_impressions', 'agency'],
       ['connector.runs', 'agency'],
@@ -99,6 +103,7 @@ describe('createMetricDefinitions', () => {
       ['api.responses', 'platform'],
       ['history.version_count', 'platform'],
       ['history.storage_bytes', 'platform'],
+      ['duplicate.cross_agency_open', 'platform'],
     ]);
   });
 });
@@ -177,6 +182,24 @@ describe('MetricCounters resolvers', () => {
     ]);
     const one = await resolve(METRIC_CODES.storageBytes, { ...PERIOD, agencyId: 'a1' });
     expect(one.points.map((p) => p.value)).toEqual([100]);
+  });
+
+  // duplicate-detection Req 14.5
+  it('listing.duplicate_flags: current flagged listings of the agency, or of all', async () => {
+    const { counters, resolve } = setup();
+    await counters.add({ scope: 'agency#a1', code: 'listing.flags.DUPLICATE', delta: 3 });
+    await counters.add({ scope: 'agency#a2', code: 'listing.flags.DUPLICATE', delta: 1 });
+    const own = await resolve(METRIC_CODES.duplicateFlags, { ...PERIOD, agencyId: 'a1' });
+    expect(own.points).toEqual([{ t: isoTo, value: 3 }]);
+    const all = await resolve(METRIC_CODES.duplicateFlags, PERIOD);
+    expect(all.points.map((p) => p.value)).toEqual([4]);
+  });
+
+  it('duplicate.cross_agency_open: the platform counter of the last Abgleich', async () => {
+    const { counters, resolve } = setup();
+    await counters.add({ scope: PLATFORM_SCOPE, code: CROSS_AGENCY_OPEN_COUNTER, delta: 5 });
+    const open = await resolve(METRIC_CODES.crossAgencyOpen, PERIOD);
+    expect(open.points).toEqual([{ t: isoTo, value: 5 }]);
   });
 });
 

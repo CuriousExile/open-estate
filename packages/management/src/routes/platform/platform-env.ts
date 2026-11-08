@@ -27,7 +27,8 @@ export const PLATFORM_ENV = {
   ...ADMIN_ENV,
   /**
    * Comma-separated Lambda function names `POST /platform/reload` restarts (API, MCP,
-   * connectors); the role may update only these (design: "Management_API").
+   * connectors); the role may update only these and the management function itself, which the
+   * reload adds from `AWS_LAMBDA_FUNCTION_NAME` (design: "Management_API").
    */
   reloadFunctions: 'RELOAD_FUNCTION_NAMES',
 } as const;
@@ -50,6 +51,26 @@ export function parseFunctionNames(value: string): string[] {
   ];
   if (names.length === 0) throw new ConfigError('CONFIG_INVALID', [PLATFORM_ENV.reloadFunctions]);
   return names;
+}
+
+/**
+ * Variable the Lambda runtime sets to the function's own name. The Management_API reads taxonomy,
+ * allowlists and `duplicate-detection.json` at cold start like the other targets, but cannot name
+ * itself in its own environment (a CloudFormation cycle), so it adds itself from here.
+ */
+export const OWN_FUNCTION_NAME_ENV = 'AWS_LAMBDA_FUNCTION_NAME';
+
+/**
+ * Reload targets plus the running function itself, last: its own new configuration only reaches
+ * later execution environments, so the answer still reports every other target.
+ */
+export function withSelf(
+  names: readonly string[],
+  env: Readonly<Record<string, string | undefined>>,
+): string[] {
+  const self = env[OWN_FUNCTION_NAME_ENV]?.trim();
+  if (self === undefined || self === '') return [...names];
+  return [...names.filter((name) => name !== self), self];
 }
 
 interface Sendable {
@@ -80,7 +101,7 @@ export function platformDepsFromEnv(
   platformClients: PlatformClients = {},
 ): PlatformDeps {
   const config = readEnv(env, PLATFORM_ENV);
-  const functionNames = parseFunctionNames(config.reloadFunctions);
+  const functionNames = withSelf(parseFunctionNames(config.reloadFunctions), env);
   const sfnClient = platformClients.sfn ?? new SFNClient({});
   const lambdaClient = platformClients.lambda ?? new LambdaClient({});
 

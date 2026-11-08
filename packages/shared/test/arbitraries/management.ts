@@ -392,11 +392,21 @@ export const OPTIONAL_CONTENT_PATHS: ReadonlySet<string> = new Set([
   'contact.name',
   'contact.phone',
   'contact.email',
+  // Objektmerkmale (duplicate-detection Req 1.1), all optional on their level.
+  'address.houseNumber',
+  'address.unit',
+  'floor',
+  'totalFloors',
+  'yearBuilt',
+  'plotArea',
+  'bedrooms',
+  'bathrooms',
+  'parcelId',
 ]);
 
 /** Keys of the nested content objects (resolved field by field on merge). */
 const NESTED_KEYS: Readonly<Record<string, readonly string[]>> = {
-  address: ['city', 'postalCode', 'country', 'street'],
+  address: ['city', 'postalCode', 'country', 'street', 'houseNumber', 'unit'],
   geo: ['lat', 'lon'],
   contact: ['name', 'phone', 'email'],
 };

@@ -6,7 +6,11 @@ import type { RunLogger } from './run-logger';
  * What happened to one raw record; feeds the run counters (Req 5.8, 13.2): `imported` = listing
  * created, `updated` = version created, `unchanged` = same Inhalts_Hash, no version (Req 7.3).
  */
-export type RecordOutcome = 'imported' | 'updated' | 'unchanged' | 'rejected';
+/**
+ * `flagged`: created as a duplicate (duplicate-detection Req 5.5); counted as `imported` and
+ * additionally as `flagged`.
+ */
+export type RecordOutcome = 'imported' | 'flagged' | 'updated' | 'unchanged' | 'rejected';
 
 export interface RecordProcessingContext {
   readonly runId: string;

@@ -20,6 +20,7 @@ import {
   type AgencyRecord,
 } from '@open-estate/core';
 import {
+  assertValidTaxonomy,
   CHANNELS,
   LISTING_STATUSES,
   type ActorRef,
@@ -244,7 +245,9 @@ describe('Property 12: Custom_Id-Eindeutigkeit und Abruf', () => {
 
 // Management_API level: the writer conflict is answered as 409 `CUSTOM_ID_TAKEN` (Req 4.12).
 
-const TAXONOMY: Taxonomy = { groups: [{ code: 'residential', types: ['apartment_unit'] }] };
+const TAXONOMY: Taxonomy = assertValidTaxonomy({
+  groups: [{ code: 'residential', types: ['apartment_unit'] }],
+});
 const agency = (agencyId: string): AgencyRecord => ({
   agencyId,
   displayName: agencyId,

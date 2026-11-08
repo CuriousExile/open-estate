@@ -1,5 +1,11 @@
 import { createServer, type RequestListener } from 'node:http';
-import { DemoClock, loadContentConfig, readNetworkConfig, type NetworkConfig } from './config';
+import {
+  DemoClock,
+  loadContentConfig,
+  readDuplicateDetection,
+  readNetworkConfig,
+  type NetworkConfig,
+} from './config';
 import { DEMO_MEDIA_PREFIX } from './media/demo-media';
 import { createDevPlatform, type DevPlatform } from './platform';
 import { RUNTIME_CONFIG_PATH } from './runtime-config';
@@ -26,6 +32,7 @@ interface Demo {
 /** A freshly seeded platform and its request listener (at start, and on a test-hook reset). */
 async function createDemo(
   network: NetworkConfig,
+  duplicateDetection: boolean,
   info: () => unknown,
   log: ((line: string) => void) | undefined,
 ): Promise<Demo> {
@@ -38,6 +45,7 @@ async function createDemo(
     directoryUsers: SEED_USERS,
     userHints: Object.fromEntries(SEED_USERS.map((user) => [user.userId, user.hint])),
     connectorModules: [demoFeedModule(CRM_BATCHES)],
+    duplicateDetection,
   });
   const seeded = await seedDemo(platform);
   const listener = createRequestListener({
@@ -51,6 +59,7 @@ async function createDemo(
 
 async function main(): Promise<void> {
   const network = readNetworkConfig(process.env);
+  const duplicateDetection = readDuplicateDetection(process.env);
   const issuer = `${network.publicUrl}${PREFIX.oidc}`;
   const hooks = testHooksEnabled(process.env);
   const base = network.publicUrl;
@@ -76,12 +85,12 @@ async function main(): Promise<void> {
 
   const quiet = process.env['DEV_QUIET'] === '1';
   const log = quiet ? undefined : (line: string) => console.log(`[dev] ${line}`);
-  let demo = await createDemo(network, info, log);
+  let demo = await createDemo(network, duplicateDetection, info, log);
   const listener: RequestListener = hooks
     ? withTestHooks({
         current: () => demo.listener,
         reset: async () => {
-          demo = await createDemo(network, info, log);
+          demo = await createDemo(network, duplicateDetection, info, log);
         },
         // Resets are the point of a test run; log them even with DEV_QUIET.
         log: (line) => console.log(`[dev] ${line}`),
@@ -104,6 +113,7 @@ async function main(): Promise<void> {
         ...(hooks ? [`  Test hooks      POST ${base}${RESET_PATH} (DEV_TEST_HOOKS=1)`] : []),
         '',
         `  Seeded: ${listings.length} listings (${active} ACTIVE), ${demo.seeded.runs.length} connector runs`,
+        `  Duplicate detection: ${duplicateDetection ? 'enabled' : 'disabled'} (DEV_DUPLICATE_DETECTION; switchable in the admin mode)`,
         '  Demo users (pick one on the local login page, no password):',
         ...SEED_USERS.map((user) => `    - ${user.email.padEnd(36)} ${user.role}`),
         `  Machine access of ${AGENCIES.nordlicht.displayName} (CRM-Sync, demo only):`,

@@ -423,23 +423,45 @@ Returns the full record of one listing, in the same representation as the search
 An empty or too long `id` is `400 INVALID_ID`. An id that doesn't exist is `404 NOT_FOUND` with the
 id in `details.id`. Fields:
 
-| Field                                         | Type                 | Description                                                                |
-| --------------------------------------------- | -------------------- | -------------------------------------------------------------------------- |
-| `id`                                          | string               | Stable listing id; also the sort key.                                      |
-| `title`, `description`                        | string               | Text of the delivered language version (`description` may be empty).       |
-| `deliveredLocale`, `originalLocale`           | BCP 47 tag           | See [Languages](#languages).                                               |
-| `offers`                                      | array (1–2)          | `SALE` and/or `RENT` offers, see [Offers](#offers).                        |
-| `listingType`                                 | taxonomy type code   | Listing type.                                                              |
-| `group`                                       | taxonomy group code  | Group of `listingType`; omitted if the type is no longer in the taxonomy.  |
-| `rooms`                                       | number               | 0–99.5, step 0.5.                                                          |
-| `area`                                        | decimal string       | Living or plot area in m².                                                 |
-| `address`                                     | object               | `city`, `postalCode`, `country` (ISO 3166-1 alpha-2), optional `street`.   |
-| `geo`                                         | object, optional     | `lat`, `lon` in degrees, rounded to 6 decimal places.                      |
-| `sourceUrl`                                   | URL                  | Listing page at the source.                                                |
-| `media`                                       | array (0–50)         | Media URLs (`https`) in display order.                                     |
-| `tours`                                       | array (0–10)         | 3D tours: `url` (`https`) and `providerCode` from the tour allow-list.     |
-| `contact`                                     | object, optional     | `name`, `phone`, `email`; only if the operator allows them for the source. |
-| `source`, `lastImportedAt`, `lastRunId`       | string               | Provenance: connector, time of the last import (ISO 8601), import run.     |
+| Field                                   | Type                | Description                                                                                     |
+| --------------------------------------- | ------------------- | ----------------------------------------------------------------------------------------------- |
+| `id`                                    | string              | Stable listing id; also the sort key.                                                           |
+| `title`, `description`                  | string              | Text of the delivered language version (`description` may be empty).                            |
+| `deliveredLocale`, `originalLocale`     | BCP 47 tag          | See [Languages](#languages).                                                                    |
+| `offers`                                | array (1–2)         | `SALE` and/or `RENT` offers, see [Offers](#offers).                                             |
+| `listingType`                           | taxonomy type code  | Listing type.                                                                                   |
+| `group`                                 | taxonomy group code | Group of `listingType`; omitted if the type is no longer in the taxonomy.                       |
+| `rooms`                                 | number              | 0–99.5, step 0.5.                                                                               |
+| `area`                                  | decimal string      | Living or plot area in m².                                                                      |
+| `address`                               | object              | `city`, `postalCode`, `country` (ISO 3166-1 alpha-2), optional `street`, `houseNumber`, `unit`. |
+| `geo`                                   | object, optional    | `lat`, `lon` in degrees, rounded to 6 decimal places.                                           |
+| `sourceUrl`                             | URL                 | Listing page at the source.                                                                     |
+| `media`                                 | array (0–50)        | Media URLs (`https`) in display order.                                                          |
+| `tours`                                 | array (0–10)        | 3D tours: `url` (`https`) and `providerCode` from the tour allow-list.                          |
+| `contact`                               | object, optional    | `name`, `phone`, `email`; only if the operator allows them for the source.                      |
+| `source`, `lastImportedAt`, `lastRunId` | string              | Provenance: connector, time of the last import (ISO 8601), import run.                          |
+| `floor`, `yearBuilt`, … (optional)      | see below           | [Property attributes](#property-attributes), only if stored.                                    |
+
+### Property attributes
+
+Listings may carry optional property attributes. They are only delivered when stored, and only
+the attributes of the listing type's property group are accepted (`/meta` lists them per group in
+`taxonomy.groups[].attributes`; without a list in `taxonomy.json` a group allows all of them).
+
+| Attribute             | Type           | Range                 | Meaning                                              |
+| --------------------- | -------------- | --------------------- | ---------------------------------------------------- |
+| `address.houseNumber` | string         | 1–20 characters       | House number, if not part of `street`; any group     |
+| `address.unit`        | string         | 1–50 characters       | Flat or unit designation, e.g. `WE 3`                |
+| `floor`               | integer        | −5 to 200             | Floor of the unit; 0 = ground floor, ≤ `totalFloors` |
+| `totalFloors`         | integer        | 1 to 200              | Floors of the building                               |
+| `yearBuilt`           | integer        | 1000 to 2100          | Year of construction                                 |
+| `plotArea`            | decimal string | 1.00 to 10,000,000.00 | Plot area in m²                                      |
+| `bedrooms`            | integer        | 0 to 99               | Bedrooms                                             |
+| `bathrooms`           | integer        | 0 to 99               | Bathrooms                                            |
+| `parcelId`            | string         | 1–100 characters      | Cadastral parcel reference                           |
+
+The Management API uses them to recognise duplicates; see
+[duplicate detection](management-api.md#duplicate-detection).
 
 ### Example: listing with sale and rent offer
 
@@ -590,10 +612,11 @@ operation. Fetch the full document from your deployment.
 ## `GET /meta`
 
 Returns what a client needs to build a search form: the property taxonomy (every group with its
-type codes, in configuration order), the offer types, the enabled locales with labels and the
-default locale, the default currency for price filters, the static exchange rates (if the
-operator configured `exchange-rates.json`, see [configuration](configuration.md#exchange-rates)),
-the host names of the allowed tour providers and all field bounds. `exchangeRates.rates[X]` is the
+type codes, in configuration order, and the [property attributes](#property-attributes) listings of
+that group may carry), the offer types, the enabled locales with labels and the default locale, the
+default currency for price filters, the static exchange rates (if the operator configured
+`exchange-rates.json`, see [configuration](configuration.md#exchange-rates)), the host names of the
+allowed tour providers and all field bounds. `exchangeRates.rates[X]` is the
 number of units of `X` per one unit of `base`. Amount and area bounds are decimal strings. The
 cache rules are the same as for `/openapi.json`.
 
@@ -612,10 +635,22 @@ Vary: Origin
 {
   "taxonomy": {
     "groups": [
-      { "code": "apartment", "types": ["apartment_unit", "condominium", "penthouse", "loft"] },
-      { "code": "house", "types": ["single_family", "villa", "terraced", "semi_detached"] },
-      { "code": "land", "types": ["building_plot"] },
-      { "code": "commercial", "types": ["office", "retail"] }
+      {
+        "code": "apartment",
+        "types": ["apartment_unit", "condominium", "penthouse", "loft"],
+        "attributes": ["address.unit", "floor", "totalFloors", "yearBuilt", "bedrooms", "bathrooms"]
+      },
+      {
+        "code": "house",
+        "types": ["single_family", "villa", "terraced", "semi_detached"],
+        "attributes": ["totalFloors", "yearBuilt", "plotArea", "bedrooms", "bathrooms", "parcelId"]
+      },
+      { "code": "land", "types": ["building_plot"], "attributes": ["plotArea", "parcelId"] },
+      {
+        "code": "commercial",
+        "types": ["office", "retail"],
+        "attributes": ["address.unit", "floor", "totalFloors", "yearBuilt", "plotArea", "parcelId"]
+      }
     ]
   },
   "offerTypes": ["SALE", "RENT"],
@@ -646,6 +681,14 @@ Vary: Origin
       "city": { "min": 1, "max": 200 },
       "postalCode": { "min": 1, "max": 10 },
       "street": { "min": 1, "max": 200 },
+      "houseNumber": { "min": 1, "max": 20 },
+      "unit": { "min": 1, "max": 50 },
+      "floor": { "min": -5, "max": 200 },
+      "totalFloors": { "min": 1, "max": 200 },
+      "yearBuilt": { "min": 1000, "max": 2100 },
+      "bedrooms": { "min": 0, "max": 99 },
+      "bathrooms": { "min": 0, "max": 99 },
+      "parcelId": { "min": 1, "max": 100 },
       "lat": { "min": -90, "max": 90 },
       "lon": { "min": -180, "max": 180 },
       "url": { "min": 1, "max": 2048 },
@@ -658,7 +701,8 @@ Vary: Origin
       "source": { "min": 1, "max": 128 },
       "runId": { "min": 1, "max": 128 },
       "money": { "min": "0.01", "max": "999999999.99" },
-      "area": { "min": "1.00", "max": "100000.00" }
+      "area": { "min": "1.00", "max": "100000.00" },
+      "plotArea": { "min": "1.00", "max": "10000000.00" }
     },
     "search": {
       "pageSize": { "min": 1, "max": 50, "default": 20 },
@@ -713,41 +757,43 @@ one, and sometimes `details`. A request with several invalid parameters gets one
 The HTTP status is 400 if any entry is a validation error. Rate-limit errors also carry
 `retryAfterSeconds`. Error responses are sent with `Cache-Control: no-store`.
 
-| Code                        | HTTP | Cause                                                                                   |
-| --------------------------- | ---- | --------------------------------------------------------------------------------------- |
-| `INVALID_PARAMETER`         | 400  | Wrong syntax, type or range of a parameter (`field` names it).                          |
-| `INVALID_RANGE`             | 400  | A minimum is greater than its maximum (`details.fields`).                               |
-| `INVALID_PAGE_SIZE`         | 400  | `pageSize` is not an integer from 1 to 50.                                              |
-| `INVALID_PAGE_TOKEN`        | 400  | `pageToken` is malformed or was issued for another query.                               |
-| `INVALID_OFFER_TYPE`        | 400  | `offerType` is not `SALE` or `RENT`.                                                    |
-| `OFFER_TYPE_REQUIRED`       | 400  | `priceMin`/`priceMax` without `offerType`.                                              |
-| `CONFLICTING_FILTERS`       | 400  | `group` and `types` in one request.                                                     |
-| `UNKNOWN_TAXONOMY_CODE`     | 400  | A `group` or `types` code isn't in the taxonomy; one error per code (`details.code`).    |
-| `INVALID_FILTER_COUNT`      | 400  | More than one `group`, or zero or more than 50 `types` (`details.allowed`).              |
-| `INVALID_LOCALE`            | 400  | `lang` is empty, longer than 35 characters or not a BCP 47 tag.                         |
-| `INVALID_ID`                | 400  | The listing id is empty, too long or not validly percent-encoded.                       |
-| `NOT_FOUND`                 | 404  | No listing with this id (`details.id`), or no such route.                               |
-| `API_KEY_MISSING`           | 401  | API-key mode and no `Authorization` header.                                             |
-| `API_KEY_INVALID`           | 401  | API-key mode and the key is unknown, revoked or expired, or not sent as `Bearer <key>`. |
-| `FORBIDDEN`                 | 403  | Blocked by the gateway or WAF (or the admin API without permission).                    |
-| `RATE_LIMITED`              | 429  | Rate limit reached; see `Retry-After` and `retryAfterSeconds`.                          |
-| `SERVICE_UNAVAILABLE`       | 503  | Storage or search unreachable, deadline exceeded, or invalid configuration. Retry.      |
-| `UNKNOWN_TOOL`              | —    | MCP only: unknown tool name, sent as a JSON-RPC error ([mcp.md](mcp.md#errors)).        |
-| `DELETION_TARGET_NOT_FOUND` | 404  | Admin API only: a deletion request matched no listing.                                  |
-| `INVALID_RATE_LIMIT`        | 400  | Admin API only: rate-limit value out of range.                                          |
-| `AUTH_MISSING`              | 401  | Management API only: no `Authorization` header.                                         |
-| `AUTH_INVALID`              | 401  | Management API only: token invalid/expired, unknown/revoked machine access, no access.  |
-| `MACHINE_ACCESS_EXPIRED`    | 401  | Management API only: the machine access has expired.                                    |
-| `AGENCY_SUSPENDED`          | 403  | Management API only: the caller's agency is suspended.                                  |
-| `METRIC_NOT_ALLOWED`        | 403  | Management API only: metric outside the caller's scope (`details.code`).                |
-| `VERSION_CONFLICT`          | 409  | Management API only: `baseVersion` is outdated (`details.currentVersion`).              |
-| `CUSTOM_ID_TAKEN`           | 409  | Management API only: the custom id belongs to another listing of the agency.            |
-| `DELETION_BLOCKED`          | 409  | Management API only: the id or custom id is on the deletion blocklist.                  |
-| `LAST_AGENCY_ADMIN`         | 409  | Management API only: the agency would be left without an agency admin.                  |
-| `LAST_PLATFORM_ADMIN`       | 409  | Management API only: the platform would be left without a platform admin.               |
-| `USER_ALREADY_ASSIGNED`     | 409  | Management API only: the user already belongs to an agency or is a platform admin.      |
-| `INVALID_PERMISSION`        | 400  | Management API only: unknown or non-grantable permission (`details.permission`).        |
-| `UNKNOWN_METRIC`            | 400  | Management API only: unknown metric code (`details.code`).                              |
+| Code                           | HTTP | Cause                                                                                   |
+| ------------------------------ | ---- | --------------------------------------------------------------------------------------- |
+| `INVALID_PARAMETER`            | 400  | Wrong syntax, type or range of a parameter (`field` names it).                          |
+| `INVALID_RANGE`                | 400  | A minimum is greater than its maximum (`details.fields`).                               |
+| `INVALID_PAGE_SIZE`            | 400  | `pageSize` is not an integer from 1 to 50.                                              |
+| `INVALID_PAGE_TOKEN`           | 400  | `pageToken` is malformed or was issued for another query.                               |
+| `INVALID_OFFER_TYPE`           | 400  | `offerType` is not `SALE` or `RENT`.                                                    |
+| `OFFER_TYPE_REQUIRED`          | 400  | `priceMin`/`priceMax` without `offerType`.                                              |
+| `CONFLICTING_FILTERS`          | 400  | `group` and `types` in one request.                                                     |
+| `UNKNOWN_TAXONOMY_CODE`        | 400  | A `group` or `types` code isn't in the taxonomy; one error per code (`details.code`).   |
+| `INVALID_FILTER_COUNT`         | 400  | More than one `group`, or zero or more than 50 `types` (`details.allowed`).             |
+| `INVALID_LOCALE`               | 400  | `lang` is empty, longer than 35 characters or not a BCP 47 tag.                         |
+| `INVALID_ID`                   | 400  | The listing id is empty, too long or not validly percent-encoded.                       |
+| `NOT_FOUND`                    | 404  | No listing with this id (`details.id`), or no such route.                               |
+| `API_KEY_MISSING`              | 401  | API-key mode and no `Authorization` header.                                             |
+| `API_KEY_INVALID`              | 401  | API-key mode and the key is unknown, revoked or expired, or not sent as `Bearer <key>`. |
+| `FORBIDDEN`                    | 403  | Blocked by the gateway or WAF (or the admin API without permission).                    |
+| `RATE_LIMITED`                 | 429  | Rate limit reached; see `Retry-After` and `retryAfterSeconds`.                          |
+| `SERVICE_UNAVAILABLE`          | 503  | Storage or search unreachable, deadline exceeded, or invalid configuration. Retry.      |
+| `UNKNOWN_TOOL`                 | —    | MCP only: unknown tool name, sent as a JSON-RPC error ([mcp.md](mcp.md#errors)).        |
+| `DELETION_TARGET_NOT_FOUND`    | 404  | Admin API only: a deletion request matched no listing.                                  |
+| `INVALID_RATE_LIMIT`           | 400  | Admin API only: rate-limit value out of range.                                          |
+| `AUTH_MISSING`                 | 401  | Management API only: no `Authorization` header.                                         |
+| `AUTH_INVALID`                 | 401  | Management API only: token invalid/expired, unknown/revoked machine access, no access.  |
+| `MACHINE_ACCESS_EXPIRED`       | 401  | Management API only: the machine access has expired.                                    |
+| `AGENCY_SUSPENDED`             | 403  | Management API only: the caller's agency is suspended.                                  |
+| `METRIC_NOT_ALLOWED`           | 403  | Management API only: metric outside the caller's scope (`details.code`).                |
+| `VERSION_CONFLICT`             | 409  | Management API only: `baseVersion` is outdated (`details.currentVersion`).              |
+| `CUSTOM_ID_TAKEN`              | 409  | Management API only: the custom id belongs to another listing of the agency.            |
+| `DELETION_BLOCKED`             | 409  | Management API only: the id or custom id is on the deletion blocklist.                  |
+| `LAST_AGENCY_ADMIN`            | 409  | Management API only: the agency would be left without an agency admin.                  |
+| `LAST_PLATFORM_ADMIN`          | 409  | Management API only: the platform would be left without a platform admin.               |
+| `USER_ALREADY_ASSIGNED`        | 409  | Management API only: the user already belongs to an agency or is a platform admin.      |
+| `INVALID_PERMISSION`           | 400  | Management API only: unknown or non-grantable permission (`details.permission`).        |
+| `UNKNOWN_METRIC`               | 400  | Management API only: unknown metric code (`details.code`).                              |
+| `IDEMPOTENCY_KEY_REUSED`       | 409  | Management API only: `Idempotency-Key` reused for a different request body.             |
+| `DUPLICATE_DETECTION_DISABLED` | 409  | Management API only: the duplicate check cannot start while duplicate detection is off. |
 
 The `ErrorCode` schema in `/openapi.json` lists the same codes. A 503 never reveals internal details.
 

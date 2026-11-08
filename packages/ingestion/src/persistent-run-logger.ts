@@ -67,6 +67,7 @@ export function withRunPersistence(
           updated: summary.updated,
           unchanged: summary.unchanged,
           rejected: summary.rejected,
+          flagged: summary.flagged,
         },
         [...rejections],
       )
@@ -82,6 +83,9 @@ export function withRunPersistence(
     runSkipped: (reason) => inner.runSkipped(reason),
     configRejected: (issues) => inner.configRejected(issues),
     piiFieldDropped: (listingId, field) => inner.piiFieldDropped(listingId, field),
+    attributeDropped: (listingId, field) => inner.attributeDropped(listingId, field),
+    recordFlagged: (listingId, originalId, reasons) =>
+      inner.recordFlagged(listingId, originalId, reasons),
     mediaDropped: (...args) => inner.mediaDropped(...args),
     mediaTruncated: (listingId, kind, count) => inner.mediaTruncated(listingId, kind, count),
     crawlChecked: (check) => inner.crawlChecked(check),

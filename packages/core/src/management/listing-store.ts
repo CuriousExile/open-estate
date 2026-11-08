@@ -1,12 +1,25 @@
 import {
+  BatchGetCommand,
   GetCommand,
   QueryCommand,
   ScanCommand,
   type DynamoDBDocumentClient,
 } from '@aws-sdk/lib-dynamodb';
-import type { Listing, ListingStatus, OfferType, Origin } from '@open-estate/shared';
+import { isDeepStrictEqual } from 'node:util';
+import {
+  flagCodes,
+  ListingFlagsSchema,
+  type FlagCode,
+  type Listing,
+  type ListingFlag,
+  type ListingStatus,
+  type OfferType,
+  type Origin,
+} from '@open-estate/shared';
 import {
   fromManagedListingItem,
+  LISTING_FLAG_CODES_ATTRIBUTE,
+  toManagedListingItem,
   type ListingManagement,
   type ManagedListingItem,
 } from '../search/listings-table';
@@ -17,6 +30,13 @@ import {
   type KeyPage,
   type KeyPageRequest,
 } from './key-page';
+import {
+  scanCursor,
+  scanInMemory,
+  scanParameters,
+  type ScanPage,
+  type ScanRequest,
+} from '../duplicates/scan-segment';
 import type { DynamoDbOp, InMemoryOp } from './transaction';
 
 // Read side and transaction operation of the `Listings` table for the versioned write path
@@ -33,14 +53,91 @@ export interface ManagedListingStore<Op> {
   get(id: string): Promise<ManagedListing | null>;
   /**
    * Writes the full item (label `listing.put`) with optimistic concurrency: `expectedVersion`
-   * null requires a new listing, otherwise the stored `version` must equal it (Req 4.8).
+   * null requires a new listing, otherwise the stored `version` must equal it (Req 4.8). With
+   * `expectedFlags` the stored Markierungen must also still equal them: they change without a
+   * version (Verwerfung, Duplikat_Abgleich), and a write based on older ones would undo that
+   * change and miscount `listing.flags.*` (duplicate-detection Req 8.2, 14.5).
    */
-  putOp(item: ManagedListingItem, expectedVersion: number | null): Op;
+  putOp(
+    item: ManagedListingItem,
+    expectedVersion: number | null,
+    expectedFlags?: readonly ListingFlag[],
+  ): Op;
   /**
    * Sets only `lastImportedAt`/`lastRunId` (label `listing.touch`) if the stored `version` still
    * equals `expectedVersion`: an import run that delivers the listing unchanged (Req 4.16, 7.3).
    */
   touchProvenanceOp(id: string, expectedVersion: number, provenance: ProvenanceTouch): Op;
+  /**
+   * Replaces the Markierungen (label `listing.flags`) if the stored `version` still equals
+   * `expectedVersion` and the stored Markierungen still equal `expectedFlags`. Creates no version:
+   * flags are Verwaltungsdaten (duplicate-detection Req 7.3); used by the Verwerfung and the
+   * Duplikat_Abgleich (Req 8.2, 10.3, 10.5).
+   */
+  setFlagsOp(
+    id: string,
+    expectedVersion: number,
+    flags: readonly ListingFlag[],
+    expectedFlags: readonly ListingFlag[],
+  ): Op;
+  /**
+   * Condition (label `listing.check`) that the listing exists with `expectedVersion`, or exists at
+   * all without it; writes nothing. Lets the Duplikat_Abgleich write index entries and Treffer
+   * only for listings that are still there and unchanged (Req 10.5, 12.3).
+   */
+  checkOp(id: string, expectedVersion?: number): Op;
+}
+
+/** Stored Markierungen equal `expected` (both as stored: an empty list is no attribute). */
+function sameStoredFlags(
+  stored: readonly ListingFlag[] | undefined,
+  expected: readonly ListingFlag[],
+): boolean {
+  return isDeepStrictEqual(
+    ListingFlagsSchema.parse(stored ?? []),
+    ListingFlagsSchema.parse([...expected]),
+  );
+}
+
+/**
+ * Condition on the stored Markierungen for DynamoDB: no attribute for none, else equality of the
+ * whole list (`=` compares lists and maps element-wise).
+ */
+function flagsCondition(expected: readonly ListingFlag[]): {
+  expression: string;
+  names: Record<string, string>;
+  values: Record<string, unknown>;
+} {
+  return expected.length === 0
+    ? { expression: 'attribute_not_exists(#flags)', names: { '#flags': 'flags' }, values: {} }
+    : {
+        expression: '#flags = :expectedFlags',
+        names: { '#flags': 'flags' },
+        values: { ':expectedFlags': ListingFlagsSchema.parse([...expected]) },
+      };
+}
+
+/**
+ * Reads of the Duplikat_Abgleich over the whole `Listings` table (duplicate-detection Req 10.4,
+ * 12.4). Items that are no managed listing are returned as `invalid` with their id, so one bad
+ * item cannot stop a run.
+ */
+export interface ListingSweepSource {
+  /** One page of a parallel scan (eventually consistent). */
+  scan(request: ScanRequest): Promise<ScanPage<ManagedListing | { invalid: string }>>;
+  /** Strongly consistent reads of several listings; unknown or invalid ids are absent. */
+  getMany(ids: readonly string[]): Promise<Map<string, ManagedListing>>;
+  /** Ids among `ids` that have an item, strongly consistent (only the key is read). */
+  existing(ids: readonly string[]): Promise<Set<string>>;
+}
+
+/** Stored item → managed listing, or `invalid` with its id. */
+function sweepItem(item: object): ManagedListing | { invalid: string } {
+  try {
+    return fromManagedListingItem(item);
+  } catch {
+    return { invalid: String((item as { id?: unknown }).id ?? '') };
+  }
 }
 
 /** Provenance fields refreshed by an unchanged import (no new version). */
@@ -74,6 +171,8 @@ export interface ManagedListingFilter {
   customId?: string;
   /** Case-insensitive substring of the title of any language version. */
   titleQuery?: string;
+  /** The listing carries a Markierung with this code (duplicate-detection Req 7.5). */
+  flag?: FlagCode;
 }
 
 export interface ManagedListingQueryStore {
@@ -94,8 +193,9 @@ export function matchesListingFilter(
   { listing, management }: ManagedListing,
   filter: ManagedListingFilter,
 ): boolean {
-  const { agencyId, status, origin, offerType, listingType, customId, titleQuery } = filter;
+  const { agencyId, status, origin, offerType, listingType, customId, titleQuery, flag } = filter;
   if (agencyId !== undefined && management.agencyId !== agencyId) return false;
+  if (flag !== undefined && !(management.flags ?? []).some((f) => f.code === flag)) return false;
   if (status !== undefined && management.status !== status) return false;
   if (origin !== undefined && management.origin !== origin) return false;
   if (customId !== undefined && management.customId !== customId) return false;
@@ -143,7 +243,7 @@ const compareStrings = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 /** Fake with transaction semantics via `InMemoryTransactor`. */
 export class InMemoryManagedListingStore
-  implements ManagedListingStore<InMemoryOp>, ManagedListingQueryStore
+  implements ManagedListingStore<InMemoryOp>, ManagedListingQueryStore, ListingSweepSource
 {
   private readonly items = new Map<string, ManagedListingItem>();
 
@@ -183,16 +283,22 @@ export class InMemoryManagedListingStore
     return item === undefined ? null : fromManagedListingItem(structuredClone(item));
   }
 
-  putOp(item: ManagedListingItem, expectedVersion: number | null): InMemoryOp {
+  putOp(
+    item: ManagedListingItem,
+    expectedVersion: number | null,
+    expectedFlags?: readonly ListingFlag[],
+  ): InMemoryOp {
     const stored = structuredClone(item);
     return {
       label: 'listing.put',
       target: `Listings#${item.id}`,
       check: () => {
         const current = this.items.get(item.id);
-        return expectedVersion === null
-          ? current === undefined
-          : current?.version === expectedVersion;
+        if (expectedVersion === null) return current === undefined;
+        return (
+          current?.version === expectedVersion &&
+          (expectedFlags === undefined || sameStoredFlags(current.flags, expectedFlags))
+        );
       },
       apply: () => {
         this.items.set(item.id, stored);
@@ -211,6 +317,74 @@ export class InMemoryManagedListingStore
         if (current !== undefined) this.items.set(id, { ...current, lastImportedAt, lastRunId });
       },
     };
+  }
+
+  setFlagsOp(
+    id: string,
+    expectedVersion: number,
+    flags: readonly ListingFlag[],
+    expectedFlags: readonly ListingFlag[],
+  ): InMemoryOp {
+    const stored = structuredClone([...flags]);
+    return {
+      label: 'listing.flags',
+      target: `Listings#${id}`,
+      check: () => {
+        const current = this.items.get(id);
+        return (
+          current?.version === expectedVersion && sameStoredFlags(current.flags, expectedFlags)
+        );
+      },
+      apply: () => {
+        const current = this.items.get(id);
+        if (current === undefined) return;
+        const { listing, management } = fromManagedListingItem(current);
+        this.items.set(id, toManagedListingItem(listing, { ...management, flags: stored }));
+      },
+    };
+  }
+
+  checkOp(id: string, expectedVersion?: number): InMemoryOp {
+    return {
+      label: 'listing.check',
+      target: `Listings#${id}`,
+      check: () => {
+        const current = this.items.get(id);
+        return (
+          current !== undefined &&
+          (expectedVersion === undefined || current.version === expectedVersion)
+        );
+      },
+      apply: () => {},
+    };
+  }
+
+  async scan(request: ScanRequest): Promise<ScanPage<ManagedListing | { invalid: string }>> {
+    const page = scanInMemory([...this.items.values()], (item) => item.id, request);
+    return {
+      items: page.items.map((item) => sweepItem(structuredClone(item))),
+      ...(page.cursor !== undefined && { cursor: page.cursor }),
+    };
+  }
+
+  async getMany(ids: readonly string[]): Promise<Map<string, ManagedListing>> {
+    const found = new Map<string, ManagedListing>();
+    for (const id of new Set(ids)) {
+      const item = this.items.get(id);
+      if (item === undefined) continue;
+      const managed = sweepItem(structuredClone(item));
+      if (!('invalid' in managed)) found.set(id, managed);
+    }
+    return found;
+  }
+
+  async existing(ids: readonly string[]): Promise<Set<string>> {
+    return new Set(ids.filter((id) => this.items.has(id)));
+  }
+
+  /** Stores an item as is, bypassing the writer (tests: listings written outside it). */
+  putRaw(item: ManagedListingItem): void {
+    this.items.set(item.id, structuredClone(item));
   }
 
   /** All stored items (for assertions in tests). */
@@ -250,11 +424,21 @@ function equalityFilterExpression(filter: ManagedListingFilter) {
     values[`:f_${attribute}`] = value;
     return [`#f_${attribute} = :f_${attribute}`];
   });
+  // Markierungscode: the derived code list of the item contains it (duplicate-detection Req 7.5).
+  if (filter.flag !== undefined) {
+    names['#f_flagCodes'] = LISTING_FLAG_CODES_ATTRIBUTE;
+    values[':f_flag'] = filter.flag;
+    terms.push('contains(#f_flagCodes, :f_flag)');
+  }
   return { expression: terms.join(' AND '), names, values };
 }
 
+/** BatchGetItem reads at most 100 keys per request. */
+const BATCH_GET_LIMIT = 100;
+const MAX_BATCH_GET_RETRIES = 5;
+
 export class DynamoDbManagedListingStore
-  implements ManagedListingStore<DynamoDbOp>, ManagedListingQueryStore
+  implements ManagedListingStore<DynamoDbOp>, ManagedListingQueryStore, ListingSweepSource
 {
   private readonly client: DynamoDBDocumentClient;
   private readonly tableName: string;
@@ -334,7 +518,13 @@ export class DynamoDbManagedListingStore
     return out.Item === undefined ? null : fromManagedListingItem(out.Item);
   }
 
-  putOp(item: ManagedListingItem, expectedVersion: number | null): DynamoDbOp {
+  putOp(
+    item: ManagedListingItem,
+    expectedVersion: number | null,
+    expectedFlags?: readonly ListingFlag[],
+  ): DynamoDbOp {
+    const flags = expectedFlags === undefined ? undefined : flagsCondition(expectedFlags);
+    const values = { ':expectedVersion': expectedVersion, ...flags?.values };
     return {
       label: 'listing.put',
       item: {
@@ -347,9 +537,12 @@ export class DynamoDbManagedListingStore
                 ExpressionAttributeNames: { '#id': 'id' },
               }
             : {
-                ConditionExpression: '#version = :expectedVersion',
-                ExpressionAttributeNames: { '#version': 'version' },
-                ExpressionAttributeValues: { ':expectedVersion': expectedVersion },
+                ConditionExpression:
+                  flags === undefined
+                    ? '#version = :expectedVersion'
+                    : `#version = :expectedVersion AND ${flags.expression}`,
+                ExpressionAttributeNames: { '#version': 'version', ...flags?.names },
+                ExpressionAttributeValues: values,
               }),
         },
       },
@@ -375,6 +568,125 @@ export class DynamoDbManagedListingStore
             ':lastRunId': provenance.lastRunId,
             ':expectedVersion': expectedVersion,
           },
+        },
+      },
+    };
+  }
+
+  setFlagsOp(
+    id: string,
+    expectedVersion: number,
+    flags: readonly ListingFlag[],
+    expectedFlags: readonly ListingFlag[],
+  ): DynamoDbOp {
+    const guard = flagsCondition(expectedFlags);
+    const names = {
+      '#flags': 'flags',
+      '#flagCodes': LISTING_FLAG_CODES_ATTRIBUTE,
+      '#version': 'version',
+    };
+    const values = { ':expectedVersion': expectedVersion, ...guard.values };
+    // Like `toManagedListingItem`: no flags = no attributes at all.
+    const update =
+      flags.length === 0
+        ? { UpdateExpression: 'REMOVE #flags, #flagCodes', ExpressionAttributeValues: values }
+        : {
+            UpdateExpression: 'SET #flags = :flags, #flagCodes = :flagCodes',
+            ExpressionAttributeValues: {
+              ...values,
+              ':flags': ListingFlagsSchema.parse(flags),
+              ':flagCodes': flagCodes(flags),
+            },
+          };
+    return {
+      label: 'listing.flags',
+      item: {
+        Update: {
+          TableName: this.tableName,
+          Key: { id },
+          ConditionExpression: `#version = :expectedVersion AND ${guard.expression}`,
+          ExpressionAttributeNames: names,
+          ...update,
+        },
+      },
+    };
+  }
+
+  async scan(request: ScanRequest): Promise<ScanPage<ManagedListing | { invalid: string }>> {
+    const out = await this.client.send(
+      new ScanCommand({
+        TableName: this.tableName,
+        ConsistentRead: true,
+        ...scanParameters(request),
+      }),
+    );
+    return { items: (out.Items ?? []).map(sweepItem), ...scanCursor(out.LastEvaluatedKey) };
+  }
+
+  async getMany(ids: readonly string[]): Promise<Map<string, ManagedListing>> {
+    const found = new Map<string, ManagedListing>();
+    for (const item of await this.batchGet(ids, false)) {
+      const managed = sweepItem(item);
+      if (!('invalid' in managed)) found.set(managed.listing.id, managed);
+    }
+    return found;
+  }
+
+  async existing(ids: readonly string[]): Promise<Set<string>> {
+    return new Set((await this.batchGet(ids, true)).map((item) => String(item['id'])));
+  }
+
+  /** Strongly consistent BatchGet of all `ids`, with retries of unprocessed keys. */
+  private async batchGet(
+    ids: readonly string[],
+    keysOnly: boolean,
+  ): Promise<Record<string, unknown>[]> {
+    const items: Record<string, unknown>[] = [];
+    const unique = [...new Set(ids)];
+    for (let start = 0; start < unique.length; start += BATCH_GET_LIMIT) {
+      let keys: Record<string, unknown>[] = unique
+        .slice(start, start + BATCH_GET_LIMIT)
+        .map((id) => ({ id }));
+      for (let attempt = 0; keys.length > 0; attempt += 1) {
+        if (attempt > MAX_BATCH_GET_RETRIES) throw new Error('Listings: unprocessed keys remain');
+        const out = await this.client.send(
+          new BatchGetCommand({
+            RequestItems: {
+              [this.tableName]: {
+                Keys: keys,
+                ConsistentRead: true,
+                ...(keysOnly && {
+                  ProjectionExpression: '#id',
+                  ExpressionAttributeNames: { '#id': 'id' },
+                }),
+              },
+            },
+          }),
+        );
+        items.push(...(out.Responses?.[this.tableName] ?? []));
+        keys = (out.UnprocessedKeys?.[this.tableName]?.Keys ?? []) as Record<string, unknown>[];
+      }
+    }
+    return items;
+  }
+
+  checkOp(id: string, expectedVersion?: number): DynamoDbOp {
+    return {
+      label: 'listing.check',
+      item: {
+        ConditionCheck: {
+          TableName: this.tableName,
+          Key: { id },
+          ...(expectedVersion === undefined
+            ? {
+                ConditionExpression: 'attribute_exists(#id)',
+                ExpressionAttributeNames: { '#id': 'id' },
+              }
+            : {
+                ConditionExpression: '#version = :expectedVersion',
+                ExpressionAttributeNames: { '#version': 'version' },
+                ExpressionAttributeValues: { ':expectedVersion': expectedVersion },
+              }),
         },
       },
     };

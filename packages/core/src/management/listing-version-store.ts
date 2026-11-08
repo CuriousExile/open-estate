@@ -8,6 +8,7 @@ import {
   EntityId,
   IsoDateTime,
   ListingStatusSchema,
+  StatusReasonSchema,
   VersionNumber,
   type ActorRef,
   type ChangeType,
@@ -15,6 +16,7 @@ import {
   type ContentPath,
   type FieldSource,
   type ListingStatus,
+  type StatusReason,
 } from '@open-estate/shared';
 import { z } from 'zod';
 import {
@@ -62,6 +64,11 @@ export interface ListingVersionRecord {
   newSnapshot: boolean;
   changedPaths: VersionChangedPath[];
   restoredFrom?: number;
+  /**
+   * Why the platform stored another status than requested (duplicate-detection Req 5.4): only on
+   * version 1 of a listing created as a duplicate.
+   */
+  statusReason?: StatusReason;
 }
 
 export const listingVersionRecordSchema = z.object({
@@ -79,6 +86,7 @@ export const listingVersionRecordSchema = z.object({
   newSnapshot: z.boolean(),
   changedPaths: z.array(ChangedPath),
   restoredFrom: VersionNumber.optional(),
+  statusReason: StatusReasonSchema.optional(),
 });
 
 /** Validates a record; also drops `undefined` optionals so they are not stored as attributes. */

@@ -1,9 +1,14 @@
 import {
   assertValidTaxonomy,
+  buildProfile,
+  DEFAULT_DUPLICATE_CONFIG,
   DEFAULT_TAXONOMY_CONFIG,
   groupOfType,
   Listing,
+  scoreMatch,
 } from '@open-estate/shared';
+
+const TAXONOMY = assertValidTaxonomy(DEFAULT_TAXONOMY_CONFIG);
 import { SEED_LISTING_INPUTS, SEED_SOURCE, seedListings } from '../scripts/seed-data';
 
 describe('seed data', () => {
@@ -52,6 +57,21 @@ describe('seed data', () => {
     expect(
       listings.some((l) => l.tours.some((t) => new URL(t.url).host === 'my.matterport.com')),
     ).toBe(true);
+  });
+
+  it('carries Objektmerkmale and a duplicate pair next to a near-duplicate (duplicate-detection)', () => {
+    const byId = new Map(listings.map((l) => [l.id, l]));
+    expect(byId.get('seed-de-berlin-001')).toMatchObject({ floor: 2, address: { unit: 'WE 3' } });
+    expect(listings.some((l) => l.plotArea !== undefined)).toBe(true);
+    const profile = (id: string) => {
+      const listing = byId.get(id);
+      if (listing === undefined) throw new Error(`missing ${id}`);
+      return buildProfile(listing, { taxonomy: TAXONOMY, config: DEFAULT_DUPLICATE_CONFIG });
+    };
+    const original = profile('seed-de-berlin-001');
+    const score = (id: string) => scoreMatch(original, profile(id), DEFAULT_DUPLICATE_CONFIG);
+    expect(score('seed-de-berlin-010').duplicate).toBe(true);
+    expect(score('seed-de-berlin-011').duplicate).toBe(false);
   });
 
   it('uses only example.org and Matterport URLs', () => {

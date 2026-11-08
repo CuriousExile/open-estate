@@ -247,10 +247,29 @@ function operation(route: Route, doc: OperationDoc): ZodOpenApiOperationObject {
     success[response.status] = {
       description: response.description,
       ...(schema !== undefined && { content: jsonContent(schema) }),
+      ...(response.headers !== undefined && {
+        headers: Object.fromEntries(
+          response.headers.map(({ name, description, schema: headerSchema }) => [
+            name,
+            { description, schema: headerSchema },
+          ]),
+        ),
+      }),
     };
   }
   const holders = permissionHolders(doc.permission);
-  const params = parameters(route);
+  const params: oas32.ParameterObject[] = [
+    ...parameters(route),
+    ...(doc.headers ?? []).map(
+      ({ name, description, schema: headerSchema, required }): oas32.ParameterObject => ({
+        in: 'header',
+        name,
+        required: required ?? false,
+        description,
+        schema: headerSchema,
+      }),
+    ),
+  ];
   return {
     operationId: doc.operationId,
     summary: doc.summary,

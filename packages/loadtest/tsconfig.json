@@ -9,5 +9,10 @@
     "resolveJsonModule": true
   },
   "include": ["src/**/*.ts", "src/**/*.json", "../shared/test/arbitraries/*.ts"],
-  "references": [{ "path": "../shared" }, { "path": "../infra/scripts" }]
+  "references": [
+    { "path": "../shared" },
+    { "path": "../core" },
+    { "path": "../ingestion" },
+    { "path": "../infra/scripts" }
+  ]
 }

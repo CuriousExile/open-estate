@@ -137,10 +137,50 @@ export interface ListingArbOptions {
   offerTypes?: readonly (readonly OfferType[])[];
   /** Listing type codes to choose from (default: types of the default taxonomy). */
   listingTypes?: readonly string[];
+  /**
+   * Generate Objektmerkmale (`floor`, `plotArea`, `address.houseNumber`, …; default `true`).
+   * `false` yields listings as they looked before the duplicate-detection feature.
+   */
+  attributes?: boolean;
 }
+
+/** Objektmerkmale of a listing (duplicate-detection Req 1.1), each optional. */
+export type ListingAttributes = Pick<
+  Listing,
+  'floor' | 'totalFloors' | 'yearBuilt' | 'plotArea' | 'bedrooms' | 'bathrooms' | 'parcelId'
+>;
+
+/**
+ * Valid Objektmerkmale; `floor` never exceeds `totalFloors` (Req 1.2), so generated listings
+ * always pass the schema.
+ */
+export const arbAttributes: fc.Arbitrary<ListingAttributes> = fc
+  .record(
+    {
+      totalFloors: fc.integer({ min: B.totalFloors.min, max: B.totalFloors.max }),
+      floorOffset: fc.integer({ min: B.floor.min, max: B.floor.max }),
+      yearBuilt: fc.integer({ min: B.yearBuilt.min, max: B.yearBuilt.max }),
+      plotArea: fc.integer({ min: B.plotArea.minMinor, max: B.plotArea.maxMinor }),
+      bedrooms: fc.integer({ min: B.bedrooms.min, max: B.bedrooms.max }),
+      bathrooms: fc.integer({ min: B.bathrooms.min, max: B.bathrooms.max }),
+      parcelId: boundedString(B.parcelId),
+    },
+    { requiredKeys: [] },
+  )
+  .map(({ floorOffset, ...rest }) => {
+    const { totalFloors } = rest;
+    const floor =
+      floorOffset === undefined
+        ? undefined
+        : totalFloors === undefined
+          ? floorOffset
+          : Math.min(floorOffset, totalFloors);
+    return { ...rest, ...(floor !== undefined && { floor }) };
+  });
 
 /** Valid internal listings; optional fields (geo, street, contact, rent extras) vary. */
 export function arbListing(options: ListingArbOptions = {}): fc.Arbitrary<Listing> {
+  const attributes = options.attributes ?? true;
   const arbTranslations = fc
     .shuffledSubarray([...LOCALE_POOL], { minLength: 1, maxLength: B.translations.max + 1 })
     .chain(([originalLocale = 'de', ...others]) =>
@@ -175,6 +215,10 @@ export function arbListing(options: ListingArbOptions = {}): fc.Arbitrary<Listin
             postalCode: boundedString(B.postalCode),
             country: fc.stringMatching(/^[A-Z]{2}$/),
             street: boundedString(B.street),
+            ...(attributes && {
+              houseNumber: boundedString(B.houseNumber),
+              unit: boundedString(B.unit),
+            }),
           },
           { requiredKeys: ['city', 'postalCode', 'country'] },
         ),
@@ -220,7 +264,12 @@ export function arbListing(options: ListingArbOptions = {}): fc.Arbitrary<Listin
       ...rest,
       originalLocale,
       translations,
-    }));
+    }))
+    .chain((listing) =>
+      attributes
+        ? arbAttributes.map((merkmale) => ({ ...listing, ...merkmale }))
+        : fc.constant(listing),
+    );
 }
 
 /** One of the listing's language versions (original or a translation). */

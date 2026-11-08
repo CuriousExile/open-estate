@@ -229,6 +229,7 @@ export function toListingDetail(
   const sections = [
     section('location', [
       address.street !== undefined && { key: 'detail.street', text: address.street },
+      address.unit !== undefined && { key: 'listing.attributes.unit', text: address.unit },
       { key: 'detail.postalCode', text: address.postalCode },
       { key: 'detail.city', text: address.city },
       { key: 'detail.country', text: displayName(address.country, 'region', locale) },
@@ -236,6 +237,39 @@ export function toListingDetail(
         key: 'detail.coordinates',
         textKey: 'detail.coordinatesValue',
         params: { lat: formatNumber(geo.lat, locale, 6), lon: formatNumber(geo.lon, locale, 6) },
+      },
+    ]),
+    // Objektmerkmale that are stored (duplicate-detection Req 1.7).
+    section('property', [
+      listing.floor !== undefined && {
+        key: 'listing.attributes.floor',
+        text: formatNumber(listing.floor, locale, 0),
+      },
+      listing.totalFloors !== undefined && {
+        key: 'listing.attributes.totalFloors',
+        text: formatNumber(listing.totalFloors, locale, 0),
+      },
+      // A year, not an amount: no grouping separator.
+      listing.yearBuilt !== undefined && {
+        key: 'listing.attributes.yearBuilt',
+        text: String(listing.yearBuilt),
+      },
+      listing.plotArea !== undefined && {
+        key: 'listing.attributes.plotArea',
+        textKey: 'detail.areaValue',
+        params: { value: formatNumber(listing.plotArea, locale) },
+      },
+      listing.bedrooms !== undefined && {
+        key: 'listing.attributes.bedrooms',
+        text: formatNumber(listing.bedrooms, locale, 0),
+      },
+      listing.bathrooms !== undefined && {
+        key: 'listing.attributes.bathrooms',
+        text: formatNumber(listing.bathrooms, locale, 0),
+      },
+      listing.parcelId !== undefined && {
+        key: 'listing.attributes.parcelId',
+        text: listing.parcelId,
       },
     ]),
     // Only contact fields that survived the PII filter are delivered (Req 18.1).

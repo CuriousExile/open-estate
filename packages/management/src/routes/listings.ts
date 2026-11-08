@@ -3,6 +3,9 @@ import {
   CustomId,
   DiffQuery,
   EntityId,
+  FLAG_CODES,
+  IDEMPOTENCY_KEY_HEADER,
+  IDEMPOTENT_REPLAYED_HEADER,
   LISTING_BOUNDS,
   ListListingsQuery,
   ListVersionsQuery,
@@ -35,6 +38,7 @@ export * from './listings/services';
 const ListingId = z.string().min(LISTING_BOUNDS.id.min).max(LISTING_BOUNDS.id.max);
 const ListingParams = z.object({ id: ListingId });
 const CustomIdParams = z.object({ customId: CustomId });
+const FlagParams = z.object({ id: ListingId, code: z.enum(FLAG_CODES) });
 const VersionParams = z.object({
   id: ListingId,
   n: z.preprocess((v) => (typeof v === 'string' && /^\d+$/.test(v) ? Number(v) : v), VersionNumber),
@@ -95,9 +99,10 @@ export function createListingRoutes(services: ListingServices): Route[] {
           const ids = query.ids;
           return paged(() => queries.lookup(actorOf(principal), ids));
         }
-        const { status, origin, offerType, listingType, customId, q, agencyId } = query;
+        const { status, origin, offerType, listingType, customId, q, agencyId, flag } = query;
         const filter = {
           ...(agencyId !== undefined && { agencyId }),
+          ...(flag !== undefined && { flag }),
           ...(status !== undefined && { status }),
           ...(origin !== undefined && { origin }),
           ...(offerType !== undefined && { offerType }),
@@ -111,8 +116,19 @@ export function createListingRoutes(services: ListingServices): Route[] {
     defineRoute({
       method: 'POST',
       path: '/listings',
-      handle: async ({ principal, body, signal }) =>
-        fromResult(201, await (await commands(signal)).create(principal, body)),
+      // With `Idempotency-Key`, a repetition answers with the listing it created (Req 9.2–9.6
+      // of duplicate-detection); the service validates the key format (400 on the header).
+      handle: async ({ principal, body, signal, header }) => {
+        const service = await commands(signal);
+        const key = header(IDEMPOTENCY_KEY_HEADER);
+        if (key === undefined) return fromResult(201, await service.create(principal, body));
+        const created = await service.createWithKey(principal, body, key);
+        if (!created.ok) return failure(created.error);
+        return {
+          ...success(201, created.value.view),
+          ...(created.value.replayed && { headers: { [IDEMPOTENT_REPLAYED_HEADER]: 'true' } }),
+        };
+      },
     }),
     defineRoute({
       method: 'GET',
@@ -152,6 +168,17 @@ export function createListingRoutes(services: ListingServices): Route[] {
       params: ListingParams,
       handle: async ({ principal, params, body, signal }) =>
         fromResult(200, await (await commands(signal)).assignAgency(principal, params.id, body)),
+    }),
+    defineRoute({
+      method: 'DELETE',
+      path: '/listings/{id}/flags/{code}',
+      params: FlagParams,
+      // Verwerfen einer Markierung (duplicate-detection Req 8.2, 8.4): no version, status stays.
+      handle: async ({ principal, params, signal }) =>
+        fromResult(
+          200,
+          await (await commands(signal)).dismissFlag(principal, params.id, params.code),
+        ),
     }),
     defineRoute({
       method: 'GET',

@@ -9,6 +9,7 @@ import {
   ActorRefSchema,
   ChannelSchema,
   EntityId,
+  FlagAuditDetailsSchema,
   IsoDateTime,
   MANAGEMENT_BOUNDS,
   type ActorRef,
@@ -60,6 +61,8 @@ export const auditAppendEntrySchema = z.strictObject({
   agencyId: EntityId.optional(),
   /** Outcome code, e.g. `success`, `UNAUTHENTICATED`, `FORBIDDEN`. */
   result: AuditResult,
+  /** Codes of a Markierung change (duplicate-detection Req 7.7); codes and ids only. */
+  details: FlagAuditDetailsSchema.optional(),
 });
 export type AuditAppendEntry = z.input<typeof auditAppendEntrySchema>;
 
@@ -74,12 +77,13 @@ export const auditRecordSchema = z.object({
   target: z.string(),
   agencyId: EntityId.optional(),
   result: z.string(),
+  details: FlagAuditDetailsSchema.optional(),
 });
 export type AuditRecord = z.infer<typeof auditRecordSchema>;
 
 /** Filters of `GET /audit-log` (Req 11.4); `from`/`to` inclusive ISO-8601 timestamps. */
 export interface AuditQuery {
-  /** Actor id: `userId`, `keyId`, `connectorId` or `userArn` (see {@link auditActorId}). */
+  /** Actor id: `userId`, `keyId`, `connectorId`, `userArn` or job (see {@link auditActorId}). */
   actor?: string;
   /** Required for Agentur_Admins, set by the caller to their agency (Req 11.5). */
   agencyId?: string;
@@ -111,6 +115,9 @@ export function auditActorId(actor: ActorRef): string {
       return actor.connectorId;
     case 'iam':
       return actor.userArn;
+    case 'system':
+      // All runs of a job under one filterable id (e.g. `duplicate-sweep`).
+      return actor.job;
   }
 }
 

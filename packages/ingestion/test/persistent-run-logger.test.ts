@@ -110,6 +110,7 @@ describe('persisting RunLogger in the framework', () => {
         updated: 1,
         unchanged: 2,
         rejected: 1,
+        flagged: 0,
       },
     ]);
     expect(summary).toMatchObject({ imported: 1, updated: 1, unchanged: 2, rejected: 1 });
@@ -185,6 +186,7 @@ describe('persisting RunLogger in the framework', () => {
       updated: 0,
       unchanged: 0,
       rejected: 0,
+      flagged: 0,
     });
     await expect(logger.flush()).resolves.toBeUndefined();
     expect(lines.map((l) => JSON.parse(l) as Record<string, unknown>).at(-1)).toMatchObject({

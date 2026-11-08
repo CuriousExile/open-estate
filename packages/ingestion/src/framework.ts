@@ -90,7 +90,7 @@ export class ConnectorFramework {
           });
     const logger: RunLogger = persistent ?? baseLogger;
     const startedAt = this.now();
-    const counters = { imported: 0, updated: 0, unchanged: 0, rejected: 0 };
+    const counters = { imported: 0, updated: 0, unchanged: 0, rejected: 0, flagged: 0 };
     const finish = async (outcome: RunOutcome, status: RunStatus): Promise<ConnectorRunSummary> => {
       const summary = { status, startedAt, endedAt: this.now(), ...counters };
       if (outcome !== 'DISABLED') logger.runFinished(summary);
@@ -130,7 +130,10 @@ export class ConnectorFramework {
       runId,
       logger,
       emit: async (raw) => {
-        counters[await this.processSafely(raw, processingContext)] += 1;
+        const outcome = await this.processSafely(raw, processingContext);
+        // A listing created as a duplicate is imported like any other (Req 5.5).
+        if (outcome === 'flagged') counters.imported += 1;
+        counters[outcome] += 1;
       },
     };
 

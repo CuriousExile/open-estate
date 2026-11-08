@@ -31,6 +31,8 @@ export interface SuccessReply {
   kind: 'success';
   status: number;
   body?: unknown;
+  /** Additional response headers, e.g. `Idempotent-Replayed` (duplicate-detection Req 9.2). */
+  headers?: Readonly<Record<string, string>>;
 }
 
 /** Rejected outcome: catalog errors; the HTTP status follows the first error's code. */
@@ -82,9 +84,14 @@ const BASE_HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-
 /** Serializes a reply; 429 carries `retryAfterSeconds` and `Retry-After` (Req 2.9). */
 export function toProxyResult(reply: Reply): ManagementResponse {
   if (reply.kind === 'success') {
+    const extra = reply.headers ?? {};
     return reply.body === undefined
-      ? { statusCode: reply.status, headers: { 'Cache-Control': 'no-store' }, body: '' }
-      : { statusCode: reply.status, headers: BASE_HEADERS, body: JSON.stringify(reply.body) };
+      ? { statusCode: reply.status, headers: { 'Cache-Control': 'no-store', ...extra }, body: '' }
+      : {
+          statusCode: reply.status,
+          headers: { ...BASE_HEADERS, ...extra },
+          body: JSON.stringify(reply.body),
+        };
   }
   const seconds = retryAfter(reply.errors);
   const body: ErrorResponse = {
@@ -99,12 +106,20 @@ export function toProxyResult(reply: Reply): ManagementResponse {
 }
 
 /** Case-insensitive header lookup (API Gateway keeps the client's spelling). */
-export function headerValue(event: ManagementRequest, name: string): string | undefined {
+export function findHeader(
+  headers: Readonly<Record<string, string | undefined>> | null | undefined,
+  name: string,
+): string | undefined {
   const wanted = name.toLowerCase();
-  for (const [key, value] of Object.entries(event.headers ?? {})) {
+  for (const [key, value] of Object.entries(headers ?? {})) {
     if (key.toLowerCase() === wanted) return value;
   }
   return undefined;
+}
+
+/** {@link findHeader} on a request. */
+export function headerValue(event: ManagementRequest, name: string): string | undefined {
+  return findHeader(event.headers, name);
 }
 
 export const serviceUnavailable = (): FailureReply =>

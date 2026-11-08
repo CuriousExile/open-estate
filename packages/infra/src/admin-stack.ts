@@ -37,6 +37,7 @@ import {
   type DeletionTaskEvent,
 } from '@open-estate/admin';
 import {
+  IDEMPOTENCY_KEYS_BY_LISTING,
   DELETION_REQUESTS_BY_STATUS_INDEX,
   LISTINGS_BY_SOURCE_INDEX,
   snapshotPrefix,
@@ -122,6 +123,10 @@ export interface DeletionHistoryResources {
   readonly listingKeys: ITableV2;
   readonly metricCounters: ITableV2;
   readonly snapshotBucket: IBucket;
+  /** Duplikat-Erkennung's data of a listing, removed with it (duplicate-detection Req 12.3). */
+  readonly duplicateIndex: ITableV2;
+  readonly idempotencyKeys: ITableV2;
+  readonly duplicateReports: ITableV2;
 }
 
 export interface AdminStackProps extends StackProps {
@@ -522,6 +527,9 @@ function grantHistoryRemoval(
     listingKeysTable: history.listingKeys.tableName,
     metricCountersTable: history.metricCounters.tableName,
     snapshotBucket: history.snapshotBucket.bucketName,
+    duplicateIndexTable: history.duplicateIndex.tableName,
+    idempotencyKeysTable: history.idempotencyKeys.tableName,
+    duplicateReportsTable: history.duplicateReports.tableName,
   });
 
   allow(fn, ['dynamodb:Query', 'dynamodb:BatchWriteItem'], [history.listingVersions.tableArn]);
@@ -536,6 +544,19 @@ function grantHistoryRemoval(
     }),
   );
   allow(fn, ['s3:DeleteObject'], [history.snapshotBucket.arnForObjects(SNAPSHOT_PREFIX_PATTERN)]);
+  // Duplikat-Erkennung (duplicate-detection Req 12.3): the listing's partition of the
+  // Duplikat_Index is queried and deleted, its exact key deleted conditionally; its
+  // Agenturübergreifende_Treffer are read and deleted (with the `OPEN` counter, above) together
+  // with the partner's Verweis; Idempotenzschlüssel records are found via `byListing`, deleted and
+  // checked. Reads of other listings are not needed.
+  allow(
+    fn,
+    ['dynamodb:Query', 'dynamodb:BatchWriteItem', 'dynamodb:DeleteItem'],
+    [history.duplicateIndex.tableArn],
+  );
+  allow(fn, ['dynamodb:GetItem', 'dynamodb:DeleteItem'], [history.duplicateReports.tableArn]);
+  allow(fn, ['dynamodb:GetItem', 'dynamodb:DeleteItem'], [history.idempotencyKeys.tableArn]);
+  allow(fn, ['dynamodb:Query'], [indexArn(history.idempotencyKeys, IDEMPOTENCY_KEYS_BY_LISTING)]);
 }
 
 /** All snapshot prefixes `listings/{id}/` (`snapshotPrefix` of core). */

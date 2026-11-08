@@ -6,6 +6,7 @@ import { ADMIN_STYLES } from './admin-styles';
 const AREAS = [
   { path: 'agencies', labelKey: 'portal.admin.agencies' },
   { path: 'listings', labelKey: 'portal.admin.listings' },
+  { path: 'duplicates', labelKey: 'portal.admin.duplicates' },
   { path: 'monitoring', labelKey: 'portal.admin.monitoring' },
   { path: 'operations', labelKey: 'portal.admin.operations' },
   { path: 'audit', labelKey: 'portal.admin.audit' },

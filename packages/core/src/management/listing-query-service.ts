@@ -1,6 +1,7 @@
 import {
   authorize,
   err,
+  flagCodes,
   ok,
   type ApiError,
   type ListingSummary,
@@ -23,7 +24,7 @@ import type {
   ManagedListingQueryStore,
   ManagedListingStore,
 } from './listing-store';
-import { toListingView } from './listing-view';
+import { scopeListingView, toListingView } from './listing-view';
 import { NO_AGENCY_SCOPE_ID } from './metric-counter-store';
 
 // Read use cases of `/listings` (design: "Management_API", Req 2.7, 4.13, 4.14, 10.4). Reads are
@@ -74,6 +75,7 @@ export function toListingSummary({ listing, management }: ManagedListing): Listi
     listingType: listing.listingType,
     version: management.version,
     updatedAt: management.updatedAt,
+    flagCodes: flagCodes(management.flags ?? []),
   };
 }
 
@@ -106,7 +108,13 @@ export class ListingQueryService {
         found.error,
       );
     }
-    return ok(toListingView(found.value, this.deps.frontendOrigin));
+    return ok(
+      await scopeListingView(
+        toListingView(found.value, this.deps.frontendOrigin),
+        actor.principal,
+        this.deps.listings,
+      ),
+    );
   }
 
   /**
@@ -139,7 +147,13 @@ export class ListingQueryService {
         found.ok ? notFound() : found.error,
       );
     }
-    return ok(toListingView(found.value, this.deps.frontendOrigin));
+    return ok(
+      await scopeListingView(
+        toListingView(found.value, this.deps.frontendOrigin),
+        actor.principal,
+        this.deps.listings,
+      ),
+    );
   }
 
   /**

@@ -1,142 +1,200 @@
 import { CloudFormationClient, DescribeStacksCommand } from '@aws-sdk/client-cloudformation';
-import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { BatchWriteCommand, DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { toListingItem } from '@open-estate/core';
-import type { Listing } from '@open-estate/shared';
+import { agencyScope, LISTING_COUNTER_CODES } from '@open-estate/core';
+import { ImportPipeline, InMemoryImportStore, type RecordProcessor } from '@open-estate/ingestion';
+import {
+  assertValidTaxonomy,
+  buildSchemas,
+  DEFAULT_TAXONOMY_CONFIG,
+  duplicateFlagOf,
+  TourProvidersConfig,
+} from '@open-estate/shared';
 import { App } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { resolveEnvironment } from '../src/config';
-import { DataStack } from '../src/data-stack';
-import { seedListings } from '../scripts/seed-data';
+import { DataStack, ssmParameterNames } from '../src/data-stack';
+import { ManagementDataStack } from '../src/management-stack';
+import { SEED_SOURCE, seedListings } from '../scripts/seed-data';
 import {
-  BATCH_SIZE,
   dataStackName,
-  LISTINGS_TABLE_OUTPUT,
-  resolveTableName,
-  writeListings,
+  duplicateDetectionParameterName,
+  importListings,
+  managementDataStackName,
+  resolveSeedTargets,
+  SEED_TARGET_ENV,
+  seedRunId,
+  STACK_OUTPUTS,
 } from '../scripts/seed-writer';
 
-const TABLE = 'test-listings';
-type WriteRequest = { PutRequest?: { Item?: Record<string, unknown> } };
+// The seed script writes like an import (source `seed`), so seeded listings are complete managed
+// listings: readable by the Management_API, versioned and covered by the Duplikat-Erkennung.
 
-/** Document client with stubbed `send`; `unprocessed(call)` returns the requests to hand back. */
-function stubDocumentClient(
-  unprocessed: (call: number, requests: WriteRequest[]) => WriteRequest[],
-) {
-  const client = DynamoDBDocumentClient.from(new DynamoDBClient({ region: 'eu-central-1' }));
-  let call = 0;
-  const send = jest.spyOn(client, 'send').mockImplementation(async (command: unknown) => {
-    if (!(command instanceof BatchWriteCommand)) throw new Error('unexpected command');
-    const requests = (command.input.RequestItems?.[TABLE] ?? []) as WriteRequest[];
-    const rest = unprocessed(call++, requests);
-    return rest.length > 0 ? { UnprocessedItems: { [TABLE]: rest } } : { UnprocessedItems: {} };
+const taxonomy = assertValidTaxonomy(DEFAULT_TAXONOMY_CONFIG);
+
+function pipeline() {
+  let now = Date.parse('2026-03-01T10:00:00.000Z');
+  const clock = () => (now += 1000);
+  const store = new InMemoryImportStore({ duplicates: { taxonomy }, clock });
+  const processor = new ImportPipeline({
+    listingSchema: buildSchemas(taxonomy, {
+      defaultLocale: 'en',
+      enabled: [
+        { locale: 'en', label: 'English' },
+        { locale: 'de', label: 'Deutsch' },
+        { locale: 'de-DE', label: 'Deutsch (Deutschland)' },
+        { locale: 'th', label: 'ไทย' },
+      ],
+    }).listing,
+    reader: store.reader,
+    writer: store.writer,
+    tourProviders: TourProvidersConfig.parse({
+      providers: [{ code: 'matterport', hostnames: ['my.matterport.com'] }],
+    }),
+    taxonomy,
+    ...(store.detector !== undefined && { duplicates: store.detector }),
+    clock,
   });
-  const batches = () =>
-    send.mock.calls.map(([cmd]) => (cmd as BatchWriteCommand).input.RequestItems?.[TABLE] ?? []);
-  return { client, send, batches };
+  return { store, processor };
 }
 
-function many(n: number): Listing[] {
-  const [template] = seedListings();
-  if (!template) throw new Error('seed data is empty');
-  return Array.from({ length: n }, (_, i) => ({ ...template, id: `l-${i}` }));
-}
+describe('importListings', () => {
+  it('creates every seed listing as a managed listing, the repost as a flagged duplicate', async () => {
+    const { store, processor } = pipeline();
+    const listings = seedListings();
+    const lines: string[] = [];
 
-const ids = (requests: WriteRequest[]) => requests.map((r) => r.PutRequest?.Item?.['id']);
-const noSleep = async () => undefined;
+    const summary = await importListings(processor, listings, {
+      source: SEED_SOURCE,
+      runId: 'seed-1',
+      concurrency: 1,
+      sink: (line) => lines.push(line),
+    });
 
-describe('writeListings', () => {
-  it('puts all listings with their search fields in batches of at most 25', async () => {
-    const listings = many(60);
-    const { client, batches } = stubDocumentClient(() => []);
-
-    await expect(writeListings(client, TABLE, listings, { sleep: noSleep })).resolves.toBe(60);
-
-    expect(batches().map((b) => b.length)).toEqual([BATCH_SIZE, BATCH_SIZE, 10]);
+    expect(summary).toEqual({
+      imported: listings.length,
+      flagged: 1,
+      updated: 0,
+      unchanged: 0,
+      rejected: [],
+    });
+    for (const listing of listings) {
+      const stored = await store.listings.get(listing.id);
+      expect(stored?.management).toMatchObject({ version: 1, origin: 'IMPORT' });
+      expect(stored?.listing).toMatchObject({ source: SEED_SOURCE, lastRunId: 'seed-1' });
+      expect(await store.versions.get(listing.id, 1)).not.toBeNull();
+    }
+    const repost = await store.listings.get('seed-de-berlin-010');
+    expect(repost?.management.status).toBe('INACTIVE');
+    expect(duplicateFlagOf(repost?.management.flags ?? [])?.originalId).toBe('seed-de-berlin-001');
+    expect((await store.listings.get('seed-de-berlin-011'))?.management).toMatchObject({
+      status: 'ACTIVE',
+    });
     expect(
-      batches()
-        .flat()
-        .map((r) => r.PutRequest?.Item),
-    ).toEqual(listings.map((l) => toListingItem(l)));
-    // Seeded listings have no management data and must stay public (sparse `byId` key set).
-    expect(
-      batches()
-        .flat()
-        .every((r) => r.PutRequest?.Item?.['gsiPk'] === 'L'),
-    ).toBe(true);
+      await store.counters.get(agencyScope(undefined), LISTING_COUNTER_CODES.status('ACTIVE')),
+    ).toBe(listings.length - 1);
+    expect(lines.some((line) => line.includes('"runId":"seed-1"'))).toBe(true);
   });
 
-  it('retries UnprocessedItems with backoff until all are written', async () => {
-    const listings = many(5);
-    // First call leaves the last two items unprocessed, the retry leaves one, then all succeed.
-    const { client, batches } = stubDocumentClient((call, requests) =>
-      call === 0 ? requests.slice(3) : call === 1 ? requests.slice(1) : [],
+  it('is idempotent: a second run changes nothing', async () => {
+    const { store, processor } = pipeline();
+    const listings = seedListings();
+    await importListings(processor, listings, { source: SEED_SOURCE, runId: 'seed-1' });
+    const again = await importListings(processor, listings, {
+      source: SEED_SOURCE,
+      runId: 'seed-2',
+      concurrency: 4,
+    });
+    expect(again).toEqual({
+      imported: 0,
+      flagged: 0,
+      updated: 0,
+      unchanged: listings.length,
+      rejected: [],
+    });
+    expect((await store.listings.get('seed-de-berlin-001'))?.management.version).toBe(1);
+  });
+
+  it('counts rejected records by id', async () => {
+    const processor: RecordProcessor = {
+      process: async (record) => ((record as { id: string }).id === 'b' ? 'rejected' : 'updated'),
+    };
+    const [template] = seedListings();
+    if (template === undefined) throw new Error('no seed data');
+    const summary = await importListings(
+      processor,
+      ['a', 'b', 'c'].map((id) => ({ ...template, id })),
+      { source: 'x', runId: 'r', concurrency: 2 },
     );
-    const sleep = jest.fn(noSleep);
-
-    await writeListings(client, TABLE, listings, { sleep, baseDelayMs: 10 });
-
-    expect(batches().map(ids)).toEqual([
-      ['l-0', 'l-1', 'l-2', 'l-3', 'l-4'],
-      ['l-3', 'l-4'],
-      ['l-4'],
-    ]);
-    expect(sleep.mock.calls).toEqual([[10], [20]]);
-  });
-
-  it('fails when items stay unprocessed after maxAttempts', async () => {
-    const { client, send } = stubDocumentClient((_, requests) => requests);
-    await expect(
-      writeListings(client, TABLE, many(2), { maxAttempts: 3, sleep: noSleep }),
-    ).rejects.toThrow('2 item(s) still unprocessed after 3 attempts');
-    expect(send).toHaveBeenCalledTimes(3);
-  });
-
-  it('writes nothing for an empty list', async () => {
-    const { client, send } = stubDocumentClient(() => []);
-    await expect(writeListings(client, TABLE, [])).resolves.toBe(0);
-    expect(send).not.toHaveBeenCalled();
+    expect(summary).toMatchObject({ updated: 2, rejected: ['b'] });
+    expect(seedRunId('seed', new Date('2026-03-01T10:00:00.123Z'))).toBe('seed-20260301T100000Z');
   });
 });
 
-describe('resolveTableName', () => {
-  function stubCloudFormation(outputs: { OutputKey: string; OutputValue: string }[]) {
+describe('resolveSeedTargets', () => {
+  function stubCloudFormation(
+    outputs: Record<string, { OutputKey: string; OutputValue: string }[]>,
+  ) {
     const client = new CloudFormationClient({ region: 'eu-central-1' });
-    const send = jest
-      .spyOn(client, 'send')
-      .mockImplementation(async () => ({ Stacks: [{ Outputs: outputs }] }));
+    const send = jest.spyOn(client, 'send').mockImplementation(async (command: unknown) => {
+      const name = (command as DescribeStacksCommand).input.StackName ?? '';
+      return { Stacks: [{ Outputs: outputs[name] ?? [] }] };
+    });
     return { factory: jest.fn(() => client), send };
   }
 
-  it('prefers --table, then LISTINGS_TABLE_NAME, without calling CloudFormation', async () => {
-    const { factory } = stubCloudFormation([]);
-    const env = { LISTINGS_TABLE_NAME: 'from-env' };
-    await expect(
-      resolveTableName({ table: 'from-arg', env, envName: 'dev', cloudFormation: factory }),
-    ).resolves.toBe('from-arg');
-    await expect(resolveTableName({ env, envName: 'dev', cloudFormation: factory })).resolves.toBe(
-      'from-env',
-    );
-    expect(factory).not.toHaveBeenCalled();
+  const allOutputs = (envName: string) => ({
+    [dataStackName(envName)]: Object.values(STACK_OUTPUTS.data).map((key) => ({
+      OutputKey: key,
+      OutputValue: `data-${key}`,
+    })),
+    [managementDataStackName(envName)]: Object.values(STACK_OUTPUTS.managementData).map((key) => ({
+      OutputKey: key,
+      OutputValue: `md-${key}`,
+    })),
   });
 
-  it('reads the ListingsTableName output of OpenEstate-<env>-Data', async () => {
-    const { factory, send } = stubCloudFormation([
-      { OutputKey: 'Other', OutputValue: 'x' },
-      { OutputKey: LISTINGS_TABLE_OUTPUT, OutputValue: 'OpenEstate-prod-Data-Listings-ABC' },
+  it('reads every store from the outputs of the Data and ManagementData stacks', async () => {
+    const { factory, send } = stubCloudFormation(allOutputs('prod'));
+    await expect(
+      resolveSeedTargets({ env: {}, envName: 'prod', cloudFormation: factory }),
+    ).resolves.toEqual({
+      listingsTable: 'data-ListingsTableName',
+      deletionBlocklistTable: 'data-DeletionBlocklistTableName',
+      configBucket: 'data-ConfigBucketName',
+      listingVersionsTable: 'md-ListingVersionsTableName',
+      listingKeysTable: 'md-ListingKeysTableName',
+      metricCountersTable: 'md-MetricCountersTableName',
+      duplicateIndexTable: 'md-DuplicateIndexTableName',
+      snapshotBucket: 'md-SnapshotBucketName',
+    });
+    expect(send.mock.calls.map(([c]) => (c as DescribeStacksCommand).input.StackName)).toEqual([
+      'OpenEstate-prod-Data',
+      'OpenEstate-prod-ManagementData',
     ]);
-    await expect(
-      resolveTableName({ env: {}, envName: 'prod', cloudFormation: factory }),
-    ).resolves.toBe('OpenEstate-prod-Data-Listings-ABC');
-    const command = send.mock.calls[0]?.[0] as DescribeStacksCommand;
-    expect(command).toBeInstanceOf(DescribeStacksCommand);
-    expect(command.input).toEqual({ StackName: 'OpenEstate-prod-Data' });
   });
 
-  it('fails when the stack has no ListingsTableName output', async () => {
-    const { factory } = stubCloudFormation([]);
+  it('prefers the environment and asks CloudFormation only for the rest', async () => {
+    const { factory, send } = stubCloudFormation(allOutputs('dev'));
+    const env = Object.fromEntries(
+      Object.entries(SEED_TARGET_ENV).map(([key, variable]) => [variable, `env-${key}`]),
+    );
+    const targets = await resolveSeedTargets({ env, envName: 'dev', cloudFormation: factory });
+    expect(targets.listingsTable).toBe('env-listingsTable');
+    expect(factory).not.toHaveBeenCalled();
+    const partial = { [SEED_TARGET_ENV.listingsTable]: 'mine' };
+    const mixed = await resolveSeedTargets({
+      env: partial,
+      envName: 'dev',
+      cloudFormation: factory,
+    });
+    expect(mixed.listingsTable).toBe('mine');
+    expect(mixed.snapshotBucket).toBe('md-SnapshotBucketName');
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it('names a missing output', async () => {
+    const { factory } = stubCloudFormation({});
     await expect(
-      resolveTableName({ env: {}, envName: 'dev', cloudFormation: factory }),
+      resolveSeedTargets({ env: {}, envName: 'dev', cloudFormation: factory }),
     ).rejects.toThrow('Stack OpenEstate-dev-Data has no output ListingsTableName');
   });
 
@@ -146,16 +204,35 @@ describe('resolveTableName', () => {
 });
 
 describe('consistency with the CDK app', () => {
-  it.each(['dev', 'prod'])('stack name for %s matches the app config', (envName) => {
-    expect(dataStackName(envName)).toBe(`${resolveEnvironment(envName).stackPrefix}-Data`);
+  it.each(['dev', 'prod'])('stack names for %s match the app config', (envName) => {
+    const prefix = resolveEnvironment(envName).stackPrefix;
+    expect(dataStackName(envName)).toBe(`${prefix}-Data`);
+    expect(managementDataStackName(envName)).toBe(`${prefix}-ManagementData`);
   });
 
-  it('DataStack exposes the output the seed script reads', () => {
-    const stack = new DataStack(new App(), 'OpenEstate-dev-Data', {
+  it.each(['dev', 'prod'])('follows the Ein/Aus parameter of the %s DataStack', (envName) => {
+    expect(duplicateDetectionParameterName(envName, {})).toBe(
+      ssmParameterNames(envName).duplicateDetection,
+    );
+    expect(
+      duplicateDetectionParameterName(envName, { DUPLICATE_DETECTION_PARAMETER_NAME: '/x/y' }),
+    ).toBe('/x/y');
+    expect(() => duplicateDetectionParameterName('Prod!', {})).toThrow('Invalid environment name');
+  });
+
+  it('the stacks expose every output the seed script reads', () => {
+    const app = new App();
+    const data = new DataStack(app, 'OpenEstate-dev-Data', {
       environment: resolveEnvironment('dev'),
     });
-    expect(Object.keys(Template.fromStack(stack).findOutputs(LISTINGS_TABLE_OUTPUT))).toEqual([
-      LISTINGS_TABLE_OUTPUT,
-    ]);
+    const managementData = new ManagementDataStack(app, 'OpenEstate-dev-ManagementData', {
+      removalPolicy: resolveEnvironment('dev').removalPolicy,
+    });
+    const outputs = (stack: DataStack | ManagementDataStack) =>
+      Object.keys(Template.fromStack(stack).findOutputs('*'));
+    expect(outputs(data)).toEqual(expect.arrayContaining(Object.values(STACK_OUTPUTS.data)));
+    expect(outputs(managementData)).toEqual(
+      expect.arrayContaining(Object.values(STACK_OUTPUTS.managementData)),
+    );
   });
 });

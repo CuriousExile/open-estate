@@ -6,5 +6,9 @@
     "outDir": "../dist/scripts"
   },
   "include": ["./**/*.ts"],
-  "references": [{ "path": "../../shared" }, { "path": "../../core" }]
+  "references": [
+    { "path": "../../shared" },
+    { "path": "../../core" },
+    { "path": "../../ingestion" }
+  ]
 }

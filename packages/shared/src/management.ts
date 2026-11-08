@@ -48,15 +48,25 @@ export const PERMISSIONS = [
   'platform:operate',
   'monitoring:platform',
   'listing:assign',
+  /** Review agenturübergreifender Treffer of the Duplikat-Erkennung (duplicate-detection Req 11.4). */
+  'duplicate:review',
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
-/** Akteur of a change (Req 7.9). */
+/** Jobs of the platform that act without a user (duplicate-detection: Duplikat_Abgleich). */
+export const SYSTEM_JOBS = ['duplicate-sweep'] as const;
+export type SystemJob = (typeof SYSTEM_JOBS)[number];
+
+/**
+ * Akteur of a change (Req 7.9). `system` is a job of the platform itself, e.g. the Duplikat_Abgleich
+ * setting Markierungen (duplicate-detection Req 7.7); it never writes versions.
+ */
 export type ActorRef =
   | { kind: 'user'; userId: string; displayName: string }
   | { kind: 'machine'; keyId: string; label: string }
   | { kind: 'connector'; connectorId: string; runId: string }
-  | { kind: 'iam'; userArn: string };
+  | { kind: 'iam'; userArn: string }
+  | { kind: 'system'; job: SystemJob; runId: string };
 
 /** Feldherkunft of one Inhaltsfeld: channel, actor and version of its last change (Req 7.2). */
 export interface FieldSource {

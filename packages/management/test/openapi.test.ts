@@ -27,6 +27,7 @@ import { createListingRouteGroup, LISTING_ROUTES_ENV } from '../src/routes/listi
 import { createMonitoringRouteGroup, MONITORING_ENV } from '../src/routes/monitoring';
 import { openApiRoutes } from '../src/routes/openapi';
 import { createPlatformRouteGroup, PLATFORM_ENV } from '../src/routes/platform';
+import { createDuplicateRouteGroup, DUPLICATES_ENV } from '../src/routes/duplicates';
 
 const NOW = Date.parse('2026-11-05T12:00:00Z');
 const REGION = 'eu-central-1';
@@ -38,6 +39,7 @@ function fullEnv(): Record<string, string> {
     LISTING_ROUTES_ENV,
     MONITORING_ENV,
     PLATFORM_ENV,
+    DUPLICATES_ENV,
     MANAGEMENT_ENV,
   ]
     .flatMap((group) => Object.values(group) as unknown[])
@@ -48,7 +50,7 @@ function fullEnv(): Record<string, string> {
     [PLATFORM_ENV.reloadFunctions]: 'api-fn,mcp-fn',
     // ARN-shaped values for variables the platform wiring may parse.
     ...Object.fromEntries(
-      Object.values(PLATFORM_ENV)
+      [...Object.values(PLATFORM_ENV), ...Object.values(DUPLICATES_ENV)]
         .filter((name) => /ARN/.test(name))
         .map((name) => [name, 'arn:aws:states:eu-central-1:123456789012:stateMachine:x']),
     ),
@@ -70,6 +72,7 @@ function productionRoutes(): Route[] {
       sfn: new SFNClient({ region: REGION }),
       lambda: new LambdaClient({ region: REGION }),
     }),
+    createDuplicateRouteGroup(new SFNClient({ region: REGION })),
     openApiRoutes,
   ];
   expect(groups.map((g) => g.name)).toEqual(ROUTE_GROUPS.map((g) => g.name));

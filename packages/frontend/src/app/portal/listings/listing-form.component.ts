@@ -26,7 +26,9 @@ import { StartupState } from '../../startup/startup-state';
 import { CodeOptionsPipe } from '../../ui/select/code-options.pipe';
 import { SelectComponent, type SelectOption } from '../../ui/select/select.component';
 import { DiffViewComponent } from '../shared/diff-view/diff-view.component';
+import { createdAsDuplicate, DUPLICATE_CREATED_NOTICE } from '../workspace/duplicate-notice-model';
 import {
+  ATTRIBUTE_FIELDS,
   checkedListingView,
   emptyFormValues,
   emptyOffer,
@@ -36,6 +38,8 @@ import {
   LIST_LIMITS,
   validateListingForm,
   versionConflict,
+  visibleAttributes,
+  type AttributeValues,
   type EditContext,
   type FormError,
   type FormList,
@@ -51,6 +55,13 @@ interface Conflict {
   current: number;
   diff?: DiffResponse;
   diffError?: string;
+}
+
+/** Input of one Objektmerkmal: content path (`address.unit`, `floor`, …) and form control. */
+interface AttributeField {
+  path: string;
+  field: keyof AttributeValues;
+  inputmode: 'numeric' | 'decimal' | 'text';
 }
 
 /** Fields of a section, in visual order: name and input kind. */
@@ -138,6 +149,9 @@ const CONTACT_FIELDS = [
 
         @if (dropped().length > 0 && listingId(); as id) {
           <div class="notice" role="status">
+            @if (createdDuplicate()) {
+              <p data-notice="duplicate">{{ 'portal.duplicates.createdNotice' | transloco }}</p>
+            }
             <p>
               {{ 'portal.listings.form.dropped' | transloco: { fields: dropped().join(', ') } }}
             </p>
@@ -366,6 +380,34 @@ const CONTACT_FIELDS = [
               }
             </div>
           </fieldset>
+
+          @if (attributeFields(form.controls.listingType.value); as attributes) {
+            @if (attributes.length > 0) {
+              <fieldset formGroupName="attributes" data-section="attributes">
+                <legend class="label">
+                  {{ 'portal.listings.section.attributes' | transloco }}
+                </legend>
+                <div class="grid">
+                  @for (attribute of attributes; track attribute.path) {
+                    <div class="field">
+                      <label [for]="fieldId(attribute.path)">{{
+                        'listing.attributes.' + attribute.field | transloco
+                      }}</label>
+                      <input
+                        [id]="fieldId(attribute.path)"
+                        [attr.data-field]="attribute.path"
+                        [formControlName]="attribute.field"
+                        [attr.inputmode]="attribute.inputmode"
+                        autocomplete="off"
+                        [attr.aria-invalid]="invalid(attribute.path)"
+                        [attr.aria-describedby]="describedBy(attribute.path)"
+                      />
+                    </div>
+                  }
+                </div>
+              </fieldset>
+            }
+          }
 
           <fieldset formGroupName="address">
             <legend class="label">{{ 'portal.field.address' | transloco }}</legend>
@@ -824,6 +866,8 @@ export class ListingFormComponent implements OnInit {
   protected readonly errorText = signal<string | undefined>(undefined);
   protected readonly conflict = signal<Conflict | undefined>(undefined);
   protected readonly dropped = signal<readonly string[]>([]);
+  /** The creation was stored as a possible duplicate (shown with the dropped fields). */
+  protected readonly createdDuplicate = signal(false);
   private readonly errorPaths = computed(() => new Set(this.errors().map((e) => e.path)));
 
   private context: EditContext | undefined;
@@ -897,8 +941,14 @@ export class ListingFormComponent implements OnInit {
     if (response.ok) {
       const view = response.value;
       const dropped = view.droppedFields ?? [];
+      // Stored as a possible duplicate, inactive (duplicate-detection Req 13.3).
+      const duplicate = id === undefined && createdAsDuplicate(view);
+      this.createdDuplicate.set(duplicate);
       if (dropped.length === 0) {
-        void this.router.navigate(['/portal/listings', view.id]);
+        void this.router.navigate(
+          ['/portal/listings', view.id],
+          duplicate ? { state: { notice: DUPLICATE_CREATED_NOTICE } } : {},
+        );
         return;
       }
       // Stay on the form so the user sees which fields the import rules dropped (Req 4.10).
@@ -942,6 +992,26 @@ export class ListingFormComponent implements OnInit {
         ? { base, current, diff: result.value }
         : { base, current, diffError: this.api.errorMessage(result.error) ?? '' },
     );
+  }
+
+  /**
+   * Inputs of the Objektmerkmale the selected type's group allows (duplicate-detection Req 2.7),
+   * with the content path used for errors and focus.
+   */
+  protected attributeFields(listingType: string): readonly AttributeField[] {
+    return visibleAttributes(this.taxonomy, listingType).map((attribute) => {
+      const field = ATTRIBUTE_FIELDS[attribute];
+      return {
+        path: attribute,
+        field,
+        inputmode:
+          field === 'plotArea'
+            ? 'decimal'
+            : field === 'unit' || field === 'parcelId'
+              ? 'text'
+              : 'numeric',
+      };
+    });
   }
 
   // ---- list editing -------------------------------------------------------------------------
@@ -1080,6 +1150,7 @@ export class ListingFormComponent implements OnInit {
       tours: this.fb.array(v.tours.map((t) => this.urlGroup(t))),
       contact: this.fb.group({ ...v.contact }),
       sourceUrl: v.sourceUrl,
+      attributes: this.fb.group({ ...v.attributes }),
     });
   }
 

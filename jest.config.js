@@ -32,6 +32,7 @@ const AREAS = {
     'packages/core/test/management',
     'packages/core/test/admin-operations',
     'packages/core/test/deletion',
+    'packages/core/test/duplicates',
     'packages/management/test',
     'packages/admin/test',
   ],

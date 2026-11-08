@@ -1,8 +1,24 @@
 {
   "groups": [
-    { "code": "apartment", "types": ["apartment_unit", "condominium", "penthouse", "loft"] },
-    { "code": "house", "types": ["single_family", "villa", "terraced", "semi_detached"] },
-    { "code": "land", "types": ["building_plot"] },
-    { "code": "commercial", "types": ["office", "retail"] }
+    {
+      "code": "apartment",
+      "types": ["apartment_unit", "condominium", "penthouse", "loft"],
+      "attributes": ["address.unit", "floor", "totalFloors", "yearBuilt", "bedrooms", "bathrooms"]
+    },
+    {
+      "code": "house",
+      "types": ["single_family", "villa", "terraced", "semi_detached"],
+      "attributes": ["totalFloors", "yearBuilt", "plotArea", "bedrooms", "bathrooms", "parcelId"]
+    },
+    {
+      "code": "land",
+      "types": ["building_plot"],
+      "attributes": ["plotArea", "parcelId"]
+    },
+    {
+      "code": "commercial",
+      "types": ["office", "retail"],
+      "attributes": ["address.unit", "floor", "totalFloors", "yearBuilt", "plotArea", "parcelId"]
+    }
   ]
 }

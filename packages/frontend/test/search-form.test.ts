@@ -1,4 +1,4 @@
-import { DEFAULT_TAXONOMY_CONFIG, LISTING_BOUNDS } from '@open-estate/shared';
+import { BINDABLE_ATTRIBUTES, DEFAULT_TAXONOMY_CONFIG, LISTING_BOUNDS } from '@open-estate/shared';
 import { FALLBACK_SEARCH_META, parseSearchMeta } from '../src/app/search/search-meta';
 import {
   INITIAL_SEARCH_FORM_VALUES,
@@ -194,7 +194,10 @@ describe('parseSearchMeta', () => {
     const flat = parseSearchMeta({
       taxonomy: { groups: [{ code: 'land' }], types: [{ code: 'plot', group: 'land' }] },
     });
-    expect(flat.taxonomy).toEqual({ groups: [{ code: 'land', types: ['plot'] }] });
+    // A group without an `attributes` list allows every bindable Objektmerkmal (Req 2.2).
+    expect(flat.taxonomy).toEqual({
+      groups: [{ code: 'land', types: ['plot'], attributes: [...BINDABLE_ATTRIBUTES] }],
+    });
     expect(parseSearchMeta({ taxonomy: DEFAULT_TAXONOMY_CONFIG }).taxonomy).toBeDefined();
   });
 

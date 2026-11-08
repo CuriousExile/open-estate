@@ -342,11 +342,9 @@ describe('serialize / parse', () => {
 });
 
 describe('listing arbitraries', () => {
-  it('generate listings accepted by the API schema, including every offer-type combination', () => {
-    const combinations = new Set<string>();
+  it('generate listings accepted by the API schema', () => {
     fc.assert(
       fc.property(arbListing(), (l) => {
-        combinations.add(l.offers.map((o) => o.offerType).join('+'));
         const version = {
           title: l.title,
           description: l.description,
@@ -355,6 +353,16 @@ describe('listing arbitraries', () => {
         expect(parse(serialize(l, { taxonomy, version })).ok).toBe(true);
       }),
       { numRuns: 200 },
+    );
+  });
+
+  it('generate every offer-type combination', () => {
+    // A fixed-seed sample, not `fc.assert`: the quick tier caps property runs at 10, and ten
+    // random draws regularly miss one of the four combinations.
+    const combinations = new Set(
+      fc
+        .sample(arbListing(), { numRuns: 200, seed: 42 })
+        .map((l) => l.offers.map((o) => o.offerType).join('+')),
     );
     expect(combinations.size).toBe(OFFER_TYPE_COMBINATIONS.length);
   });

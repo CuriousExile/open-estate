@@ -5,7 +5,7 @@ import { Template } from 'aws-cdk-lib/assertions';
 import { AttributeType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
 import { Key } from 'aws-cdk-lib/aws-kms';
 import { Bucket, BucketEncryption } from 'aws-cdk-lib/aws-s3';
-import { DEFAULT_METRICS_NAMESPACE } from '@open-estate/core';
+import { DEFAULT_METRICS_NAMESPACE, DUPLICATE_INDEX_BY_BLOCK } from '@open-estate/core';
 import { CONNECTOR_LAMBDA_ENV, type ConnectorsFile } from '@open-estate/ingestion';
 import { resolveEnvironment, DEFAULT_OBSERVABILITY_SETTINGS } from '../src/config';
 import { DataStack } from '../src/data-stack';
@@ -35,7 +35,7 @@ const CONNECTORS = [
 
 type Statement = { Action: string | string[]; Resource: unknown };
 
-function synth(withVersioning: boolean) {
+function synth(withVersioning: boolean, duplicateDetectionParameter?: string) {
   const app = new App({ context: { ...CDK_CONTEXT, 'aws:cdk:bundling-stacks': [] } });
   const environment = resolveEnvironment('dev');
   const data = new DataStack(app, 'Data', { environment });
@@ -48,6 +48,7 @@ function synth(withVersioning: boolean) {
     metricCounters: table('MetricCounters', 'scope'),
     connectorRuns: table('ConnectorRuns', 'connectorId'),
     runRejections: table('RunRejections', 'runId'),
+    duplicateIndex: table('DuplicateIndex', 'pk'),
     snapshotBucket: new Bucket(management, 'VersionSnapshots', {
       encryption: BucketEncryption.KMS,
       encryptionKey: new Key(management, 'SnapshotKey'),
@@ -61,6 +62,7 @@ function synth(withVersioning: boolean) {
     removalPolicy: environment.removalPolicy,
     observability: DEFAULT_OBSERVABILITY_SETTINGS,
     ...(withVersioning && { versioning }),
+    ...(duplicateDetectionParameter !== undefined && { duplicateDetectionParameter }),
   });
   const template = Template.fromStack(stack);
   const statements = Object.entries(template.findResources('AWS::IAM::Policy'))
@@ -98,6 +100,7 @@ describe('IngestionStack versioned write path (task 12.3)', () => {
       CONNECTOR_LAMBDA_ENV.snapshotBucket,
       CONNECTOR_LAMBDA_ENV.connectorRunsTable,
       CONNECTOR_LAMBDA_ENV.runRejectionsTable,
+      CONNECTOR_LAMBDA_ENV.duplicateIndexTable,
     ]) {
       expect(variables[name]).toBeDefined();
     }
@@ -139,6 +142,21 @@ describe('IngestionStack versioned write path (task 12.3)', () => {
     ]);
   });
 
+  it('reads and writes the Duplikat_Index like the writer and detector (duplicate-detection)', () => {
+    expect(actionsOn(statements, 'GetAttDuplicateIndex')).toEqual([
+      'dynamodb:BatchGetItem',
+      'dynamodb:ConditionCheckItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:GetItem',
+      'dynamodb:PutItem',
+      'dynamodb:Query',
+    ]);
+    const query = statements.find(
+      (s) => s.Action === 'dynamodb:Query' && JSON.stringify(s.Resource).includes('DuplicateIndex'),
+    );
+    expect(JSON.stringify(query?.Resource)).toContain(`/index/${DUPLICATE_INDEX_BY_BLOCK}`);
+  });
+
   it('may only put run summaries and rejections (no read, update or delete)', () => {
     for (const table of ['GetAttConnectorRuns', 'GetAttRunRejections']) {
       expect(actionsOn(statements, table)).toEqual(['dynamodb:BatchWriteItem', 'dynamodb:PutItem']);
@@ -166,6 +184,26 @@ describe('IngestionStack versioned write path (task 12.3)', () => {
   });
 });
 
+describe('IngestionStack with the Ein/Aus of the Duplikat-Erkennung', () => {
+  it('names the parameter to the connector Lambda and lets it read only that one', () => {
+    const parameter = '/open-estate/dev/duplicate-detection';
+    const { statements, variables } = synth(true, parameter);
+    expect(variables[CONNECTOR_LAMBDA_ENV.duplicateDetectionParameter]).toBe(parameter);
+    const ssm = statements.filter((s) => [s.Action].flat().some((a) => a.startsWith('ssm:')));
+    expect(ssm.flatMap((s) => [s.Action].flat()).sort()).toEqual([
+      'ssm:GetParameter',
+      'ssm:GetParameters',
+    ]);
+    expect(JSON.stringify(ssm.map((s) => s.Resource))).toContain(`:parameter${parameter}`);
+  });
+
+  it('checks always without it (no variable, no grant)', () => {
+    const { statements, variables } = synth(true);
+    expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.duplicateDetectionParameter);
+    expect(JSON.stringify(statements)).not.toContain('ssm:');
+  });
+});
+
 describe('IngestionStack without the versioning stores', () => {
   it('neither sets their variables nor grants access to them', () => {
     const { statements, variables } = synth(false);
@@ -173,6 +211,7 @@ describe('IngestionStack without the versioning stores', () => {
     expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.snapshotBucket);
     expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.connectorRunsTable);
     expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.runRejectionsTable);
+    expect(variables).not.toHaveProperty(CONNECTOR_LAMBDA_ENV.duplicateIndexTable);
     expect(actionsOn(statements, 'GetAttListings')).toEqual(['dynamodb:PutItem']);
   });
 });

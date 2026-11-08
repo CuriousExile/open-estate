@@ -54,6 +54,8 @@ export interface DeletedListingState {
   /** Absent for items without management data (counted nowhere). */
   status?: string;
   agencyId?: string;
+  /** Markierungscodes; a Duplikat_Markierung is counted in `listing.flags.DUPLICATE`. */
+  flagCodes?: readonly string[];
 }
 
 /**
@@ -73,6 +75,10 @@ export function deletionCounterDecrements(
   };
   if (listing.status !== undefined) {
     add(agencyScope(listing.agencyId), LISTING_COUNTER_CODES.status(listing.status), -1);
+  }
+  // The writer counted a flagged listing (duplicate-detection Req 14.5).
+  if (listing.flagCodes?.includes('DUPLICATE') === true) {
+    add(agencyScope(listing.agencyId), LISTING_COUNTER_CODES.duplicateFlags, -1);
   }
   for (const { agencyId, versions, storageBytes } of usage) {
     add(agencyScope(agencyId), LISTING_COUNTER_CODES.versionCount, -versions);

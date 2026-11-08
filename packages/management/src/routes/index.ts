@@ -1,4 +1,5 @@
 import type { Route } from '../router';
+import { duplicateRoutes } from './duplicates';
 import { identityRoutes } from './identity';
 import { listingRoutes } from './listings';
 import { monitoringRoutes } from './monitoring';
@@ -24,12 +25,20 @@ export type { MonitoringRouteDeps, MonitoringRoutesDeps } from './monitoring';
 export { createOpenApiRoute } from './openapi';
 export { createPlatformRouteGroup, createPlatformRoutes } from './platform';
 export type { PlatformDeps } from './platform';
+export {
+  createDuplicateRouteGroup,
+  createDuplicateRoutes,
+  DUPLICATES_ENV,
+  StepFunctionsDuplicateSweepStarter,
+} from './duplicates';
+export type { DuplicateRouteDeps } from './duplicates';
 
 export const ROUTE_GROUPS: readonly RouteGroup[] = [
   identityRoutes,
   listingRoutes,
   monitoringRoutes,
   platformRoutes,
+  duplicateRoutes,
   // Last: documents the routes of all groups above.
   openApiRoutes,
 ];

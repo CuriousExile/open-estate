@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { ListingView, Taxonomy } from '@open-estate/shared';
+import { assertValidTaxonomy, type ListingView, type Taxonomy } from '@open-estate/shared';
 import {
   checkedListingView,
   emptyFormValues,
@@ -13,7 +13,9 @@ import {
 } from '../src/app/portal/listings/listing-form-model';
 import { DIFF_FIELD_NAMES } from '../src/app/portal/shared/diff-view/diff-view-model';
 
-const TAXONOMY: Taxonomy = { groups: [{ code: 'apartment', types: ['condominium', 'loft'] }] };
+const TAXONOMY: Taxonomy = assertValidTaxonomy({
+  groups: [{ code: 'apartment', types: ['condominium', 'loft'] }],
+});
 
 function validValues(): ListingFormValues {
   const values = emptyFormValues({ originalLocale: 'de', currency: 'EUR' });
@@ -59,6 +61,8 @@ const VIEW: ListingView = {
   source: 'agency:a-1',
   lastImportedAt: '2026-11-01T10:00:00Z',
   lastRunId: 'PORTAL#4',
+  createdAt: '2026-10-01T10:00:00Z',
+  flags: [],
 };
 
 describe('validateListingForm', () => {

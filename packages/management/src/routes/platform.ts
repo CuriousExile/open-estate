@@ -16,9 +16,11 @@ import type { RouteGroup } from './route-group';
 
 export type { PlatformDeps } from './platform/platform-deps';
 export {
+  OWN_FUNCTION_NAME_ENV,
   parseFunctionNames,
   PLATFORM_ENV,
   platformDepsFromEnv,
+  withSelf,
   withSignal,
   type PlatformClients,
 } from './platform/platform-env';

@@ -1,4 +1,5 @@
 import type { DroppedMediaKind, FieldIssue } from '@open-estate/core';
+import type { MatchReason } from '@open-estate/shared';
 import type { ConnectorType } from './connector';
 
 export type { DroppedMediaKind, FieldIssue };
@@ -34,6 +35,11 @@ export interface RunSummary {
   /** Delivered with an unchanged Inhalts_Hash: no version (Req 7.3, 13.2). */
   readonly unchanged: number;
   readonly rejected: number;
+  /**
+   * Created as duplicates, `INACTIVE` with a Duplikat_Markierung; also counted in `imported`
+   * (duplicate-detection Req 5.5).
+   */
+  readonly flagged: number;
 }
 
 export interface RunLogger {
@@ -57,6 +63,16 @@ export interface RunLogger {
   ): void;
   /** PII field removed by the allow-list filter; the value is never passed in. */
   piiFieldDropped(listingId: string, field: string): void;
+  /**
+   * Listing created as a duplicate of `originalId` (duplicate-detection Req 5.5): ids and
+   * Übereinstimmungsgründe only, never values.
+   */
+  recordFlagged(listingId: string, originalId: string, reasons: readonly MatchReason[]): void;
+  /**
+   * Objektmerkmal removed because the group of the listing type does not allow it
+   * (duplicate-detection Req 2.5); the value is never passed in.
+   */
+  attributeDropped(listingId: string, field: string): void;
   /**
    * Medium or tour removed by the pipeline. `url` is only passed for tours rejected because of
    * their host (Req 16.4); tour URLs are not personal data. Media URLs are not logged.
@@ -116,7 +132,16 @@ export function createRunLogger({
     runId,
     source,
     runStarted: (connectorType) => write('info', 'run.started', { connectorType }),
-    runFinished: ({ status, startedAt, endedAt, imported, updated, unchanged, rejected }) =>
+    runFinished: ({
+      status,
+      startedAt,
+      endedAt,
+      imported,
+      updated,
+      unchanged,
+      rejected,
+      flagged,
+    }) =>
       write(status === 'SUCCESS' ? 'info' : 'error', 'run.finished', {
         status,
         startedAt: startedAt.toISOString(),
@@ -125,6 +150,7 @@ export function createRunLogger({
         updated,
         unchanged,
         rejected,
+        flagged,
       }),
     runSkipped: (reason) => write('info', 'run.skipped', { reason: clip(reason) }),
     configRejected: (issues) => write('error', 'config.rejected', { issues: issuesOf(issues) }),
@@ -136,6 +162,14 @@ export function createRunLogger({
       }),
     piiFieldDropped: (listingId, field) =>
       write('info', 'pii.field_dropped', { listingId: clip(listingId), field: clip(field) }),
+    recordFlagged: (listingId, originalId, reasons) =>
+      write('info', 'record.flagged', {
+        listingId: clip(listingId),
+        originalId: clip(originalId),
+        reasons: [...reasons],
+      }),
+    attributeDropped: (listingId, field) =>
+      write('info', 'attribute.dropped', { listingId: clip(listingId), field: clip(field) }),
     mediaDropped: (listingId, kind, index, reason, url) =>
       write('warn', 'media.dropped', {
         listingId: clip(listingId),

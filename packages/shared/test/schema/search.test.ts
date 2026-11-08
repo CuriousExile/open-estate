@@ -379,7 +379,7 @@ describe('toApiErrors', () => {
   });
 
   it('every catalog code except UNKNOWN_TOOL has an HTTP status', () => {
-    expect(ERROR_CODES).toHaveLength(33);
+    expect(ERROR_CODES).toHaveLength(35);
     for (const code of ERROR_CODES) {
       if (code !== 'UNKNOWN_TOOL') expect(ERROR_HTTP_STATUS).toHaveProperty(code);
     }

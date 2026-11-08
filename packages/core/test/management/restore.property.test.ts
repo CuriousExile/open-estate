@@ -102,7 +102,7 @@ const arbRestorer = fc.oneof(
 function narrowed(removed: readonly string[]): Taxonomy {
   return {
     groups: TAXONOMY.groups
-      .map((g) => ({ code: g.code, types: g.types.filter((t) => !removed.includes(t)) }))
+      .map((g) => ({ ...g, types: g.types.filter((t) => !removed.includes(t)) }))
       .filter((g) => g.types.length > 0),
   };
 }

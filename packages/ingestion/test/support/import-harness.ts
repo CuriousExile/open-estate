@@ -62,6 +62,14 @@ export function toInput(listing: Listing): Input {
     area: formatDecimal(listing.area),
     address: { ...listing.address },
     ...(listing.geo !== undefined && { geo: { ...listing.geo } }),
+    // Objektmerkmale (duplicate-detection Req 1.1); `plotArea` as a decimal string.
+    ...(listing.floor !== undefined && { floor: listing.floor }),
+    ...(listing.totalFloors !== undefined && { totalFloors: listing.totalFloors }),
+    ...(listing.yearBuilt !== undefined && { yearBuilt: listing.yearBuilt }),
+    ...(listing.plotArea !== undefined && { plotArea: formatDecimal(listing.plotArea) }),
+    ...(listing.bedrooms !== undefined && { bedrooms: listing.bedrooms }),
+    ...(listing.bathrooms !== undefined && { bathrooms: listing.bathrooms }),
+    ...(listing.parcelId !== undefined && { parcelId: listing.parcelId }),
     sourceUrl: listing.sourceUrl,
     media: listing.media.map((m) => ({ ...m })),
   };

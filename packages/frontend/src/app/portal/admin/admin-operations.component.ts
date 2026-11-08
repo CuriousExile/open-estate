@@ -9,6 +9,7 @@ import {
   addPlatformAdmin,
   createApiKey,
   getDeletion,
+  getDuplicateDetection,
   listPlatformAdmins,
   previewDeletion,
   previewRemovePlatformAdmin,
@@ -19,6 +20,7 @@ import {
   revokeApiKey,
   setAccessMode,
   setApiKeyRateLimit,
+  setDuplicateDetection,
   setRateLimit,
   type CreatedApiKeyValue,
   type DeletionRequestValue,
@@ -28,15 +30,20 @@ import {
   apiKeyRequest,
   confirmation,
   deletionCriterion,
+  disableDuplicateDetectionConfirmation,
+  duplicateDetectionSwitched,
   parseRateLimit,
   reloadFailed,
   requiredId,
+  toDuplicateDetectionState,
   validateEmail,
   type AccessMode,
   type Confirmation,
   type DeletionKind,
+  type DuplicateDetectionState,
   type FieldResult,
   type ReloadOutcomeData,
+  type TranslatedText,
 } from './admin-model';
 import { ADMIN_STYLES } from './admin-styles';
 import { ConfirmDialogComponent } from './confirm-dialog.component';
@@ -52,12 +59,15 @@ type Section =
   | 'rateLimit'
   | 'accessMode'
   | 'reload'
+  | 'duplicates'
   | 'admins';
 
 interface Feedback {
   error?: string;
   /** Translation key of a success message. */
   done?: string;
+  /** Parameters of `done`. */
+  params?: Readonly<Record<string, string | number>>;
 }
 
 interface PlatformAdminRow {
@@ -73,8 +83,8 @@ interface Pending {
 
 /**
  * `/portal/admin/operations` (Req 10.7, 10.8): the Admin_API's functions on `/platform/*` —
- * deletion requests, deletion blocklist, API keys, rate limits, access mode, reload — and the
- * Plattform_Admin list. Destructive operations ask first; where the API offers `dryRun` the dialog
+ * deletion requests, deletion blocklist, API keys, rate limits, access mode, Ein/Aus of the
+ * Duplikat-Erkennung, reload — and the Plattform_Admin list. Destructive operations ask first; where the API offers `dryRun` the dialog
  * shows the affected listings or users of that preview.
  */
 @Component({
@@ -298,6 +308,48 @@ interface Pending {
       />
     </section>
 
+    <section class="glass card" aria-labelledby="ops-duplicates">
+      <h2 id="ops-duplicates">{{ 'portal.admin.ops.duplicates.title' | transloco }}</h2>
+      <p class="note">{{ 'portal.admin.ops.duplicates.hint' | transloco }}</p>
+      @if (duplicateDetection(); as state) {
+        <div class="switch-row">
+          <button
+            type="button"
+            role="switch"
+            class="switch"
+            [attr.aria-checked]="state.enabled"
+            aria-labelledby="ops-duplicates"
+            aria-describedby="ops-duplicates-status"
+            [disabled]="busy()"
+            (click)="toggleDuplicateDetection(state)"
+          >
+            <span class="knob" aria-hidden="true"></span>
+          </button>
+          <span id="ops-duplicates-status" class="badge" [class.suspended]="!state.enabled">{{
+            state.statusKey | transloco
+          }}</span>
+          <button
+            type="button"
+            class="pill"
+            [class.danger]="state.enabled"
+            [class.primary]="!state.enabled"
+            [disabled]="busy()"
+            (click)="toggleDuplicateDetection(state)"
+          >
+            {{ state.actionKey | transloco }}
+          </button>
+        </div>
+        @if (!state.enabled) {
+          <p class="note">{{ 'portal.admin.ops.duplicates.offNote' | transloco }}</p>
+        }
+      } @else if (!feedback().duplicates?.error) {
+        <p class="note" role="status">{{ 'portal.admin.loading' | transloco }}</p>
+      }
+      <ng-container
+        *ngTemplateOutlet="feedbackTpl; context: { $implicit: feedback().duplicates }"
+      />
+    </section>
+
     <section class="glass card" aria-labelledby="ops-reload">
       <h2 id="ops-reload">{{ 'portal.admin.ops.reload.title' | transloco }}</h2>
       <p class="note">{{ 'portal.admin.ops.reload.hint' | transloco }}</p>
@@ -394,7 +446,7 @@ interface Pending {
       @if (f?.error) {
         <p class="error" role="alert">{{ f.error }}</p>
       } @else if (f?.done) {
-        <p class="success" role="status">{{ f.done | transloco }}</p>
+        <p class="success" role="status">{{ f.done | transloco: f.params ?? {} }}</p>
       }
     </ng-template>
 
@@ -464,6 +516,49 @@ interface Pending {
       .secret p {
         margin: 0 0 0.4rem;
       }
+      .switch-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.75rem 1rem;
+        align-items: center;
+      }
+      .switch {
+        position: relative;
+        width: 2.75rem;
+        height: 1.5rem;
+        padding: 0;
+        border: 1px solid var(--color-surface-border);
+        border-radius: var(--radius-pill);
+        background: var(--color-surface);
+        cursor: pointer;
+      }
+      .switch[aria-checked='true'] {
+        border-color: transparent;
+        background: var(--color-accent);
+      }
+      .switch:disabled {
+        opacity: 0.5;
+        cursor: default;
+      }
+      .knob {
+        position: absolute;
+        top: 0.15rem;
+        left: 0.15rem;
+        width: 1.1rem;
+        height: 1.1rem;
+        border-radius: 50%;
+        background: var(--color-text-muted);
+        transition: transform 0.15s ease;
+      }
+      .switch[aria-checked='true'] .knob {
+        transform: translateX(1.25rem);
+        background: var(--color-on-accent);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .knob {
+          transition: none;
+        }
+      }
     `,
   ],
 })
@@ -494,6 +589,7 @@ export class AdminOperationsComponent {
   protected readonly rateLimit = signal({ requests: '', windowSeconds: '' });
   protected readonly accessMode = signal<AccessMode>('open');
   protected readonly reloadOutcomes = signal<ReloadOutcomeData[] | undefined>(undefined);
+  protected readonly duplicateDetection = signal<DuplicateDetectionState | undefined>(undefined);
 
   protected readonly admins = signal<PlatformAdminRow[]>([]);
   protected readonly adminsToken = signal<string | undefined>(undefined);
@@ -502,6 +598,7 @@ export class AdminOperationsComponent {
   constructor() {
     inject(DestroyRef).onDestroy(() => this.controller.abort());
     void this.loadAdmins(false);
+    void this.loadDuplicateDetection();
   }
 
   protected value(event: Event): string {
@@ -715,6 +812,48 @@ export class AdminOperationsComponent {
         }),
       });
     }
+  }
+
+  // --- Ein/Aus of the Duplikat-Erkennung -----------------------------------------------------
+
+  private async loadDuplicateDetection(): Promise<void> {
+    await this.run(
+      'duplicates',
+      () => getDuplicateDetection(this.api, { signal: this.signal }),
+      (view) => this.duplicateDetection.set(toDuplicateDetectionState(view)),
+    );
+  }
+
+  /**
+   * Switching off asks first (no check, no flags until switched on again); switching on starts
+   * the duplicate check that rebuilds the index.
+   */
+  protected toggleDuplicateDetection(state: DuplicateDetectionState): void {
+    const change = () => this.switchDuplicateDetection(!state.enabled);
+    if (!state.enabled) {
+      void change();
+      return;
+    }
+    this.report('duplicates', {});
+    this.pending.set({ confirmation: disableDuplicateDetectionConfirmation(), run: change });
+  }
+
+  private async switchDuplicateDetection(enabled: boolean): Promise<void> {
+    const switched: { message?: TranslatedText } = {};
+    await this.run(
+      'duplicates',
+      () => setDuplicateDetection(this.api, enabled, { signal: this.signal }),
+      (view) => {
+        this.duplicateDetection.set(toDuplicateDetectionState(view));
+        switched.message = duplicateDetectionSwitched(view);
+      },
+    );
+    const { message } = switched;
+    if (message === undefined) return;
+    this.report('duplicates', {
+      done: message.key,
+      ...(message.params !== undefined && { params: message.params }),
+    });
   }
 
   // --- Plattform_Admins ----------------------------------------------------------------------

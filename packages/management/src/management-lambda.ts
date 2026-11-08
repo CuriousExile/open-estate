@@ -10,6 +10,7 @@ import {
   DynamoDbMachineAccessStore,
   DynamoDbMembershipStore,
   DynamoDbRateLimitCounterStore,
+  SsmDuplicateDetectionSetting,
   systemClock,
   type AccessTokenVerifier,
   type Clock,
@@ -93,7 +94,12 @@ export async function initManagementHandler(
     }),
     clock,
   });
-  const shared: SharedRouteDeps = { frontendOrigin, audit, clock };
+  const duplicateDetection = new SsmDuplicateDetectionSetting({
+    client: clients.ssm,
+    parameterName: config.duplicateDetectionParameter,
+    clock,
+  });
+  const shared: SharedRouteDeps = { frontendOrigin, audit, clock, duplicateDetection };
   const routes = createRoutes({ env, clients, shared }, options.groups ?? ROUTE_GROUPS);
   return createManagementHandler({
     router: createRouter(routes),

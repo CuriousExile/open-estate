@@ -1,8 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import {
+  agencyScope,
   cleanMedia,
   contentRules,
   contentToInput,
+  creationTime,
+  creationTimeAfterCheck,
+  DuplicateIndexUnavailable,
+  flagsAfterCheck,
+  type DuplicateAssessment,
+  type DuplicateDetectionSwitch,
+  type DuplicateDetector,
   filterPii,
   prepareContent,
   type Candidate,
@@ -21,11 +29,14 @@ import {
   ListingStatusSchema,
   mergeImport,
   PII_FIELD_PATHS,
+  type DuplicateFlag,
   type ImportRecord,
   type ListingContent,
+  type ListingFlag,
   type ListingStatus,
   type PiiAllowlistConfig,
   type Schemas,
+  type Taxonomy,
   type TourProvidersConfig,
 } from '@open-estate/shared';
 import type { RawRecord } from '../connector';
@@ -48,6 +59,9 @@ export const CONCURRENT_CHANGE_REASON = 'Nebenläufige Änderung';
 
 /** Repetitions of steps 2–7 after a version conflict with a parallel write. */
 export const MAX_WRITE_RETRIES = 3;
+
+/** Rejection reason when the Duplikat_Index cannot be read (duplicate-detection Req 5.9). */
+export const DUPLICATE_CHECK_UNAVAILABLE_REASON = 'Duplikatprüfung nicht verfügbar';
 
 /** Provenance fields; set by the `VersionedListingWriter` only (Req 4.12, 4.16, 11.5). */
 const PROVENANCE_FIELDS = ['source', 'lastImportedAt', 'lastRunId'] as const;
@@ -93,8 +107,25 @@ export interface ImportPipelineOptions {
   readonly piiAllowlist?: PiiAllowlistConfig;
   /** Content of `tour-providers.json`. */
   readonly tourProviders: TourProvidersConfig;
+  /**
+   * Loaded taxonomy (the one `listingSchema` is built from); decides the allowed Objektmerkmale
+   * per group (duplicate-detection Req 2.5). Without it no merkmal is dropped.
+   */
+  readonly taxonomy?: Taxonomy;
   /** Id of a listing created without delivered id (Req 12.5); default `randomUUID`. */
   readonly newId?: () => string;
+  /**
+   * Duplikat_Prüfung of every written record (duplicate-detection Req 5.1, 6.1). Every production
+   * wiring sets it; without it the pipeline imports as before the feature.
+   */
+  readonly duplicates?: Pick<DuplicateDetector, 'assess'>;
+  /**
+   * Ein/Aus of the Duplikat-Erkennung (design: "Ein- und Ausschalten"); default: always on.
+   * Switched off, records are written without check and without Duplikat_Index maintenance.
+   */
+  readonly detection?: DuplicateDetectionSwitch;
+  /** Time of the Duplikat_Prüfung (Anlagezeitpunkt of new listings); default system clock. */
+  readonly clock?: () => number;
 }
 
 /** Value-free log notes of one attempt; written only for the attempt that decides the record. */
@@ -128,6 +159,9 @@ export class ImportPipeline implements RecordProcessor {
   private readonly writer: ImportListingWriter;
   private readonly rules: ContentRules;
   private readonly newId: () => string;
+  private readonly duplicates: Pick<DuplicateDetector, 'assess'> | undefined;
+  private readonly detection: DuplicateDetectionSwitch | undefined;
+  private readonly clock: () => number;
 
   constructor(options: ImportPipelineOptions) {
     this.listingSchema = options.listingSchema;
@@ -135,6 +169,9 @@ export class ImportPipeline implements RecordProcessor {
     this.writer = options.writer;
     this.rules = contentRules(options);
     this.newId = options.newId ?? randomUUID;
+    this.duplicates = options.duplicates;
+    this.detection = options.detection;
+    this.clock = options.clock ?? Date.now;
   }
 
   async process(raw: RawRecord, ctx: RecordProcessingContext): Promise<RecordOutcome> {
@@ -211,22 +248,95 @@ export class ImportPipeline implements RecordProcessor {
     const issues = [...(prepared.ok ? [] : prepared.issues), ...(status.ok ? [] : [status.issue])];
     if (!prepared.ok || !status.ok) return rejected(listingId, issues, notes, customId);
 
+    // 5a. Duplikat_Prüfung (duplicate-detection Req 5.1, 5.2, 6.1, 6.2).
+    const agencyId = agencyOf(target, ctx.agencyId);
+    const duplicate = await this.checkDuplicates(listingId, target, prepared.content, agencyId);
+    if (duplicate === 'unavailable') {
+      const issue = { field: 'id', reason: DUPLICATE_CHECK_UNAVAILABLE_REASON };
+      return rejected(listingId, [issue], notes, customId);
+    }
+    // A new duplicate is stored, but not published (Req 5.2); existing listings keep their
+    // status whatever the check finds (Req 6.2, 6.7 of `listing-management`).
+    const checked = duplicate === 'disabled' ? undefined : duplicate;
+    const flag = checked?.flag ?? null;
+    const flagged = target.kind === 'create' && flag !== null;
+
     // 7. Versioned write.
     const result = await this.writer.write({
       listingId,
       expectedVersion: target.kind === 'update' ? target.expectedVersion : null,
       next: {
         content: prepared.content,
-        status: status.value,
+        status: flagged ? 'INACTIVE' : status.value,
         ...optional('customId', customId),
-        ...optional('agencyId', agencyOf(target, ctx.agencyId)),
+        ...optional('agencyId', agencyId),
       },
       changeType: 'IMPORT',
       channel: 'IMPORT',
       actor: { kind: 'connector', connectorId: ctx.source, runId: ctx.runId },
+      ...(checked !== undefined && {
+        flags: checked.flags,
+        assessment: checked.assessment,
+        ...(target.kind === 'create' && { createdAt: checked.createdAt }),
+        ...(flagged && {
+          statusReason: { code: 'DUPLICATE' as const, originalId: flag.originalId },
+        }),
+      }),
+      ...(duplicate === 'disabled' && { duplicateDetection: 'disabled' as const }),
     });
-    if (result.ok) return { outcome: OUTCOMES[result.value.outcome], notes };
-    return conflictOutcome(result.error, listingId, notes, customId);
+    if (!result.ok) return conflictOutcome(result.error, listingId, notes, customId);
+    const outcome = OUTCOMES[result.value.outcome];
+    if (outcome === 'imported' && flagged) {
+      const { originalId, matches } = flag;
+      const reasons = matches.find((m) => m.listingId === originalId)?.reasons ?? [];
+      notes.push((logger) => logger.recordFlagged(listingId, originalId, reasons));
+      return { outcome: 'flagged', notes };
+    }
+    return { outcome, notes };
+  }
+
+  /**
+   * Step 5a: Duplikat_Prüfung of the merged content in the Prüfbereich of the listing after the
+   * write. `undefined` without a detector; `disabled` if the Duplikat-Erkennung is switched off;
+   * `unavailable` if the Duplikat_Index or the switch cannot be read.
+   */
+  private async checkDuplicates(
+    listingId: string,
+    target: ImportTarget,
+    content: ListingContent,
+    agencyId: string | undefined,
+  ): Promise<DuplicateCheck | 'disabled' | 'unavailable' | undefined> {
+    const detector = this.duplicates;
+    if (detector === undefined) return undefined;
+    try {
+      if (this.detection !== undefined && !(await this.detection.isEnabled())) return 'disabled';
+    } catch {
+      return 'unavailable';
+    }
+    const now = new Date(this.clock()).toISOString();
+    const existing = target.kind === 'update' ? target.listing : undefined;
+    let createdAt = existing === undefined ? now : creationTime(existing);
+    let assessment: DuplicateAssessment;
+    try {
+      assessment = await detector.assess({
+        listingId,
+        scope: agencyScope(agencyId),
+        createdAt,
+        content,
+      });
+    } catch (error) {
+      if (error instanceof DuplicateIndexUnavailable) return 'unavailable';
+      throw error;
+    }
+    if (existing === undefined) createdAt = creationTimeAfterCheck(createdAt, assessment);
+    const { flags, flag } = flagsAfterCheck(
+      existing === undefined ? 'CREATE' : 'UPDATE',
+      { listingId, createdAt },
+      assessment,
+      existing?.management.flags ?? [],
+      now,
+    );
+    return { assessment, flags, flag, createdAt };
   }
 
   /**
@@ -251,6 +361,14 @@ export class ImportPipeline implements RecordProcessor {
 }
 
 const OUTCOMES = { created: 'imported', updated: 'updated', unchanged: 'unchanged' } as const;
+
+/** Result of step 5a. */
+interface DuplicateCheck {
+  assessment: DuplicateAssessment;
+  flags: ListingFlag[];
+  flag: DuplicateFlag | null;
+  createdAt: string;
+}
 
 function mapRecord(raw: RawRecord): Candidate {
   const candidate: Candidate = {};
@@ -313,9 +431,15 @@ function conflictOutcome(
   customId: string | undefined,
 ): Attempt {
   switch (conflict.code) {
+    // A concurrent write, or a concurrent Exakt_Duplikat that claimed the exact key first
+    // (duplicate-detection Req 9.1): resolve the target and assess again.
     case 'VERSION_CONFLICT':
     case 'NOT_FOUND':
+    case 'EXACT_CLAIMED':
       return 'retry';
+    case 'IDEMPOTENCY_RACE':
+      // Imports carry no Idempotenzschlüssel; this cannot happen.
+      throw new Error('Unexpected idempotency conflict in the import pipeline');
     case 'DELETION_BLOCKED':
       return rejected(listingId, [{ field: 'id', reason: DELETION_BLOCK_REASON }], notes, customId);
     case 'CUSTOM_ID_TAKEN':
@@ -352,6 +476,7 @@ function reject(
 
 interface Drops {
   readonly droppedPii: readonly string[];
+  readonly droppedAttributes?: readonly string[];
   readonly mediaDrops: readonly MediaDrop[];
   readonly mediaTruncations: readonly MediaTruncation[];
 }
@@ -362,6 +487,11 @@ function dropNotes(listingId: string, drops: Drops): Note[] {
       (field): Note =>
         (logger) =>
           logger.piiFieldDropped(listingId, field),
+    ),
+    ...(drops.droppedAttributes ?? []).map(
+      (field): Note =>
+        (logger) =>
+          logger.attributeDropped(listingId, field),
     ),
     ...drops.mediaDrops.map(
       ({ kind, index, reason, url }): Note =>

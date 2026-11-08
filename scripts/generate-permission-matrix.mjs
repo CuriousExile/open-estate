@@ -43,6 +43,7 @@ const DESCRIPTIONS = {
     'Admin API functions under `/platform/*`: deletions, API keys, rate limits, access mode, reload',
   'monitoring:platform': 'Platform metrics, alarms, agency activity, history size',
   'listing:assign': 'Assign a listing to another agency',
+  'duplicate:review': 'Review and dismiss duplicates found across agencies',
 };
 
 const MACHINE_ACCESS = 'Machine access (grantable)';

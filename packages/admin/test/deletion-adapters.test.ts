@@ -476,6 +476,9 @@ describe('production wiring', () => {
         'LISTING_KEYS_TABLE_NAME',
         'METRIC_COUNTERS_TABLE_NAME',
         'SNAPSHOT_BUCKET_NAME',
+        'DUPLICATE_INDEX_TABLE_NAME',
+        'IDEMPOTENCY_KEYS_TABLE_NAME',
+        'DUPLICATE_REPORTS_TABLE_NAME',
       ],
     });
   });

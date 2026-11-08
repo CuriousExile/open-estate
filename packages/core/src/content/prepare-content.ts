@@ -1,7 +1,10 @@
 import {
+  allowedAttributes,
+  BINDABLE_ATTRIBUTES,
   PII_FIELD_PATHS,
   tourHostIndex,
   type PiiAllowlistConfig,
+  type Taxonomy,
   type TourProvidersConfig,
 } from '@open-estate/shared';
 import type { z } from 'zod';
@@ -19,6 +22,11 @@ export interface ContentRules {
   readonly allowedPii: ReadonlySet<string>;
   /** Lower-cased host name → provider code (`tourHostIndex`). */
   readonly tourHosts: ReadonlyMap<string, string>;
+  /**
+   * Taxonomy whose group lists decide the allowed Objektmerkmale (duplicate-detection Req 2.5).
+   * Every production wiring passes it; without it no merkmal is dropped (tests and tools only).
+   */
+  readonly taxonomy?: Taxonomy;
 }
 
 export interface ContentRulesConfig {
@@ -26,20 +34,73 @@ export interface ContentRulesConfig {
   readonly piiAllowlist?: PiiAllowlistConfig;
   /** Content of `tour-providers.json`. */
   readonly tourProviders: TourProvidersConfig;
+  /** Loaded taxonomy, for the Merkmalsbindung (see {@link ContentRules.taxonomy}). */
+  readonly taxonomy?: Taxonomy;
 }
 
 export function contentRules(config: ContentRulesConfig): ContentRules {
   return {
     allowedPii: new Set(config.piiAllowlist?.allowedFields ?? []),
     tourHosts: tourHostIndex(config.tourProviders),
+    ...(config.taxonomy !== undefined && { taxonomy: config.taxonomy }),
   };
 }
 
 interface PreparedContentBase {
   /** Removed PII field paths (never values), in `PII_FIELD_PATHS` order. */
   readonly droppedPii: readonly string[];
+  /**
+   * Removed Objektmerkmale not allowed for the group of the listing type (never values), in
+   * `BINDABLE_ATTRIBUTES` order (duplicate-detection Req 2.5).
+   */
+  readonly droppedAttributes: readonly string[];
   readonly mediaDrops: readonly MediaDrop[];
   readonly mediaTruncations: readonly MediaTruncation[];
+}
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+/**
+ * Merkmalsbindung (duplicate-detection Req 2.5): removes the bindable Objektmerkmale that the
+ * group of the candidate's listing type does not allow. A listing type outside the taxonomy is
+ * left alone: the schema rejects it anyway. The input is not modified.
+ */
+export function bindAttributes(
+  candidate: Candidate,
+  taxonomy: Taxonomy | undefined,
+): { candidate: Candidate; dropped: string[] } {
+  const type = candidate['listingType'];
+  const allowed =
+    taxonomy === undefined || typeof type !== 'string'
+      ? undefined
+      : allowedAttributes(taxonomy, type);
+  if (allowed === undefined) return { candidate, dropped: [] };
+
+  const forbidden = BINDABLE_ATTRIBUTES.filter((attribute) => !allowed.has(attribute));
+  const topLevel = new Set<string>(forbidden.filter((attribute) => !attribute.includes('.')));
+  const inAddress = new Set<string>(
+    forbidden.flatMap((attribute) =>
+      attribute.startsWith('address.') ? [attribute.slice('address.'.length)] : [],
+    ),
+  );
+  const address = candidate['address'];
+  const dropped = forbidden.filter((attribute) =>
+    attribute.startsWith('address.')
+      ? isObject(address) && Object.hasOwn(address, attribute.slice('address.'.length))
+      : Object.hasOwn(candidate, attribute),
+  );
+  if (dropped.length === 0) return { candidate, dropped };
+
+  const result: Candidate = Object.fromEntries(
+    Object.entries(candidate).filter(([key]) => !topLevel.has(key)),
+  );
+  if (isObject(address)) {
+    result['address'] = Object.fromEntries(
+      Object.entries(address).filter(([key]) => !inAddress.has(key)),
+    );
+  }
+  return { candidate: result, dropped };
 }
 
 export type PreparedContent<T> =
@@ -50,9 +111,11 @@ export type PreparedContent<T> =
  * Shared content preparation of import pipeline and Management_API (Req 4.3, 4.4, 4.10, 8.4 of
  * `listing-management`; Req 16.1–16.5, 16.11, 18.1–18.3 of `real-estate-platform`):
  * 1. PII filter — before validation, so an invalid but dropped PII value causes no rejection.
- * 2. Media/tour cleanup — before validation as well: an invalid medium or tour is dropped on its
+ * 2. Merkmalsbindung — Objektmerkmale the listing type's group does not allow are dropped
+ *    (duplicate-detection Req 2.5), also before validation and for the same reason.
+ * 3. Media/tour cleanup — before validation as well: an invalid medium or tour is dropped on its
  *    own instead of rejecting the listing.
- * 3. Validation against `schema` — on failure every field issue is returned.
+ * 4. Validation against `schema` — on failure every field issue is returned.
  *
  * Dropped fields and media are returned in both cases so callers can log or report them.
  * The input is not modified.
@@ -63,9 +126,11 @@ export function prepareContent<S extends z.ZodType>(
   rules: ContentRules,
 ): PreparedContent<z.output<S>> {
   const pii = filterPii(candidate, PII_FIELD_PATHS, rules.allowedPii);
-  const media = cleanMedia(pii.candidate, rules.tourHosts);
+  const bound = bindAttributes(pii.candidate, rules.taxonomy);
+  const media = cleanMedia(bound.candidate, rules.tourHosts);
   const base: PreparedContentBase = {
     droppedPii: pii.dropped,
+    droppedAttributes: bound.dropped,
     mediaDrops: media.drops,
     mediaTruncations: media.truncations,
   };

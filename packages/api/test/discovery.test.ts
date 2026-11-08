@@ -205,8 +205,17 @@ describe('GET /meta document', () => {
 
   it('lists every group with its type codes, locales, currency and tour hosts (Req 15.9, 16.6)', () => {
     expect(meta.taxonomy).toEqual({
-      groups: taxonomy.groups.map((g) => ({ code: g.code, types: [...g.types] })),
+      groups: taxonomy.groups.map((g) => ({
+        code: g.code,
+        types: [...g.types],
+        attributes: [...g.attributes],
+      })),
     });
+    // Objektmerkmale per group (duplicate-detection Req 2.6): the default taxonomy binds them.
+    expect(meta.taxonomy.groups.find((g) => g.code === 'land')?.attributes).toEqual([
+      'plotArea',
+      'parcelId',
+    ]);
     expect(meta.locales).toEqual(locales);
     expect(meta.defaultCurrency).toBe('EUR');
     expect(meta.offerTypes).toEqual(['SALE', 'RENT']);

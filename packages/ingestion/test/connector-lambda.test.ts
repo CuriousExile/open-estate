@@ -95,6 +95,7 @@ describe('connector Lambda', () => {
     expect(keys()).toEqual([
       'connectors.json',
       'crawler-allowlist.json',
+      'duplicate-detection.json',
       'i18n-config.json',
       'pii-allowlist.json',
       'taxonomy.json',

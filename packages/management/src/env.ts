@@ -1,4 +1,9 @@
-import { ConfigError, loadConfig, type ConfigSources } from '@open-estate/core';
+import {
+  ConfigError,
+  DUPLICATE_DETECTION_PARAMETER_ENV,
+  loadConfig,
+  type ConfigSources,
+} from '@open-estate/core';
 
 // Configuration of the management Lambda. Table and parameter names come from the environment
 // (set by the ManagementStack); nothing environment-specific lives in the code (Req 11.1 of
@@ -16,6 +21,11 @@ export const MANAGEMENT_ENV = {
   rateLimitCountersTable: 'RATE_LIMIT_COUNTERS_TABLE_NAME',
   /** `/open-estate/{env}/management-rate-limit`. */
   rateLimitParameter: 'MANAGEMENT_RATE_LIMIT_PARAMETER_NAME',
+  /**
+   * `/open-estate/{env}/duplicate-detection`: Ein/Aus of the Duplikat-Erkennung, shared by the
+   * listing commands and the platform routes (duplicate-detection design: "Ein- und Ausschalten").
+   */
+  duplicateDetectionParameter: DUPLICATE_DETECTION_PARAMETER_ENV,
 } as const;
 
 export type ManagementEnv = Record<keyof typeof MANAGEMENT_ENV, string>;

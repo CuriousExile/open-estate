@@ -1,5 +1,6 @@
 import {
   assertValidTaxonomy,
+  BINDABLE_ATTRIBUTES,
   groupOfType,
   TaxonomyConfig,
   TaxonomyValidationError,
@@ -41,12 +42,14 @@ describe('validateTaxonomy', () => {
         { code: 'terraced', group: 'house' },
       ],
     });
+    // A group without an `attributes` list allows every bindable Objektmerkmal (Req 2.2).
+    const all = [...BINDABLE_ATTRIBUTES];
     expect(result).toEqual({
       success: true,
       taxonomy: {
         groups: [
-          { code: 'house', types: ['villa', 'terraced'] },
-          { code: 'land', types: ['building_plot'] },
+          { code: 'house', types: ['villa', 'terraced'], attributes: all },
+          { code: 'land', types: ['building_plot'], attributes: all },
         ],
       },
     });

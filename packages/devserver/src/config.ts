@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { I18nConfig } from '@open-estate/core';
 import {
+  DuplicateConfig,
   assertValidTaxonomy,
   ExchangeRatesConfig,
   PiiAllowlistConfig,
@@ -25,6 +26,7 @@ export const DEFAULT_CONFIG_FILES = {
   tourProviders: 'packages/shared/src/config/tour-providers.json',
   exchangeRates: 'packages/shared/src/config/exchange-rates.json',
   piiAllowlist: 'packages/shared/src/config/pii-allowlist.json',
+  duplicateDetection: 'packages/shared/src/config/duplicate-detection.json',
   i18n: 'packages/frontend/public/i18n-config.json',
 } as const;
 
@@ -35,6 +37,8 @@ export interface ContentConfig {
   /** Static demo exchange rates (EUR base; THB, USD, GBP, CHF). */
   exchangeRates: ExchangeRatesConfig;
   piiAllowlist: PiiAllowlistConfig;
+  /** Duplikat_Konfiguration (duplicate-detection Req 3.8). */
+  duplicateDetection: DuplicateConfig;
   defaultCurrency: string;
 }
 
@@ -55,6 +59,7 @@ export function loadContentConfig(root: string = REPO_ROOT): ContentConfig {
     tourProviders: readJson(root, files.tourProviders, TourProvidersConfig),
     exchangeRates: readJson(root, files.exchangeRates, ExchangeRatesConfig),
     piiAllowlist: readJson(root, files.piiAllowlist, PiiAllowlistConfig),
+    duplicateDetection: readJson(root, files.duplicateDetection, DuplicateConfig),
     defaultCurrency: 'EUR',
   };
 }
@@ -139,4 +144,16 @@ export class DemoClock {
   release(): void {
     this.simulated = undefined;
   }
+}
+
+/**
+ * `DEV_DUPLICATE_DETECTION`: `enabled` (default) or `disabled` — Ein/Aus of the
+ * Duplikat-Erkennung at start, like the CDK context `duplicateDetection` of a deployment.
+ */
+export function readDuplicateDetection(env: Readonly<Record<string, string | undefined>>): boolean {
+  const raw = env['DEV_DUPLICATE_DETECTION']?.trim() || 'enabled';
+  if (raw !== 'enabled' && raw !== 'disabled') {
+    throw new Error(`DEV_DUPLICATE_DETECTION=${raw}: expected enabled or disabled`);
+  }
+  return raw === 'enabled';
 }

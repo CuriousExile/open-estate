@@ -34,6 +34,8 @@ import {
 function toInput(content: Record<string, unknown>): Record<string, unknown> {
   const input = { ...content };
   if (typeof input['area'] === 'number') input['area'] = formatDecimal(input['area']);
+  // Objektmerkmal `plotArea` is a decimal string in the API representation, too.
+  if (typeof input['plotArea'] === 'number') input['plotArea'] = formatDecimal(input['plotArea']);
   if (Array.isArray(input['offers'])) {
     input['offers'] = (input['offers'] as Record<string, unknown>[]).map((offer) =>
       Object.fromEntries(
@@ -83,6 +85,8 @@ function expectValidListing(listing: ManagedListing): void {
     source: 'sanity',
     lastImportedAt: listing.updatedAt,
     lastRunId: 'run-1',
+    createdAt: listing.updatedAt,
+    flags: [],
   };
   const parsed = ListingView.safeParse(view);
   expect(parsed.error).toBeUndefined();

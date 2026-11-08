@@ -1,4 +1,9 @@
-import { DemoClock, loadContentConfig, readNetworkConfig } from '../src/config';
+import {
+  DemoClock,
+  loadContentConfig,
+  readDuplicateDetection,
+  readNetworkConfig,
+} from '../src/config';
 import { toProxyEvent, type RawHttpRequest } from '../src/http/proxy-event';
 import { s256Challenge } from '../src/oidc/pkce';
 import { createDevPlatform, type DevPlatform } from '../src/platform';
@@ -247,6 +252,98 @@ describe('local demo platform', () => {
     expect(requested.status).toBe(202);
     expect((await search('&city=Kiel')).items).toEqual([]);
     expect(await platform.stores.listings.get(target?.id ?? '')).toBeNull();
+  });
+
+  it('seeds the duplicate demo and runs the Duplikat_Abgleich in-process (duplicate-detection)', async () => {
+    const admin = await login(USERS.platformAdmin.userId);
+    const member = await login(USERS.agencyMember.userId);
+    // The repost of Berlin-Mitte is stored inactive with a Markierung; the neighbour flat is not.
+    const repost = await management(
+      'GET',
+      `/listings/${seeded.listingIds['berlin-mitte-repost']}`,
+      member,
+    );
+    expect(repost.body).toMatchObject({
+      status: 'INACTIVE',
+      flags: [{ code: 'DUPLICATE', originalId: seeded.listingIds['berlin-mitte'] }],
+    });
+    const neighbour = await management(
+      'GET',
+      `/listings/${seeded.listingIds['berlin-mitte-neighbour']}`,
+      member,
+    );
+    expect(neighbour.body).toMatchObject({ status: 'ACTIVE', flags: [] });
+    // The seeding's Abgleich found the same flat at Alpenblick.
+    const reports = await management('GET', '/platform/duplicate-reports', admin);
+    expect(reports.status).toBe(200);
+    const pairs = (reports.body?.['items'] as { listingA: string; listingB: string }[]).map((r) =>
+      [r.listingA, r.listingB].sort().join('|'),
+    );
+    expect(pairs).toContain(
+      [seeded.listingIds['berlin-mitte'], seeded.listingIds['berlin-mitte-alpenblick']]
+        .sort()
+        .join('|'),
+    );
+    expect((await management('GET', '/platform/duplicate-reports', member)).status).toBe(403);
+
+    // A manual start (Req 10.2), only for platform:operate.
+    expect((await management('POST', '/platform/duplicate-sweeps', member)).status).toBe(403);
+    const starts = () =>
+      platform.stores.audit.entries.filter((e) => e.action === 'duplicate-sweep.start').length;
+    const before = starts();
+    const started = await management('POST', '/platform/duplicate-sweeps', admin);
+    expect(started.status).toBe(202);
+    expect(started.body).toMatchObject({ alreadyRunning: false });
+    expect(String(started.body?.['executionName'])).toMatch(/^manual-/);
+    await platform.services.sweepIdle();
+    expect(starts()).toBe(before + 1);
+  });
+
+  it('switches the duplicate detection off and on from the admin mode', async () => {
+    const admin = await login(USERS.platformAdmin.userId);
+    const member = await login(USERS.agencyMember.userId);
+    const path = '/platform/duplicate-detection';
+    expect(await management('GET', path, admin)).toMatchObject({
+      status: 200,
+      body: { enabled: true },
+    });
+    expect((await management('PUT', path, member, { enabled: false })).status).toBe(403);
+    expect(await management('PUT', path, admin, { enabled: false })).toMatchObject({
+      status: 200,
+      body: { enabled: false },
+    });
+
+    // Switched off: the same flat again is stored as requested, without a Markierung.
+    const original = await management(
+      'GET',
+      `/listings/${seeded.listingIds['berlin-mitte']}`,
+      member,
+    );
+    // Same content without the original's derived source URL (each listing gets its own).
+    const content = { ...(original.body?.['content'] as Record<string, unknown>) };
+    delete content['sourceUrl'];
+    const created = await management('POST', '/listings', member, {
+      content,
+      status: 'ACTIVE',
+    });
+    expect(created).toMatchObject({ status: 201, body: { status: 'ACTIVE', flags: [] } });
+    expect((await management('POST', '/platform/duplicate-sweeps', admin)).status).toBe(409);
+
+    // Switched on again: the in-process Abgleich flags it (without taking it offline).
+    const on = await management('PUT', path, admin, { enabled: true });
+    expect(on).toMatchObject({
+      status: 200,
+      body: { enabled: true, sweep: { alreadyRunning: false } },
+    });
+    await platform.services.sweepIdle();
+    const flagged = await management('GET', `/listings/${String(created.body?.['id'])}`, member);
+    expect(flagged.body).toMatchObject({ status: 'ACTIVE', flags: [{ code: 'DUPLICATE' }] });
+  });
+
+  it('reads the start value of the duplicate detection from DEV_DUPLICATE_DETECTION', () => {
+    expect(readDuplicateDetection({})).toBe(true);
+    expect(readDuplicateDetection({ DEV_DUPLICATE_DETECTION: 'disabled' })).toBe(false);
+    expect(() => readDuplicateDetection({ DEV_DUPLICATE_DETECTION: 'off' })).toThrow(/enabled/);
   });
 
   it('only binds to loopback addresses', () => {

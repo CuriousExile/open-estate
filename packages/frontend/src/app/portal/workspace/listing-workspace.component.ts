@@ -32,6 +32,8 @@ import {
   statusNoticeKey,
   toggleListingKey,
 } from '../shared/listing-status';
+import { DUPLICATE_CREATED_NOTICE, toDuplicateNotice } from './duplicate-notice-model';
+import { DuplicateNoticeComponent } from './duplicate-notice.component';
 import { FieldProvenanceComponent } from './field-provenance.component';
 import { fieldProvenanceRows, missingImportVersions } from './field-provenance-model';
 import { RestoreDialogComponent, type RestoreDialogState } from './restore-dialog.component';
@@ -89,6 +91,7 @@ const TAB_KEYS: Record<WorkspaceTab, string> = {
 @Component({
   selector: 'oe-listing-workspace',
   imports: [
+    DuplicateNoticeComponent,
     FieldProvenanceComponent,
     ListingDetailComponent,
     RestoreDialogComponent,
@@ -157,6 +160,17 @@ const TAB_KEYS: Record<WorkspaceTab, string> = {
         <p class="glass notice" role="status">
           {{ noticeKey | transloco: { version: view.version } }}
         </p>
+      }
+
+      @if (duplicateNotice(); as duplicate) {
+        <oe-duplicate-notice
+          [notice]="duplicate"
+          [locale]="locale.active()"
+          [busy]="flagBusy()"
+          [errorMessage]="flagError()"
+          (activate)="activateAnyway()"
+          (dismiss)="dismissDuplicate()"
+        />
       }
 
       <div class="tabs" role="tablist" [attr.aria-label]="'portal.workspace.tabs' | transloco">
@@ -347,6 +361,13 @@ export class ListingWorkspaceComponent {
   protected readonly compare = signal<CompareState>({ kind: 'idle' });
   protected readonly restore = signal<RestoreState | undefined>(undefined);
 
+  /** „Trotzdem aktivieren“ or „Markierung verwerfen“ is running, and its failure. */
+  protected readonly flagBusy = signal(false);
+  protected readonly flagError = signal<string | undefined>(undefined);
+
+  /** Notice handed over by the navigation, e.g. after a creation as possible duplicate. */
+  private pendingNotice: string | undefined;
+
   private readonly reloads = signal(0);
   /** Cancels the requests of a superseded listing (new id or reload). */
   private controller = new AbortController();
@@ -384,6 +405,11 @@ export class ListingWorkspaceComponent {
   protected readonly statusBusy = signal(false);
   protected readonly statusError = signal<string | undefined>(undefined);
   protected readonly toggleListingKey = toggleListingKey;
+  /** Duplikat-Hinweis with the controls the user may use (duplicate-detection Req 13.2). */
+  protected readonly duplicateNotice = computed(() => {
+    const view = this.view();
+    return view ? toDuplicateNotice(view, (permission) => this.session.can(permission)) : undefined;
+  });
 
   protected readonly statusKey = statusKey;
   protected readonly originKey = originKey;
@@ -391,6 +417,8 @@ export class ListingWorkspaceComponent {
   protected readonly toggleCompare = toggleCompare;
 
   constructor() {
+    const handedOver: unknown = this.router.currentNavigation()?.extras.state?.['notice'];
+    if (handedOver === DUPLICATE_CREATED_NOTICE) this.pendingNotice = handedOver;
     effect((onCleanup) => {
       const id = this.id();
       this.reloads();
@@ -544,6 +572,60 @@ export class ListingWorkspaceComponent {
     this.restore.set({ ...r, busy: false, errorMessage: message, fieldErrors });
   }
 
+  /**
+   * „Trotzdem aktivieren“ (Req 8.1, 8.5): `ACTIVE` based on the shown version; the Management_API
+   * removes the Markierung and records the Verwerfungen in the same step.
+   */
+  protected async activateAnyway(): Promise<void> {
+    const view = this.view();
+    if (!view || this.flagBusy()) return;
+    await this.changeFlag(
+      () =>
+        this.api.put(
+          `/listings/${encodeURIComponent(view.id)}/status`,
+          { status: 'ACTIVE', baseVersion: view.version },
+          { parse: (value) => ListingView.parse(value) },
+        ),
+      'portal.duplicates.activated',
+      true,
+    );
+  }
+
+  /** „Markierung verwerfen“ (Req 8.2): no version, the status stays. */
+  protected async dismissDuplicate(): Promise<void> {
+    const view = this.view();
+    if (!view || this.flagBusy()) return;
+    await this.changeFlag(
+      () =>
+        this.api.delete(`/listings/${encodeURIComponent(view.id)}/flags/DUPLICATE`, {
+          parse: (value) => ListingView.parse(value),
+        }),
+      'portal.duplicates.dismissed',
+      false,
+    );
+  }
+
+  private async changeFlag(
+    call: () => ReturnType<ManagementApiClient['put']>,
+    noticeKey: string,
+    newVersion: boolean,
+  ): Promise<void> {
+    this.flagBusy.set(true);
+    this.flagError.set(undefined);
+    const result = await call();
+    this.flagBusy.set(false);
+    const id = this.id();
+    if (result.ok) {
+      this.state.set({ kind: 'ready', view: result.value as ParsedListingView });
+      this.notice.set(noticeKey);
+      if (newVersion) void this.loadVersions(id, undefined, this.controller.signal);
+      return;
+    }
+    this.flagError.set(this.message(result.error));
+    // Changed in the meantime: show the current state.
+    if (isConflict(result.error)) void this.loadListing(id, this.controller.signal);
+  }
+
   private async loadAll(id: string, signal: AbortSignal): Promise<void> {
     this.state.set({ kind: 'loading' });
     this.notice.set(undefined);
@@ -554,6 +636,10 @@ export class ListingWorkspaceComponent {
     this.selected.set([]);
     this.restore.set(undefined);
     if (!(await this.loadListing(id, signal))) return;
+    if (this.pendingNotice !== undefined) {
+      this.notice.set(this.pendingNotice);
+      this.pendingNotice = undefined;
+    }
     await this.loadVersions(id, undefined, signal);
   }
 

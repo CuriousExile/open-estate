@@ -32,6 +32,7 @@ export * from './usage/usage-aggregator';
 export * from './content/pii-filter';
 export * from './content/media-cleanup';
 export * from './content/prepare-content';
+export * from './duplicates';
 // Lambda entry `indexer/handler` is bundled separately and not re-exported (module-level init).
 export * from './indexer/search-index-writer';
 export * from './indexer/stream-indexer';

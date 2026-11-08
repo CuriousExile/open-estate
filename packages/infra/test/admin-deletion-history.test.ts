@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { DELETION_HISTORY_ENV } from '@open-estate/admin';
+import { IDEMPOTENCY_KEYS_BY_LISTING } from '@open-estate/core';
 import { App, RemovalPolicy, Stack } from 'aws-cdk-lib';
 import { Template } from 'aws-cdk-lib/assertions';
 import { AttributeType, TableV2 } from 'aws-cdk-lib/aws-dynamodb';
@@ -33,6 +34,9 @@ function synth(withHistory: boolean) {
     listingVersions: table('ListingVersions', 'listingId'),
     listingKeys: table('ListingKeys', 'customKey'),
     metricCounters: table('MetricCounters', 'scope'),
+    duplicateIndex: table('DuplicateIndex', 'pk'),
+    idempotencyKeys: table('IdempotencyKeys', 'key'),
+    duplicateReports: table('DuplicateReports', 'reportId'),
     snapshotBucket: new Bucket(management, 'VersionSnapshots', {
       encryption: BucketEncryption.KMS,
       encryptionKey: new Key(management, 'SnapshotKey'),
@@ -87,6 +91,35 @@ describe('AdminStack deletion task with the version history (task 8.1)', () => {
     expect(JSON.stringify(variables[DELETION_HISTORY_ENV.snapshotBucket])).toContain(
       'VersionSnapshots',
     );
+    expect(JSON.stringify(variables[DELETION_HISTORY_ENV.duplicateIndexTable])).toContain(
+      'DuplicateIndex',
+    );
+    expect(JSON.stringify(variables[DELETION_HISTORY_ENV.idempotencyKeysTable])).toContain(
+      'IdempotencyKeys',
+    );
+    expect(JSON.stringify(variables[DELETION_HISTORY_ENV.duplicateReportsTable])).toContain(
+      'DuplicateReports',
+    );
+  });
+
+  it('may remove the duplicate data of a listing but not write any (duplicate-detection 12.3)', () => {
+    expect(actions(on(statements, 'DuplicateIndex'))).toEqual([
+      'dynamodb:BatchWriteItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:Query',
+    ]);
+    expect(actions(on(statements, 'IdempotencyKeys'))).toEqual([
+      'dynamodb:DeleteItem',
+      'dynamodb:GetItem',
+      'dynamodb:Query',
+    ]);
+    const query = on(statements, 'IdempotencyKeys').find((s) => s.Action === 'dynamodb:Query');
+    expect(JSON.stringify(query?.Resource)).toContain(`/index/${IDEMPOTENCY_KEYS_BY_LISTING}`);
+    // Treffer are read and deleted, never written.
+    expect(actions(on(statements, 'DuplicateReports'))).toEqual([
+      'dynamodb:DeleteItem',
+      'dynamodb:GetItem',
+    ]);
   });
 
   it('grants only the removal of versions, keys, counters and snapshots', () => {

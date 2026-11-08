@@ -13,6 +13,10 @@ import {
   CreatedMachineAccess,
   DiffResponse,
   DryRunResponse,
+  DuplicateDetectionView,
+  DuplicateReportPage,
+  DuplicateReportView,
+  DuplicateSweepStarted,
   ERROR_CODES,
   ListingPage,
   ListingView,
@@ -116,6 +120,10 @@ export const COMPONENT_SCHEMAS = {
   RateLimitSetting: z.object({ rateLimit: rateLimitSchema }),
   AccessModeSetting: z.object({ mode: z.enum(ACCESS_MODES) }),
   ReloadResult: z.object({ functions: z.array(ReloadOutcome) }),
+  DuplicateReportView,
+  DuplicateReportPage,
+  DuplicateSweepStarted,
+  DuplicateDetectionView,
 } satisfies Record<string, z.ZodType>;
 
 export type ComponentName = keyof typeof COMPONENT_SCHEMAS;

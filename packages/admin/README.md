@@ -54,7 +54,8 @@ A value that starts with `-` has to be passed as `--requests=-1`.
 
 ### `reload`
 
-Lambda functions load the taxonomy and the tour and crawler allowlists at init only. To apply such
+Lambda functions load the taxonomy, the tour and crawler allowlists and the duplicate rules at init
+only. To apply such
 changes without `cdk deploy` (Req 15.3, 16.8), `reload` sets the `CONFIG_VERSION` environment variable
 of each function to the next integer (missing or non-integer values restart at `1`). Any
 configuration change makes Lambda start new execution environments, so the next invocations are
@@ -75,9 +76,11 @@ OPEN_ESTATE_RELOAD_FUNCTIONS=fn-a,fn-b open-estate-admin reload
 
 Infrastructure needed (14.10):
 
-- the function names (for example as stack outputs);
+- the function names: the `ReloadFunctionNames` output of `OpenEstate-<env>-Management` (API, MCP,
+  connectors and the Management API);
 - `lambda:GetFunctionConfiguration` and `lambda:UpdateFunctionConfiguration` on those functions in the
-  administrator IAM policy.
+  administrator IAM policy: `AdministratorPolicyArn` (Admin stack) covers API, MCP and connectors,
+  `ReloadPolicyArn` (Management stack) the Management API.
 
 The next `cdk deploy` sets `CONFIG_VERSION` back to the value from the stack (if any). That is fine,
 because a deploy restarts the functions as well.

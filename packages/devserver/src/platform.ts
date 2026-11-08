@@ -6,6 +6,8 @@ import {
 } from '@open-estate/admin';
 import { createListingsRoutes, type ListingsHandler } from '@open-estate/api';
 import {
+  InMemoryDuplicateIndexStore,
+  InMemoryIdempotencyStore,
   AgencyService,
   CachingAuthenticator,
   contentRules,
@@ -14,6 +16,10 @@ import {
   createCachedSuspendedAgencies,
   createMetricDefinitions,
   createReadModel,
+  DuplicateDetector,
+  duplicateDataPurge,
+  DuplicateReportService,
+  DuplicateSweep,
   formatUsageLine,
   handleUsageBatch,
   InMemoryAdminAuditLog,
@@ -21,6 +27,8 @@ import {
   InMemoryApiKeyStore,
   InMemoryAuditService,
   InMemoryConnectorRunStore,
+  InMemoryDuplicateReportStore,
+  InProcessDuplicateSweepStarter,
   InMemoryIdentityDirectory,
   InMemoryListingHistoryStore,
   InMemoryListingKeyStore,
@@ -41,7 +49,9 @@ import {
   MetricCatalog,
   MonitoringQueries,
   MonitoringService,
+  runDuplicateSweep,
   StaticAccessConfigSource,
+  StaticDuplicateDetectionSetting,
   VersionedListingWriter,
   VersionService,
   type AdminOperations,
@@ -61,6 +71,7 @@ import {
   AgencyOverview,
   createIdentityRouteList,
   createListingRoutes,
+  createDuplicateRoutes,
   createManagementAccessGuard,
   createManagementHandler,
   createMonitoringRoutes,
@@ -105,6 +116,11 @@ export interface DevPlatformOptions {
   userHints?: Readonly<Record<string, string>>;
   /** Connector modules available to {@link DevPlatform.runConnector}. */
   connectorModules?: readonly ConnectorModule[];
+  /**
+   * Ein/Aus of the Duplikat-Erkennung at start (`DEV_DUPLICATE_DETECTION`); default on. The
+   * Plattform_Admin switches it in the admin mode like in AWS.
+   */
+  duplicateDetection?: boolean;
   logger?: { error(message: string, attributes: Record<string, unknown>): void };
 }
 
@@ -135,6 +151,19 @@ export function createDevPlatform(options: DevPlatformOptions) {
   const apiKeys = new InMemoryApiKeyStore();
   const accessConfig = new StaticAccessConfigSource({ mode: 'open', rateLimit: DEV_RATE_LIMIT });
 
+  // Duplikat-Erkennung (duplicate-detection): index and Idempotenzschlüssel in memory; the
+  // switch of the admin mode is held here instead of in SSM.
+  const duplicateDetection = new StaticDuplicateDetectionSetting(
+    options.duplicateDetection ?? true,
+  );
+  const duplicateIndex = new InMemoryDuplicateIndexStore();
+  const idempotency = new InMemoryIdempotencyStore();
+  const duplicateReports = new InMemoryDuplicateReportStore();
+  const detector = new DuplicateDetector({
+    index: duplicateIndex,
+    taxonomy: config.taxonomy,
+    config: config.duplicateDetection,
+  });
   const writer = new VersionedListingWriter({
     listings,
     versions,
@@ -144,6 +173,8 @@ export function createDevPlatform(options: DevPlatformOptions) {
     snapshots,
     transactor,
     clock,
+    duplicates: { index: duplicateIndex, detector, frontendOrigin },
+    idempotency,
   });
 
   // ---- Search_API and MCP_Server -----------------------------------------------------------
@@ -210,7 +241,12 @@ export function createDevPlatform(options: DevPlatformOptions) {
     rules: contentRules({
       tourProviders: config.tourProviders,
       piiAllowlist: config.piiAllowlist,
+      taxonomy: config.taxonomy,
     }),
+    duplicates: detector,
+    detection: duplicateDetection,
+    idempotency,
+    clock,
   });
   const queries = new ListingQueryService({ listings, keys, audit, frontendOrigin });
   const versionService = new VersionService({ listings, versions, snapshots, audit });
@@ -256,6 +292,13 @@ export function createDevPlatform(options: DevPlatformOptions) {
     history: new InMemoryListingHistoryStore({ versions, snapshots }),
     audit: adminAudit,
     clock,
+    duplicates: duplicateDataPurge({
+      index: duplicateIndex,
+      idempotency,
+      reports: duplicateReports,
+      counters,
+      transactor,
+    }),
   });
   const adminOperations: AdminOperations = createAdminOperations({
     apiKeys,
@@ -283,6 +326,52 @@ export function createDevPlatform(options: DevPlatformOptions) {
     }));
   };
 
+  // ---- Duplikat_Abgleich (in AWS: state machine, daily schedule) ----------------------------
+  // Locally the run happens in this process, started via `POST /platform/duplicate-sweeps`
+  // (duplicate-detection Req 10.2); there is no daily schedule.
+  const duplicateSweep = new DuplicateSweep({
+    listings,
+    index: duplicateIndex,
+    reports: duplicateReports,
+    counters,
+    transactor,
+    writer,
+    detector,
+    audit,
+    clock,
+    frontendOrigin,
+  });
+  const logger = options.logger ?? {
+    error: (message: string, attributes: Record<string, unknown>) =>
+      console.error(message, attributes),
+  };
+  const sweepStarter = new InProcessDuplicateSweepStarter({
+    clock,
+    run: async (sweepId, startedAt) => {
+      try {
+        await runDuplicateSweep(
+          duplicateSweep,
+          { sweepId, startedAt },
+          config.duplicateDetection.sweep.segments,
+        );
+      } catch (error) {
+        logger.error('Duplicate sweep failed', {
+          errorName: error instanceof Error ? error.name : typeof error,
+        });
+        throw error;
+      }
+    },
+  });
+  const duplicateReportService = new DuplicateReportService({
+    reports: duplicateReports,
+    counters,
+    transactor,
+    audit,
+    clock,
+    starter: sweepStarter,
+    detection: duplicateDetection,
+  });
+
   // ---- connectors (import pipeline on the same stores) ---------------------------------------
   const pipeline = new ImportPipeline({
     listingSchema: buildSchemas(config.taxonomy, config.locales).listing,
@@ -290,6 +379,10 @@ export function createDevPlatform(options: DevPlatformOptions) {
     writer,
     piiAllowlist: config.piiAllowlist,
     tourProviders: config.tourProviders,
+    taxonomy: config.taxonomy,
+    duplicates: detector,
+    detection: duplicateDetection,
+    clock,
   });
   const connectorFramework = new ConnectorFramework({
     registry: new ConnectorRegistry(options.connectorModules ?? []),
@@ -370,12 +463,9 @@ export function createDevPlatform(options: DevPlatformOptions) {
       deletionTargets: () => deletionListings,
       reload,
     }),
+    ...createDuplicateRoutes({ service: () => duplicateReportService }),
   ];
   routes.push(createOpenApiRoute(routes));
-  const logger = options.logger ?? {
-    error: (message: string, attributes: Record<string, unknown>) =>
-      console.error(message, attributes),
-  };
   const management: ManagementHandler = createManagementHandler({
     router: createRouter(routes),
     guard: createManagementAccessGuard({
@@ -412,6 +502,9 @@ export function createDevPlatform(options: DevPlatformOptions) {
       directory,
       apiKeys,
       deletionRequests,
+      duplicateIndex,
+      duplicateReports,
+      idempotency,
     },
     services: {
       agencies: agencyService,
@@ -422,6 +515,10 @@ export function createDevPlatform(options: DevPlatformOptions) {
       versions: versionService,
       writer,
       adminOperations,
+      duplicateReports: duplicateReportService,
+      duplicateDetection,
+      /** Waits for a running Duplikat_Abgleich (tests). */
+      sweepIdle: () => sweepStarter.idle(),
     },
     runConnector: connectorFramework.runConnector.bind(connectorFramework),
   };

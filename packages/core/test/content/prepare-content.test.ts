@@ -1,10 +1,11 @@
 import {
+  bindAttributes,
   contentRules,
   prepareContent,
   TOUR_HOST_NOT_ALLOWED,
   toFieldIssues,
 } from '@open-estate/core';
-import { Contact, Media, PII_FIELD_PATHS, Tour } from '@open-estate/shared';
+import { assertValidTaxonomy, Contact, Media, PII_FIELD_PATHS, Tour } from '@open-estate/shared';
 import fc from 'fast-check';
 import { z } from 'zod';
 
@@ -50,6 +51,7 @@ describe('prepareContent', () => {
         tours: [{ url: 'https://my.matterport.com/show/?m=1', providerCode: 'matterport' }],
       },
       droppedPii: ['contact.phone', 'contact.email'],
+      droppedAttributes: [],
       mediaDrops: [
         { kind: 'media', index: 1, reason: 'URL scheme is not https' },
         {
@@ -138,5 +140,62 @@ describe('toFieldIssues', () => {
     expect(toFieldIssues(issuesOf(null))).toEqual([
       { field: 'record', reason: expect.any(String) },
     ]);
+  });
+});
+
+// Merkmalsbindung (duplicate-detection Req 2.5).
+describe('prepareContent: Objektmerkmale per property group', () => {
+  const taxonomy = assertValidTaxonomy({
+    groups: [
+      { code: 'apartment', types: ['loft'], attributes: ['floor', 'address.unit'] },
+      { code: 'land', types: ['plot'], attributes: ['plotArea'] },
+    ],
+  });
+  const bound = contentRules({ tourProviders: { providers: [] }, taxonomy });
+  const attributeSchema = z.object({
+    listingType: z.string(),
+    address: z.object({ city: z.string(), unit: z.string().optional() }),
+    floor: z.number().optional(),
+    plotArea: z.string().optional(),
+    media: z.array(Media),
+    tours: z.array(Tour),
+  });
+
+  it('keeps allowed merkmale and drops the others, naming them without values', () => {
+    const input = {
+      listingType: 'plot',
+      address: { city: 'Kiel', unit: 'Whg. 3' },
+      floor: 2,
+      plotArea: '500.00',
+    };
+    const result = prepareContent(input, attributeSchema, bound);
+
+    expect(result).toMatchObject({
+      ok: true,
+      content: { listingType: 'plot', address: { city: 'Kiel' }, plotArea: '500.00' },
+    });
+    expect(result.ok && 'floor' in result.content).toBe(false);
+    expect(result.droppedAttributes).toEqual(['address.unit', 'floor']);
+    // The input is not modified.
+    expect(input.address.unit).toBe('Whg. 3');
+  });
+
+  it('keeps everything allowed for the group and drops nothing', () => {
+    const result = prepareContent(
+      { listingType: 'loft', address: { city: 'Kiel', unit: '3' }, floor: 4 },
+      attributeSchema,
+      bound,
+    );
+    expect(result).toMatchObject({ ok: true, content: { address: { unit: '3' }, floor: 4 } });
+    expect(result.droppedAttributes).toEqual([]);
+  });
+
+  it('leaves a listing type outside the taxonomy to the schema', () => {
+    const result = bindAttributes({ listingType: 'castle', floor: 4 }, taxonomy);
+    expect(result).toEqual({ candidate: { listingType: 'castle', floor: 4 }, dropped: [] });
+  });
+
+  it('drops nothing without a taxonomy', () => {
+    expect(bindAttributes({ listingType: 'plot', floor: 4 }, undefined).dropped).toEqual([]);
   });
 });

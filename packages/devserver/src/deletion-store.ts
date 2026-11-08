@@ -14,6 +14,7 @@ import {
   type InMemoryMetricCounterStore,
   type InMemoryOp,
 } from '@open-estate/core';
+import { flagCodes } from '@open-estate/shared';
 
 // DEV ONLY: deletion side of the in-memory `Listings` table. The admin package's
 // `InMemoryDeletionListingStore` keeps its own map; this adapter works on the managed listing
@@ -59,6 +60,7 @@ export class ManagedDeletionListingStore implements VersionedDeletionListingStor
       status: management.status,
       ...(management.agencyId !== undefined && { agencyId: management.agencyId }),
       ...(management.customId !== undefined && { customId: management.customId }),
+      ...(management.flags !== undefined && { flagCodes: flagCodes(management.flags) }),
     };
   }
 

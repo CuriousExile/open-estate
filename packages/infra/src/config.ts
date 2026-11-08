@@ -4,9 +4,12 @@ import { PriceClass } from 'aws-cdk-lib/aws-cloudfront';
 import {
   ACCESS_MODES,
   DEFAULT_ACCESS_MODE,
+  DEFAULT_DUPLICATE_DETECTION_MODE,
   DEFAULT_RATE_LIMIT,
+  DUPLICATE_DETECTION_MODES,
   rateLimitSchema,
   type AccessMode,
+  type DuplicateDetectionMode,
   type RateLimit,
 } from '@open-estate/core';
 import { parseOriginList } from '@open-estate/api';
@@ -114,6 +117,11 @@ export interface PlatformSettings {
   readonly defaultCurrency: string;
   readonly accessMode: AccessMode;
   readonly rateLimit: RateLimit;
+  /**
+   * Initial Ein/Aus of the Duplikat-Erkennung (SSM `duplicate-detection`); a Plattform_Admin
+   * switches it at runtime in the admin mode (duplicate-detection design: "Ein- und Ausschalten").
+   */
+  readonly duplicateDetection: DuplicateDetectionMode;
   readonly searchProvider: SearchProviderKind;
   /** Absolute path of the directory whose files are validated and uploaded to the config bucket. */
   readonly configDir: string;
@@ -141,6 +149,7 @@ export const DEFAULT_PLATFORM_SETTINGS: PlatformSettings = {
   defaultCurrency: 'EUR',
   accessMode: DEFAULT_ACCESS_MODE,
   rateLimit: DEFAULT_RATE_LIMIT,
+  duplicateDetection: DEFAULT_DUPLICATE_DETECTION_MODE,
   searchProvider: 'dynamodb',
   configDir: DEFAULT_CONFIG_DIR,
   i18nConfigFile: DEFAULT_I18N_CONFIG_FILE,
@@ -157,6 +166,8 @@ export const SETTINGS_CONTEXT_KEYS = {
   accessMode: 'accessMode',
   /** JSON in the format of the SSM parameter: `{"requests":N,"windowSeconds":W}`. */
   rateLimit: 'rateLimit',
+  /** `enabled` (default) or `disabled`, e.g. `-c duplicateDetection=disabled`. */
+  duplicateDetection: 'duplicateDetection',
   searchProvider: 'searchProvider',
   /** Relative paths resolve against the current working directory. */
   configDir: 'configDir',
@@ -262,6 +273,11 @@ export function resolvePlatformSettings(getContext: (key: string) => unknown): P
     defaultCurrency: pick(keys.defaultCurrency, parseCurrency, defaults.defaultCurrency),
     accessMode: pick(keys.accessMode, parseEnum(ACCESS_MODES), defaults.accessMode),
     rateLimit: pick(keys.rateLimit, parseRateLimit, defaults.rateLimit),
+    duplicateDetection: pick(
+      keys.duplicateDetection,
+      parseEnum(DUPLICATE_DETECTION_MODES),
+      defaults.duplicateDetection,
+    ),
     searchProvider: pick(keys.searchProvider, parseEnum(SEARCH_PROVIDERS), defaults.searchProvider),
     configDir: pick(keys.configDir, parsePath('a directory path'), defaults.configDir),
     i18nConfigFile: pick(keys.i18nConfigFile, parsePath('a file path'), defaults.i18nConfigFile),

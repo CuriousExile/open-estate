@@ -1,10 +1,12 @@
 import { S3Client } from '@aws-sdk/client-s3';
 import {
   CONFIG_BUCKET_ENV,
-  ConfigError,
   contentRules,
+  DuplicateDetector,
   DynamoDbAgencyStore,
   DynamoDbDeletionBlocklistCheck,
+  DynamoDbDuplicateIndexStore,
+  DynamoDbIdempotencyStore,
   DynamoDbListingKeyStore,
   DynamoDbListingVersionStore,
   DynamoDbManagedListingStore,
@@ -13,6 +15,8 @@ import {
   ListingCommandService,
   ListingQueryService,
   loadConfig,
+  loadDuplicateConfig,
+  loadOptionalConfigFile,
   manualContentSchema,
   READ_MODEL_CONFIG_FILES,
   READ_MODEL_ENV,
@@ -23,11 +27,11 @@ import {
 } from '@open-estate/core';
 import {
   assertValidTaxonomy,
+  DUPLICATE_CONFIG_FILE,
   PiiAllowlistConfig,
   TaxonomyConfig,
   TourProvidersConfig,
 } from '@open-estate/shared';
-import type { ZodType } from 'zod';
 import { MANAGEMENT_ENV, readEnv } from '../../env';
 import type { RouteGroupContext } from '../route-group';
 
@@ -47,6 +51,10 @@ export const LISTING_ROUTES_ENV = {
   snapshotBucket: 'SNAPSHOT_BUCKET_NAME',
   /** Private config bucket with taxonomy, tour and PII allow-lists. */
   configBucket: CONFIG_BUCKET_ENV,
+  /** Duplikat_Index of the Duplikat_Prüfung (duplicate-detection Req 5, 6). */
+  duplicateIndexTable: 'DUPLICATE_INDEX_TABLE_NAME',
+  /** Idempotenzschlüssel of `POST /listings` (duplicate-detection Req 9.2). */
+  idempotencyKeysTable: 'IDEMPOTENCY_KEYS_TABLE_NAME',
 } as const;
 
 /** Files of the config bucket the listing commands validate against. */
@@ -56,11 +64,19 @@ export const LISTING_CONFIG_FILES = {
   tourProviders: READ_MODEL_CONFIG_FILES.tourProviders,
   /** Optional: missing ⇒ every PII field is dropped (same key as the connector Lambda). */
   piiAllowlist: 'pii-allowlist.json',
+  /** Optional: missing ⇒ the documented defaults of the Duplikat_Bewertung. */
+  duplicateDetection: DUPLICATE_CONFIG_FILE,
 } as const;
 
 export type ListingCommands = Pick<
   ListingCommandService,
-  'create' | 'replaceContent' | 'setStatus' | 'assignAgency' | 'restore'
+  | 'create'
+  | 'createWithKey'
+  | 'replaceContent'
+  | 'setStatus'
+  | 'assignAgency'
+  | 'restore'
+  | 'dismissFlag'
 >;
 
 /** Use cases behind the listing routes. */
@@ -77,26 +93,6 @@ export interface ListingServices {
 export interface ListingServiceOptions {
   /** Default: SDK defaults (region and credentials from the environment). */
   s3?: S3Client;
-}
-
-/** Optional config file: missing yields `fallback`, invalid throws `ConfigError`. */
-async function loadOptional<T>(
-  key: string,
-  schema: ZodType<T>,
-  fallback: T,
-  sources: ConfigSources,
-): Promise<T> {
-  try {
-    return (await loadConfig({ files: [key] }, sources)).loadJson(key, schema);
-  } catch (error) {
-    const onlyThisFileMissing =
-      error instanceof ConfigError &&
-      error.code === 'CONFIG_MISSING' &&
-      error.names.length === 1 &&
-      error.names[0] === key;
-    if (onlyThisFileMissing) return fallback;
-    throw error;
-  }
 }
 
 /** Memoized `load`; a rejection is not cached, so the next call loads again. */
@@ -130,27 +126,48 @@ export function createListingServices(
   const keys = new DynamoDbListingKeyStore(table(names.listingKeysTable));
   const snapshots = new S3SnapshotStore({ client: s3, bucketName: names.snapshotBucket });
   const agencies = new DynamoDbAgencyStore(table(names.agenciesTable));
-  const writer = new VersionedListingWriter({
-    listings,
-    versions,
-    keys,
-    blocklist: new DynamoDbDeletionBlocklistCheck({ tableName: names.deletionBlocklistTable }),
-    counters: new DynamoDbMetricCounterStore(table(names.metricCountersTable)),
-    snapshots,
-    transactor: new DynamoDbTransactor({ client: dynamo }),
-    clock: shared.clock,
-  });
+  const duplicateIndex = new DynamoDbDuplicateIndexStore(table(names.duplicateIndexTable));
+  const idempotency = new DynamoDbIdempotencyStore(table(names.idempotencyKeysTable));
   const { audit, frontendOrigin } = shared;
 
   const configSources: ConfigSources = { env, s3, ssm: clients.ssm };
   const files = LISTING_CONFIG_FILES;
   const commands = retryingOnce(async (): Promise<ListingCommands> => {
-    const [config, tourProviders, piiAllowlist] = await Promise.all([
+    const [config, tourProviders, piiAllowlist, duplicateConfig] = await Promise.all([
       loadConfig({ files: [files.taxonomy] }, configSources),
-      loadOptional(files.tourProviders, TourProvidersConfig, { providers: [] }, configSources),
-      loadOptional(files.piiAllowlist, PiiAllowlistConfig, { allowedFields: [] }, configSources),
+      loadOptionalConfigFile(
+        files.tourProviders,
+        TourProvidersConfig,
+        { providers: [] },
+        configSources,
+      ),
+      loadOptionalConfigFile(
+        files.piiAllowlist,
+        PiiAllowlistConfig,
+        { allowedFields: [] },
+        configSources,
+      ),
+      loadDuplicateConfig(configSources),
     ]);
     const taxonomy = assertValidTaxonomy(config.loadJson(files.taxonomy, TaxonomyConfig));
+    // The writer keeps the Duplikat_Index in step; it needs the same rules as the check.
+    const detector = new DuplicateDetector({
+      index: duplicateIndex,
+      taxonomy,
+      config: duplicateConfig,
+    });
+    const writer = new VersionedListingWriter({
+      listings,
+      versions,
+      keys,
+      blocklist: new DynamoDbDeletionBlocklistCheck({ tableName: names.deletionBlocklistTable }),
+      counters: new DynamoDbMetricCounterStore(table(names.metricCountersTable)),
+      snapshots,
+      transactor: new DynamoDbTransactor({ client: dynamo }),
+      clock: shared.clock,
+      duplicates: { index: duplicateIndex, detector, frontendOrigin },
+      idempotency,
+    });
     return new ListingCommandService({
       listings,
       versions,
@@ -160,7 +177,11 @@ export function createListingServices(
       audit,
       frontendOrigin,
       contentSchema: manualContentSchema(taxonomy),
-      rules: contentRules({ tourProviders, piiAllowlist }),
+      rules: contentRules({ tourProviders, piiAllowlist, taxonomy }),
+      duplicates: detector,
+      ...(shared.duplicateDetection !== undefined && { detection: shared.duplicateDetection }),
+      idempotency,
+      clock: shared.clock,
     });
   });
   // Start loading during init; a failure is reported by (and retried on) the first write.

@@ -77,6 +77,7 @@ function toApiContent(content: ListingContent, short: boolean): ListingContentIn
   return {
     ...content,
     area: toDecimal(content.area, short),
+    ...(content.plotArea !== undefined && { plotArea: toDecimal(content.plotArea, short) }),
     offers: content.offers.map((offer) => offerToApi(offer, short)),
   } as unknown as ListingContentInput;
 }

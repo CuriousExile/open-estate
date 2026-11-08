@@ -19,7 +19,15 @@ function toInput(listing: Listing): ListingInput {
       ...(warmRent === undefined ? {} : { warmRent: formatDecimal(warmRent) }),
     };
   };
-  return { ...listing, offers: listing.offers.map(offer), area: formatDecimal(listing.area) };
+  // Objektmerkmal `plotArea` is a decimal string in the API representation, too; it is taken
+  // out of the spread so the optional field does not keep its internal number type.
+  const { plotArea, ...rest } = listing;
+  return {
+    ...rest,
+    offers: listing.offers.map(offer),
+    area: formatDecimal(listing.area),
+    ...(plotArea === undefined ? {} : { plotArea: formatDecimal(plotArea) }),
+  };
 }
 
 const offerTypes = (listing: Listing): OfferType[] => listing.offers.map((o) => o.offerType);

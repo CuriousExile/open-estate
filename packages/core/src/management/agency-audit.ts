@@ -5,6 +5,7 @@ import {
   type Channel,
   type Decision,
   type DryRunResponse,
+  type FlagAuditDetails,
   type Principal,
   type Result,
 } from '@open-estate/shared';
@@ -96,6 +97,20 @@ export class AgencyAuditTrail<A extends string = AgencyAuditAction> {
     return this.append(actor, action, target, agencyId, result);
   }
 
+  /**
+   * Audits a change of a Markierung (duplicate-detection Req 7.7) with its codes; `details` holds
+   * codes and listing ids only.
+   */
+  flagChange(
+    actor: AgencyActor,
+    action: A,
+    target: string,
+    agencyId: string | undefined,
+    details: FlagAuditDetails,
+  ): Promise<void> {
+    return this.append(actor, action, target, agencyId, 'SUCCESS', details);
+  }
+
   /** Audits the first error code and returns the errors as failed result. */
   async reject<T>(
     actor: AgencyActor,
@@ -114,6 +129,7 @@ export class AgencyAuditTrail<A extends string = AgencyAuditAction> {
     target: string,
     agencyId: string | undefined,
     result: string,
+    details?: FlagAuditDetails,
   ): Promise<void> {
     await this.audit.append({
       category: result === 'FORBIDDEN' ? 'access-denied' : 'management',
@@ -123,6 +139,7 @@ export class AgencyAuditTrail<A extends string = AgencyAuditAction> {
       target,
       ...(agencyId !== undefined && { agencyId }),
       result,
+      ...(details !== undefined && { details }),
     });
   }
 }

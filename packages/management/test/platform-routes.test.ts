@@ -26,6 +26,7 @@ import {
   parseFunctionNames,
   PLATFORM_ENV,
   platformDepsFromEnv,
+  withSelf,
   withSignal,
   type PlatformDeps,
 } from '../src/routes/platform';
@@ -412,6 +413,43 @@ describe('platformDepsFromEnv', () => {
     ]);
     const options = send.mock.calls[0]?.[1] as { abortSignal?: unknown } | undefined;
     expect(options?.abortSignal).toBe(controller.signal);
+  });
+
+  it('reloads the management function itself last, so it picks up the new configuration', async () => {
+    const clients = awsClients();
+    jest
+      .spyOn(clients.lambda, 'send')
+      .mockImplementation(async () => Promise.reject(new Error('denied')));
+    const deps = platformDepsFromEnv(
+      context({ ...ENV, AWS_LAMBDA_FUNCTION_NAME: 'mgmt' }),
+      clients,
+    );
+
+    const outcomes = await deps.reload(new AbortController().signal);
+
+    expect(outcomes.map((o) => o.functionName)).toEqual(['api', 'mcp', 'connector-x', 'mgmt']);
+  });
+});
+
+describe('withSelf', () => {
+  it('appends the own function name as the last reload target', () => {
+    expect(withSelf(['api', 'mcp'], { AWS_LAMBDA_FUNCTION_NAME: 'mgmt' })).toEqual([
+      'api',
+      'mcp',
+      'mgmt',
+    ]);
+  });
+
+  it('moves an already listed own function to the end without duplicating it', () => {
+    expect(withSelf(['mgmt', 'api'], { AWS_LAMBDA_FUNCTION_NAME: 'mgmt' })).toEqual([
+      'api',
+      'mgmt',
+    ]);
+  });
+
+  it('leaves the list unchanged outside Lambda', () => {
+    expect(withSelf(['api'], {})).toEqual(['api']);
+    expect(withSelf(['api'], { AWS_LAMBDA_FUNCTION_NAME: ' ' })).toEqual(['api']);
   });
 });
 

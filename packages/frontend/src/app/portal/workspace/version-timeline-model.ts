@@ -20,6 +20,11 @@ export interface TimelineItem {
   readonly overwrittenPaths: readonly string[];
   /** The listing's current version. */
   readonly current: boolean;
+  /**
+   * Stored INACTIVE although requested otherwise: automatically deactivated as a possible
+   * duplicate of `originalId` (duplicate-detection Req 5.4, 13.4).
+   */
+  readonly autoDeactivated?: { readonly originalId: string };
 }
 
 export function toTimelineItem(entry: ParsedVersionEntry, currentVersion: number): TimelineItem {
@@ -40,6 +45,9 @@ export function toTimelineItem(entry: ParsedVersionEntry, currentVersion: number
     changedPaths: entry.changedPaths.map((c) => c.path),
     overwrittenPaths: entry.changedPaths.filter((c) => c.overwrittenByImport).map((c) => c.path),
     current: entry.version === currentVersion,
+    ...(entry.statusReason?.code === 'DUPLICATE' && {
+      autoDeactivated: { originalId: entry.statusReason.originalId },
+    }),
   };
 }
 

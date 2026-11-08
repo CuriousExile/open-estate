@@ -8,6 +8,7 @@ import {
   DELETION_REQUESTS_KEY_ATTRIBUTE,
   DynamoDbListingKeyStore,
   DynamoDbMetricCounterStore,
+  LISTING_FLAG_CODES_ATTRIBUTE,
   LISTINGS_BY_SOURCE_INDEX,
   type DeletionListingStore,
   type InMemoryListingKeyStore,
@@ -29,6 +30,8 @@ export interface DeletionListingState extends DeletionTarget {
   status?: string;
   agencyId?: string;
   customId?: string;
+  /** Markierungscodes (`flagCodes` attribute); the flag counter is decremented for them. */
+  flagCodes?: string[];
 }
 
 /** Custom_Id key of the `ListingKeys` table: `{owner}#{customId}`, owner `_none` without agency. */
@@ -62,7 +65,7 @@ export interface VersionedDeletionListingStore extends DeletionListingStore {
 
 /** Key data of a stored listing; a `Map<string, Listing>` is accepted as backing store too. */
 export type StoredListingKey = Pick<Listing, 'id' | 'source'> &
-  Partial<Pick<DeletionListingState, 'status' | 'agencyId' | 'customId'>>;
+  Partial<Pick<DeletionListingState, 'status' | 'agencyId' | 'customId' | 'flagCodes'>>;
 
 export interface InMemoryDeletionListingStoreOptions {
   /** Request store whose `removedCount` is incremented on removal. */
@@ -127,6 +130,7 @@ export class InMemoryDeletionListingStore implements VersionedDeletionListingSto
       ...(listing.status !== undefined && { status: listing.status }),
       ...(listing.agencyId !== undefined && { agencyId: listing.agencyId }),
       ...(listing.customId !== undefined && { customId: listing.customId }),
+      ...(listing.flagCodes !== undefined && { flagCodes: [...listing.flagCodes] }),
     };
   }
 
@@ -233,13 +237,14 @@ export class DynamoDbDeletionListingStore implements VersionedDeletionListingSto
       new GetCommand({
         TableName: this.listingsTable,
         Key: { id: listingId },
-        ProjectionExpression: '#id, #source, #status, #agencyId, #customId',
+        ProjectionExpression: '#id, #source, #status, #agencyId, #customId, #flagCodes',
         ExpressionAttributeNames: {
           '#id': 'id',
           '#source': 'source',
           '#status': 'status',
           '#agencyId': 'agencyId',
           '#customId': 'customId',
+          '#flagCodes': LISTING_FLAG_CODES_ATTRIBUTE,
         },
         ConsistentRead: true,
       }),
@@ -248,12 +253,14 @@ export class DynamoDbDeletionListingStore implements VersionedDeletionListingSto
     if (item === undefined) return null;
     const optional = (name: string) =>
       typeof item[name] === 'string' ? { [name]: item[name] as string } : {};
+    const flagCodes = item[LISTING_FLAG_CODES_ATTRIBUTE];
     return {
       listingId,
       source: String(item['source']),
       ...optional('status'),
       ...optional('agencyId'),
       ...optional('customId'),
+      ...(Array.isArray(flagCodes) && { flagCodes: flagCodes.map(String) }),
     };
   }
 

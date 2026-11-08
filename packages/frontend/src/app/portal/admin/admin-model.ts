@@ -93,7 +93,11 @@ export interface DryRunData {
 }
 
 export type DestructiveAction =
-  'deletion' | 'suspendAgency' | 'removePlatformAdmin' | 'revokeApiKey';
+  | 'deletion'
+  | 'suspendAgency'
+  | 'removePlatformAdmin'
+  | 'revokeApiKey'
+  | 'disableDuplicateDetection';
 
 export interface TranslatedText {
   readonly key: string;
@@ -523,7 +527,8 @@ export type ActorData =
   | { kind: 'user'; userId: string; displayName: string }
   | { kind: 'machine'; keyId: string; label: string }
   | { kind: 'connector'; connectorId: string; runId: string }
-  | { kind: 'iam'; userArn: string };
+  | { kind: 'iam'; userArn: string }
+  | { kind: 'system'; job: string; runId: string };
 
 export function actorText(actor: ActorData | undefined): { kindKey: string; name: string } {
   if (actor === undefined) return { kindKey: 'portal.admin.auditLog.actor.none', name: '' };
@@ -537,5 +542,63 @@ export function actorText(actor: ActorData | undefined): { kindKey: string; name
       return { kindKey, name: actor.connectorId };
     case 'iam':
       return { kindKey, name: actor.userArn };
+    case 'system':
+      return { kindKey, name: actor.job };
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Ein/Aus of the Duplikat-Erkennung (duplicate-detection design: "Ein- und Ausschalten")
+// ---------------------------------------------------------------------------------------------
+
+/** Answer of `GET`/`PUT /platform/duplicate-detection` (`DuplicateDetectionView`). */
+export interface DuplicateDetectionData {
+  readonly enabled: boolean;
+  readonly sweep?: { readonly executionName: string; readonly alreadyRunning: boolean } | undefined;
+}
+
+/** What the operations view shows for the switch. */
+export interface DuplicateDetectionState {
+  readonly enabled: boolean;
+  readonly statusKey: string;
+  /** Label of the button: the change it makes. */
+  readonly actionKey: string;
+}
+
+export function toDuplicateDetectionState({
+  enabled,
+}: DuplicateDetectionData): DuplicateDetectionState {
+  return {
+    enabled,
+    statusKey: enabled ? 'portal.admin.ops.duplicates.on' : 'portal.admin.ops.duplicates.off',
+    actionKey: enabled
+      ? 'portal.admin.ops.duplicates.disable'
+      : 'portal.admin.ops.duplicates.enable',
+  };
+}
+
+/**
+ * Success message after switching: off, or on with the started Duplikat_Abgleich that rebuilds the
+ * index (`sweep` absent: it could not be started; the daily run or a manual start catches up).
+ */
+export function duplicateDetectionSwitched(result: DuplicateDetectionData): TranslatedText {
+  if (!result.enabled) return { key: 'portal.admin.ops.duplicates.switchedOff' };
+  if (result.sweep === undefined) return { key: 'portal.admin.ops.duplicates.switchedOnNoSweep' };
+  return {
+    key: 'portal.admin.ops.duplicates.switchedOn',
+    params: { name: result.sweep.executionName },
+  };
+}
+
+/** Dialog before switching the Duplikat-Erkennung off: what stops and what stays. */
+export function disableDuplicateDetectionConfirmation(): Confirmation {
+  return {
+    action: 'disableDuplicateDetection',
+    title: { key: 'portal.admin.confirm.disableDuplicateDetection' },
+    lines: [
+      { key: 'portal.admin.ops.duplicates.offEffect' },
+      { key: 'portal.admin.ops.duplicates.offKeeps' },
+    ],
+    confirmKey: 'portal.admin.confirm.do.disableDuplicateDetection',
+  };
 }

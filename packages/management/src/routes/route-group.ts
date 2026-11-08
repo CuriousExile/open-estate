@@ -1,6 +1,6 @@
 import type { SSMClient } from '@aws-sdk/client-ssm';
 import type { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import type { AuditService, Clock } from '@open-estate/core';
+import type { AuditService, Clock, DuplicateDetectionSetting } from '@open-estate/core';
 import type { Route } from '../router';
 
 // Contract between the Lambda init and the route groups (identity/agencies, listings,
@@ -14,6 +14,11 @@ export interface SharedRouteDeps {
   /** Audit_Log write side (`management` / `access-denied` entries). */
   audit: AuditService;
   clock: Clock;
+  /**
+   * Ein/Aus of the Duplikat-Erkennung (one instance, so a switch is seen at once by the listing
+   * commands of this Lambda). Absent (tests): always on and not switchable.
+   */
+  duplicateDetection?: DuplicateDetectionSetting;
 }
 
 /** AWS clients shared by all groups (one instance per Lambda). */

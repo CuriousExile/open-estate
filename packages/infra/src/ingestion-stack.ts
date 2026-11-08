@@ -19,7 +19,11 @@ import {
   TaskInput,
 } from 'aws-cdk-lib/aws-stepfunctions';
 import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import { DEFAULT_METRICS_NAMESPACE, snapshotKey } from '@open-estate/core';
+import {
+  DEFAULT_METRICS_NAMESPACE,
+  DUPLICATE_INDEX_BY_BLOCK,
+  snapshotKey,
+} from '@open-estate/core';
 import {
   CONNECTOR_CONFIG_FILES,
   CONNECTOR_LAMBDA_ENV,
@@ -29,7 +33,7 @@ import {
   type ConnectorsFile,
 } from '@open-estate/ingestion';
 import { Construct } from 'constructs';
-import { observabilityEnvironment } from './api-stack';
+import { observabilityEnvironment, ssmParameterArn } from './api-stack';
 import type { ObservabilitySettings } from './config';
 import type { ConfigFile } from './config-files';
 
@@ -65,6 +69,8 @@ export interface ConnectorVersioningResources {
   /** Run summaries and rejections of the persisting run log (Req 13.2, 13.3). */
   readonly connectorRuns: ITableV2;
   readonly runRejections: ITableV2;
+  /** Duplikat_Index of the Duplikat_Prüfung of imports (duplicate-detection Req 5.1, 6.1). */
+  readonly duplicateIndex: ITableV2;
 }
 
 export interface IngestionStackProps extends StackProps {
@@ -75,6 +81,11 @@ export interface IngestionStackProps extends StackProps {
    * `app.ts`. Without it the functions get neither the variables nor the grants.
    */
   readonly versioning?: ConnectorVersioningResources;
+  /**
+   * SSM parameter with Ein/Aus of the Duplikat-Erkennung (`/open-estate/<env>/duplicate-detection`,
+   * duplicate-detection design: "Ein- und Ausschalten"). Without it imports always check.
+   */
+  readonly duplicateDetectionParameter?: string;
   /** Registrations from `connectors.json`; one schedule, state machine and Lambda each. */
   readonly connectors: ConnectorsFile;
   readonly removalPolicy: RemovalPolicy;
@@ -154,6 +165,9 @@ export class IngestionStack extends Stack {
         POWERTOOLS_METRICS_NAMESPACE: DEFAULT_METRICS_NAMESPACE,
         ...observabilityEnvironment(props.observability),
         ...versioningEnvironment(props.versioning),
+        ...(props.duplicateDetectionParameter !== undefined && {
+          [CONNECTOR_LAMBDA_ENV.duplicateDetectionParameter]: props.duplicateDetectionParameter,
+        }),
       },
       bundling: {
         // Local esbuild (pinned devDependency), never Docker.
@@ -284,6 +298,14 @@ function grantConnectorRun(
     );
   }
   if (props.versioning !== undefined) grantVersionedWrite(fn, props.tables, props.versioning);
+  if (props.duplicateDetectionParameter !== undefined) {
+    fn.addToRolePolicy(
+      new PolicyStatement({
+        actions: ['ssm:GetParameter', 'ssm:GetParameters'],
+        resources: [ssmParameterArn(Stack.of(fn), props.duplicateDetectionParameter)],
+      }),
+    );
+  }
 }
 
 /** Variables of the versioned write path (empty without it). */
@@ -298,6 +320,7 @@ function versioningEnvironment(
     [CONNECTOR_LAMBDA_ENV.snapshotBucket]: versioning.snapshotBucket.bucketName,
     [CONNECTOR_LAMBDA_ENV.connectorRunsTable]: versioning.connectorRuns.tableName,
     [CONNECTOR_LAMBDA_ENV.runRejectionsTable]: versioning.runRejections.tableName,
+    [CONNECTOR_LAMBDA_ENV.duplicateIndexTable]: versioning.duplicateIndex.tableName,
   };
 }
 
@@ -345,6 +368,26 @@ function grantVersionedWrite(
     new PolicyStatement({
       actions: ['dynamodb:PutItem', 'dynamodb:BatchWriteItem'],
       resources: [versioning.connectorRuns.tableArn, versioning.runRejections.tableArn],
+    }),
+  );
+  // Duplikat_Prüfung (duplicate-detection Req 5.1, 6.1): the detector reads profiles, exact keys
+  // and the `byBlock` index; the writer puts and deletes index items in its transaction.
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: [
+        'dynamodb:GetItem',
+        'dynamodb:BatchGetItem',
+        'dynamodb:PutItem',
+        'dynamodb:DeleteItem',
+        'dynamodb:ConditionCheckItem',
+      ],
+      resources: [versioning.duplicateIndex.tableArn],
+    }),
+  );
+  fn.addToRolePolicy(
+    new PolicyStatement({
+      actions: ['dynamodb:Query'],
+      resources: [`${versioning.duplicateIndex.tableArn}/index/${DUPLICATE_INDEX_BY_BLOCK}`],
     }),
   );
 }

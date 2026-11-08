@@ -146,6 +146,50 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
   merge (`MERGE`); built-in modules default to `REPLACE`. Agencies editing imported listings of a
   built-in connector lose manual changes unless `importMode: "MERGE"` is set.
 
+## Duplicate detection
+
+Open points of the duplicate detection ([`.kiro/specs/duplicate-detection/`](../.kiro/specs/duplicate-detection/)).
+
+- **Calibrated with synthetic pairs only.** Weights and threshold were checked against a catalog of
+  constructed pairs (`packages/shared/test/duplicates/calibration.test.ts`), not against real
+  agency data. Identical flats at one address without unit or floor are reported as possible
+  duplicates; expect some false positives until agencies fill in the property attributes.
+- **Parallel seeding flags nothing.** `npm run seed -- --concurrency <n>` and the load-test
+  generator (default 16) import in parallel; a duplicate created at the same time as its original
+  is not flagged at creation but by the next daily check (the same applies to concurrent API calls).
+- **Full daily check.** Every run reads every listing and asks the index for each one (about
+  2 USD per run for 1,000,000 listings, see the design's cost estimate). An incremental check of
+  changed neighbourhoods is not implemented. The throughput for 1,000,000 listings in 4 hours is
+  only calculated (≈ 26 listings/s per segment and phase), not measured on AWS.
+- **Reloading the Management API from the CLI needs a second policy.** `AdministratorPolicyArn`
+  (Admin stack) is created before the Management API exists; `open-estate-admin reload` of that
+  function also needs `ReloadPolicyArn` of the Management stack. `POST /platform/reload` needs
+  nothing extra.
+- **Switching the detection on again is not instant.** Writes made while it was off did not
+  maintain the duplicate index. Until the duplicate check started by switching it on has finished
+  (minutes to hours, depending on the stock), new listings are compared against the index as it
+  was; duplicates of listings created or changed meanwhile are only flagged by that check, and then
+  stay online. A check that is already running when the detection is switched off runs to its
+  end. Running functions see a switch within 60 seconds, so writes in that minute may still follow
+  the old value.
+- **Pairs across agencies are reported from the smaller listing id.** If the candidate limit
+  (`maxCandidates`) cuts a pair on that side only, the pair is missed.
+- **Stray block entries.** The check removes index entries of listings that no longer exist, but
+  not stray block items of an existing listing (they only arise from failed manual edits of the
+  table).
+- **Two concurrent manual starts** of the check may both start a run (the running-execution check
+  is not atomic); the second run finds nothing to do.
+- **Not verified against DynamoDB.** The guards on stored flags (`#flags = :expectedFlags`, list
+  equality) and the integration tests of task 15 (DynamoDB Local) did not run. No browser test of
+  the duplicate notice, the listing form's attribute section or the admin view exists.
+- **Markierungen of a moved Treffer.** When a platform admin assigns a listing to another agency,
+  the Markierungen of its former Treffer still name it until they are written again or the next
+  daily check renews them. Responses to agency actors leave such ids out (the oldest remaining
+  Treffer is shown as Original, or no Markierung if none remains), so no id of another agency is
+  shown, but the stored Markierung is stale for up to a day.
+- **An active, flagged listing set to `ACTIVE` again** is released like a dismissal (no version),
+  because there is no status change to record.
+
 ## Open tasks and housekeeping
 
 - Optional tests still open: 5.3, 6.2, 6.4, 6.6, 6.8, 6.9, 8.2, 8.3, 10.2, 10.3, 10.6, 11.2, 11.7,

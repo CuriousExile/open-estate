@@ -27,6 +27,9 @@ export const agencyScope = (agencyId: string | undefined): string =>
 
 export const listingScope = (listingId: string): string => `listing#${listingId}`;
 
+/** Scope of platform-wide counters that belong to no agency (e.g. agenturübergreifende Treffer). */
+export const PLATFORM_SCOPE = 'platform';
+
 /** Sort key: `code#current`, or `code#{day}` with `day` = `YYYY-MM-DD` (UTC). */
 export const counterSortKey = (code: string, day?: string): string => `${code}#${day ?? 'current'}`;
 

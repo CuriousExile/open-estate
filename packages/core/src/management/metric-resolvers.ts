@@ -20,6 +20,7 @@ import type { ManagedListingStore } from './listing-store';
 import {
   agencyScope,
   listingScope,
+  PLATFORM_SCOPE,
   NO_AGENCY_SCOPE_ID,
   type MetricCounterStore,
 } from './metric-counter-store';
@@ -63,7 +64,14 @@ export const METRIC_CODES = {
   responses: 'api.responses',
   versionCount: 'history.version_count',
   storageBytes: 'history.storage_bytes',
+  /** Listings with a Duplikat_Markierung (duplicate-detection Req 14.5). */
+  duplicateFlags: 'listing.duplicate_flags',
+  /** Agenturübergreifende Treffer in state `OPEN` (duplicate-detection Req 14.5). */
+  crossAgencyOpen: 'duplicate.cross_agency_open',
 } as const;
+
+/** Counter of `duplicate.cross_agency_open` in {@link PLATFORM_SCOPE}; set by the Duplikat_Abgleich. */
+export const CROSS_AGENCY_OPEN_COUNTER = 'duplicate.cross_agency_open';
 
 /** Daily counters are kept 100 days; longer periods are cut to the retained days. */
 export const MAX_COUNTER_DAYS = 100;
@@ -229,6 +237,52 @@ function listingCount(deps: MetricResolverDeps): MetricDefinition {
         dims: { status },
       }));
       return series(code, 'count', q.interval, points);
+    },
+  };
+}
+
+/**
+ * `listing.duplicate_flags`: current number of listings with a Duplikat_Markierung, one point at
+ * `to` (duplicate-detection Req 14.5); the writer keeps the counter in its transactions.
+ */
+function duplicateFlags(deps: MetricResolverDeps): MetricDefinition {
+  const code = METRIC_CODES.duplicateFlags;
+  return {
+    code,
+    description: 'Current number of listings flagged as possible duplicates',
+    unit: 'count',
+    scope: 'agency',
+    intervals: ['hour', 'day'],
+    dimensions: [],
+    async resolve(q, signal) {
+      const scopes = (await agencyScopes(deps, q, signal)).map(({ scope }) => scope);
+      const value = await sumCurrent(deps, scopes, LISTING_COUNTER_CODES.duplicateFlags, signal);
+      return series(code, 'count', q.interval, [{ t: isoOf(q.to), value }]);
+    },
+  };
+}
+
+/**
+ * `duplicate.cross_agency_open`: agenturübergreifende Treffer in state `OPEN` after the last
+ * Duplikat_Abgleich, one point at `to` (duplicate-detection Req 14.5).
+ */
+function crossAgencyOpen(deps: MetricResolverDeps): MetricDefinition {
+  const code = METRIC_CODES.crossAgencyOpen;
+  return {
+    code,
+    description: 'Open possible duplicates across agencies (last daily check)',
+    unit: 'count',
+    scope: 'platform',
+    intervals: ['hour', 'day'],
+    dimensions: [],
+    async resolve(q, signal) {
+      const value = await deps.counters.get(
+        PLATFORM_SCOPE,
+        CROSS_AGENCY_OPEN_COUNTER,
+        undefined,
+        signal,
+      );
+      return series(code, 'count', q.interval, [{ t: isoOf(q.to), value }]);
     },
   };
 }
@@ -612,6 +666,7 @@ export function createMetricDefinitions(deps: MetricResolverDeps): MetricDefinit
   return [
     listingCount(deps),
     listingChanges(deps),
+    duplicateFlags(deps),
     usage(deps, METRIC_CODES.detailViews, 'Detail views per day, total or per listing'),
     usage(deps, METRIC_CODES.searchImpressions, 'Search impressions per day, total or per listing'),
     connectorRuns(deps),
@@ -625,6 +680,7 @@ export function createMetricDefinitions(deps: MetricResolverDeps): MetricDefinit
       'bytes',
       'Storage of listing versions in bytes per agency',
     ),
+    crossAgencyOpen(deps),
   ];
 }
 

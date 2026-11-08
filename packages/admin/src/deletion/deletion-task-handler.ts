@@ -1,6 +1,15 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient } from '@aws-sdk/lib-dynamodb';
-import { ConfigError, DynamoDbS3ListingHistoryStore } from '@open-estate/core';
+import {
+  ConfigError,
+  duplicateDataPurge,
+  DynamoDbDuplicateIndexStore,
+  DynamoDbDuplicateReportStore,
+  DynamoDbIdempotencyStore,
+  DynamoDbMetricCounterStore,
+  DynamoDbTransactor,
+  DynamoDbS3ListingHistoryStore,
+} from '@open-estate/core';
 import { z } from 'zod';
 import { DynamoDbAuditLog } from '../audit-log';
 import { DynamoDbDeletionBlocklistStore } from './deletion-blocklist-store';
@@ -70,6 +79,10 @@ export const DELETION_HISTORY_ENV = {
   listingKeysTable: 'LISTING_KEYS_TABLE_NAME',
   metricCountersTable: 'METRIC_COUNTERS_TABLE_NAME',
   snapshotBucket: 'SNAPSHOT_BUCKET_NAME',
+  /** Duplikat-Erkennung's data of a listing, removed with it (duplicate-detection Req 12.3). */
+  duplicateIndexTable: 'DUPLICATE_INDEX_TABLE_NAME',
+  idempotencyKeysTable: 'IDEMPOTENCY_KEYS_TABLE_NAME',
+  duplicateReportsTable: 'DUPLICATE_REPORTS_TABLE_NAME',
 } as const;
 
 /** All variables of the deletion task Lambda. */
@@ -119,5 +132,24 @@ export function createDeletionWorkflowFromEnv(
       bucketName: config.snapshotBucket,
     }),
     audit: new DynamoDbAuditLog({ client: dynamo, tableName: config.auditLogTable }),
+    duplicates: duplicateDataPurge({
+      index: new DynamoDbDuplicateIndexStore({
+        client: dynamo,
+        tableName: config.duplicateIndexTable,
+      }),
+      idempotency: new DynamoDbIdempotencyStore({
+        client: dynamo,
+        tableName: config.idempotencyKeysTable,
+      }),
+      reports: new DynamoDbDuplicateReportStore({
+        client: dynamo,
+        tableName: config.duplicateReportsTable,
+      }),
+      counters: new DynamoDbMetricCounterStore({
+        client: dynamo,
+        tableName: config.metricCountersTable,
+      }),
+      transactor: new DynamoDbTransactor({ client: dynamo }),
+    }),
   });
 }

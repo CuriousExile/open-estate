@@ -6,11 +6,12 @@ import type { IUserPool, IUserPoolClient } from 'aws-cdk-lib/aws-cognito';
 import {
   AttributeType,
   Billing,
+  ProjectionType,
   TableV2,
   type GlobalSecondaryIndexPropsV2,
   type ITableV2,
 } from 'aws-cdk-lib/aws-dynamodb';
-import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { ManagedPolicy, Policy, PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { Key } from 'aws-cdk-lib/aws-kms';
 import type { IFunction } from 'aws-cdk-lib/aws-lambda';
 import type { NodejsFunction } from 'aws-cdk-lib/aws-lambda-nodejs';
@@ -24,11 +25,25 @@ import {
   type IBucket,
 } from 'aws-cdk-lib/aws-s3';
 import { BucketDeployment, CacheControl, Source } from 'aws-cdk-lib/aws-s3-deployment';
+import type { ITopic } from 'aws-cdk-lib/aws-sns';
 import { ParameterTier, StringParameter } from 'aws-cdk-lib/aws-ssm';
 import type { IStateMachine } from 'aws-cdk-lib/aws-stepfunctions';
 import { CfnWebACL, CfnWebACLAssociation } from 'aws-cdk-lib/aws-wafv2';
 import { ADMIN_ENV } from '@open-estate/admin';
 import {
+  DUPLICATE_INDEX_BLOCK_ATTRIBUTE,
+  DUPLICATE_INDEX_BLOCK_SK_ATTRIBUTE,
+  DUPLICATE_INDEX_BY_BLOCK,
+  DUPLICATE_INDEX_PK,
+  DUPLICATE_INDEX_SK,
+  DUPLICATE_REPORTS_BY_STATE,
+  DUPLICATE_REPORTS_PK,
+  DUPLICATE_REPORTS_STATE_ATTRIBUTE,
+  DUPLICATE_REPORTS_STATE_SK_ATTRIBUTE,
+  IDEMPOTENCY_KEYS_BY_LISTING,
+  IDEMPOTENCY_KEYS_LISTING_ATTRIBUTE,
+  IDEMPOTENCY_KEYS_PK,
+  IDEMPOTENCY_KEYS_TTL_ATTRIBUTE,
   AGENCIES_BY_STATE_INDEX,
   AGENCIES_BY_STATE_PK_ATTRIBUTE,
   AGENCIES_BY_STATE_SK_ATTRIBUTE,
@@ -71,7 +86,7 @@ import {
   type RateLimit,
 } from '@open-estate/core';
 import { FRONTEND_ORIGIN_VALUE, MANAGEMENT_ENV } from '@open-estate/management';
-import type { ErrorResponse } from '@open-estate/shared';
+import { DUPLICATE_CONFIG_FILE, type ErrorResponse } from '@open-estate/shared';
 import type { Construct } from 'constructs';
 import type { DeletionHistoryResources } from './admin-stack';
 import {
@@ -84,6 +99,7 @@ import { WAF_RATE_LIMIT_WINDOW_SECONDS, type ObservabilitySettings } from './con
 import type { SsmParameterNames } from './data-stack';
 import { FRONTEND_RUNTIME_FILES, NO_CACHE_CONTROL } from './frontend-stack';
 import { cognitoPortalOrigins, PlatformAdminBootstrap } from './identity-stack';
+import { DuplicateSweepWorkflow, type DuplicateSweepSettings } from './duplicate-sweep';
 import type { ConnectorVersioningResources } from './ingestion-stack';
 import { MANAGEMENT_CORS_ENV, MANAGEMENT_CORS_EXPOSED_HEADERS } from './lambda/management-cors';
 
@@ -142,7 +158,7 @@ const MANAGEMENT_LAMBDA_TIMEOUT = Duration.seconds(10);
 
 /**
  * Variables of the route groups of the management Lambda, besides {@link MANAGEMENT_ENV}. Mirrors
- * `IDENTITY_ENV`, `LISTING_ROUTES_ENV`, `MONITORING_ENV` and `PLATFORM_ENV` of
+ * `IDENTITY_ENV`, `LISTING_ROUTES_ENV`, `MONITORING_ENV`, `PLATFORM_ENV` and `DUPLICATES_ENV` of
  * `@open-estate/management`, which its package index does not export; `management-stack.test.ts`
  * compares both, so a renamed or added variable fails the infra tests.
  */
@@ -164,6 +180,8 @@ export const MANAGEMENT_ROUTE_ENV = {
     agenciesTable: MANAGEMENT_ENV.agenciesTable,
     snapshotBucket: 'SNAPSHOT_BUCKET_NAME',
     configBucket: CONFIG_BUCKET_ENV,
+    duplicateIndexTable: 'DUPLICATE_INDEX_TABLE_NAME',
+    idempotencyKeysTable: 'IDEMPOTENCY_KEYS_TABLE_NAME',
   },
   monitoring: {
     listingsTable: 'LISTINGS_TABLE_NAME',
@@ -174,6 +192,11 @@ export const MANAGEMENT_ROUTE_ENV = {
     alarmNamePrefix: 'ALARM_NAME_PREFIX',
   },
   platform: { ...ADMIN_ENV, reloadFunctions: 'RELOAD_FUNCTION_NAMES' },
+  duplicates: {
+    duplicateReportsTable: 'DUPLICATE_REPORTS_TABLE_NAME',
+    metricCountersTable: 'METRIC_COUNTERS_TABLE_NAME',
+    duplicateSweepStateMachineArn: 'DUPLICATE_SWEEP_STATE_MACHINE_ARN',
+  },
 } as const;
 
 /** Config-bucket files the listing commands validate against (`LISTING_CONFIG_FILES`). */
@@ -181,6 +204,7 @@ export const MANAGEMENT_CONFIG_FILES = {
   taxonomy: READ_MODEL_CONFIG_FILES.taxonomy,
   tourProviders: READ_MODEL_CONFIG_FILES.tourProviders,
   piiAllowlist: 'pii-allowlist.json',
+  duplicateDetection: DUPLICATE_CONFIG_FILE,
 } as const;
 
 // ---------------------------------------------------------------------------------------------
@@ -209,6 +233,18 @@ export class ManagementDataStack extends Stack {
   readonly metricCountersTable: TableV2;
   readonly connectorRunsTable: TableV2;
   readonly runRejectionsTable: TableV2;
+  /**
+   * Duplikat_Index (duplicate-detection design: "Duplikat_Index"): profiles, block items and exact
+   * keys; GSI `byBlock` finds the candidates of a block key, KEYS_ONLY.
+   */
+  readonly duplicateIndexTable: TableV2;
+  /** Idempotenzschlüssel of `POST /listings`, TTL 24 h; GSI `byListing` for deletions. */
+  readonly idempotencyKeysTable: TableV2;
+  /**
+   * Agenturübergreifende_Treffer of the Duplikat_Abgleich; GSI `byState` lists one state by
+   * descending score (projection ALL: the list shows every attribute).
+   */
+  readonly duplicateReportsTable: TableV2;
   readonly snapshotKey: Key;
   /**
    * Content-addressed snapshots `listings/{id}/{contentHash}.json`: SSE-KMS, Block Public Access
@@ -305,6 +341,40 @@ export class ManagementDataStack extends Stack {
       timeToLiveAttribute: CONNECTOR_RUNS_TTL_ATTRIBUTE,
     });
 
+    this.duplicateIndexTable = table('DuplicateIndex', {
+      partitionKey: string(DUPLICATE_INDEX_PK),
+      sortKey: string(DUPLICATE_INDEX_SK),
+      globalSecondaryIndexes: [
+        {
+          indexName: DUPLICATE_INDEX_BY_BLOCK,
+          partitionKey: string(DUPLICATE_INDEX_BLOCK_ATTRIBUTE),
+          sortKey: string(DUPLICATE_INDEX_BLOCK_SK_ATTRIBUTE),
+          projectionType: ProjectionType.KEYS_ONLY,
+        },
+      ],
+    });
+    this.idempotencyKeysTable = table('IdempotencyKeys', {
+      partitionKey: string(IDEMPOTENCY_KEYS_PK),
+      globalSecondaryIndexes: [
+        {
+          indexName: IDEMPOTENCY_KEYS_BY_LISTING,
+          partitionKey: string(IDEMPOTENCY_KEYS_LISTING_ATTRIBUTE),
+          projectionType: ProjectionType.KEYS_ONLY,
+        },
+      ],
+      timeToLiveAttribute: IDEMPOTENCY_KEYS_TTL_ATTRIBUTE,
+    });
+    this.duplicateReportsTable = table('DuplicateReports', {
+      partitionKey: string(DUPLICATE_REPORTS_PK),
+      globalSecondaryIndexes: [
+        {
+          indexName: DUPLICATE_REPORTS_BY_STATE,
+          partitionKey: string(DUPLICATE_REPORTS_STATE_ATTRIBUTE),
+          sortKey: string(DUPLICATE_REPORTS_STATE_SK_ATTRIBUTE),
+        },
+      ],
+    });
+
     this.snapshotKey = new Key(this, 'SnapshotKey', {
       description: 'Open Estate version snapshot encryption',
       enableKeyRotation: true,
@@ -322,6 +392,19 @@ export class ManagementDataStack extends Stack {
       removalPolicy,
       autoDeleteObjects: !retain,
     });
+
+    // Read by the seed script and the load-test generator, which write through the import
+    // pipeline like a connector (versions, keys, counters, snapshots, Duplikat_Index).
+    const outputs: [string, string, string][] = [
+      ['ListingVersionsTableName', 'ListingVersions table', this.listingVersionsTable.tableName],
+      ['ListingKeysTableName', 'ListingKeys table', this.listingKeysTable.tableName],
+      ['MetricCountersTableName', 'MetricCounters table', this.metricCountersTable.tableName],
+      ['DuplicateIndexTableName', 'DuplicateIndex table', this.duplicateIndexTable.tableName],
+      ['SnapshotBucketName', 'VersionSnapshots bucket', this.snapshotBucket.bucketName],
+    ];
+    for (const [id, what, value] of outputs) {
+      new CfnOutput(this, id, { description: `Physical name of the ${what}`, value });
+    }
   }
 
   /** Stores of the connectors' versioned write path (IngestionStack). */
@@ -333,6 +416,7 @@ export class ManagementDataStack extends Stack {
       snapshotBucket: this.snapshotBucket,
       connectorRuns: this.connectorRunsTable,
       runRejections: this.runRejectionsTable,
+      duplicateIndex: this.duplicateIndexTable,
     };
   }
 
@@ -343,6 +427,9 @@ export class ManagementDataStack extends Stack {
       listingKeys: this.listingKeysTable,
       metricCounters: this.metricCountersTable,
       snapshotBucket: this.snapshotBucket,
+      duplicateIndex: this.duplicateIndexTable,
+      idempotencyKeys: this.idempotencyKeysTable,
+      duplicateReports: this.duplicateReportsTable,
     };
   }
 }
@@ -361,7 +448,10 @@ export interface ManagementPlatformData {
   readonly auditLog: ITableV2;
   readonly configBucket: IBucket;
   /** `access-mode` and `rate-limit`, written by `/platform/*` like by the Admin_API (Req 10.7). */
-  readonly parameterNames: Pick<SsmParameterNames, 'accessMode' | 'rateLimit'>;
+  readonly parameterNames: Pick<
+    SsmParameterNames,
+    'accessMode' | 'rateLimit' | 'duplicateDetection'
+  >;
 }
 
 /** Stores of the {@link ManagementDataStack}. */
@@ -376,6 +466,9 @@ export type ManagementStores = Pick<
   | 'metricCountersTable'
   | 'connectorRunsTable'
   | 'runRejectionsTable'
+  | 'duplicateIndexTable'
+  | 'idempotencyKeysTable'
+  | 'duplicateReportsTable'
   | 'snapshotBucket'
   | 'snapshotKey'
 >;
@@ -410,11 +503,15 @@ export interface ManagementStackProps extends StackProps {
   readonly searchApiUrl: string;
   /** Log groups of the API and MCP Lambdas carrying the usage lines (Req 13.4). */
   readonly usageLogGroups: readonly ILogGroup[];
-  /** Search_API, MCP_Server and connectors: the only targets of `/platform/reload`. */
+  /** Search_API, MCP_Server and connectors: targets of `/platform/reload` besides itself. */
   readonly reloadableFunctions: readonly IFunction[];
   readonly deletionStateMachine: IStateMachine;
   /** Prefix of the platform alarms (`DescribeAlarms`, Req 14.2), e.g. `<prefix>-Monitoring-`. */
   readonly alarmNamePrefix: string;
+  /** Operational alarm topic (MonitoringStack); the duplicate check's alarm notifies it. */
+  readonly alarmTopic?: ITopic;
+  /** Daily time of the Duplikat_Abgleich from `duplicate-detection.json` (Req 10.1). */
+  readonly duplicateSweep: DuplicateSweepSettings;
   /** Requests per IP and {@link WAF_RATE_LIMIT_WINDOW_SECONDS} before WAF blocks. */
   readonly wafRateLimit: number;
   /** Initial value of {@link managementRateLimitParameterName}. */
@@ -442,6 +539,8 @@ export class ManagementStack extends Stack {
   readonly webAcl: CfnWebACL;
   readonly rateLimitParameter: StringParameter;
   readonly bootstrap?: PlatformAdminBootstrap;
+  /** Duplikat_Abgleich: Lambda, state machine, schedule and alarm (duplicate-detection Req 10). */
+  readonly duplicateSweep: DuplicateSweepWorkflow;
 
   constructor(scope: Construct, id: string, props: ManagementStackProps) {
     super(scope, id, props);
@@ -462,6 +561,22 @@ export class ManagementStack extends Stack {
       tier: ParameterTier.STANDARD,
     });
 
+    this.duplicateSweep = new DuplicateSweepWorkflow(this, 'DuplicateSweep', {
+      listings: props.data.listings,
+      auditLog: props.data.auditLog,
+      configBucket: props.data.configBucket,
+      duplicateIndex: props.stores.duplicateIndexTable,
+      duplicateReports: props.stores.duplicateReportsTable,
+      metricCounters: props.stores.metricCountersTable,
+      frontendOriginParameter: props.frontendOriginParameter,
+      duplicateDetectionParameter: props.data.parameterNames.duplicateDetection,
+      settings: props.duplicateSweep,
+      alarmName: `${props.alarmNamePrefix}DuplicateSweepFailed`,
+      ...(props.alarmTopic !== undefined && { alarmTopic: props.alarmTopic }),
+      removalPolicy: props.removalPolicy,
+      observability: props.observability,
+    });
+
     this.managementFunction = bundledFunction(this, 'ManagementFunction', {
       description: 'Management_API (Agentur_Portal, machine access, platform operations)',
       packageDir: INFRA_PACKAGE,
@@ -471,10 +586,32 @@ export class ManagementStack extends Stack {
       removalPolicy: props.removalPolicy,
       observability: props.observability,
     });
-    for (const [name, value] of Object.entries(managementEnvironment(props, corsOrigins))) {
+    const sweepMachine = this.duplicateSweep.stateMachine;
+    const environment = managementEnvironment(props, corsOrigins, sweepMachine.stateMachineArn);
+    for (const [name, value] of Object.entries(environment)) {
       this.managementFunction.addEnvironment(name, value);
     }
     grantManagement(this.managementFunction, props);
+    // `/platform/reload` also restarts the management function itself (it reads taxonomy,
+    // allowlists and `duplicate-detection.json` at cold start). A policy of its own: the
+    // function's default policy may not reference the function (CloudFormation cycle).
+    const role = this.managementFunction.role;
+    if (role === undefined) throw new Error('ManagementFunction has no role');
+    const reloadSelf = () =>
+      new PolicyStatement({
+        actions: ['lambda:GetFunctionConfiguration', 'lambda:UpdateFunctionConfiguration'],
+        resources: [this.managementFunction.functionArn],
+      });
+    new Policy(this, 'ManagementSelfReloadPolicy', { roles: [role], statements: [reloadSelf()] });
+    // `open-estate-admin reload` of the Management_API: the AdminStack's AdministratorPolicy is
+    // created before this function exists, so administrators attach this policy in addition.
+    const reloadPolicy = new ManagedPolicy(this, 'ManagementReloadPolicy', {
+      description: 'open-estate-admin reload of the Management_API (next to AdministratorPolicy)',
+      statements: [reloadSelf()],
+    });
+    // `POST /platform/duplicate-sweeps` (Req 10.2): the running execution or a new one.
+    allow(this.managementFunction, ['states:ListExecutions'], [sweepMachine.stateMachineArn]);
+    sweepMachine.grantStartExecution(this.managementFunction);
 
     this.usageAggregator = bundledFunction(this, 'UsageAggregator', {
       description: 'Counts detail views and search impressions per listing and agency (Req 13.4)',
@@ -563,6 +700,20 @@ export class ManagementStack extends Stack {
       description: 'Base URL of the Management_API stage',
       value: this.api.url,
     });
+    // Every function that reads configuration at cold start, for `open-estate-admin reload`: the
+    // AdminStack's list (API, MCP, connectors) plus the Management_API, created only here.
+    new CfnOutput(this, 'ReloadFunctionNames', {
+      description: 'Functions open-estate-admin reload restarts (OPEN_ESTATE_RELOAD_FUNCTIONS)',
+      value: Fn.join(
+        ',',
+        [...props.reloadableFunctions, this.managementFunction].map((fn) => fn.functionName),
+      ),
+    });
+    new CfnOutput(this, 'ReloadPolicyArn', {
+      description:
+        'Managed policy for administrators: reload the Management_API (open-estate-admin reload)',
+      value: reloadPolicy.managedPolicyArn,
+    });
   }
 }
 
@@ -582,6 +733,7 @@ function envOf<K extends string>(
 function managementEnvironment(
   props: ManagementStackProps,
   corsOrigins: readonly string[],
+  duplicateSweepStateMachineArn: string,
 ): Record<string, string> {
   const { data, stores, identity } = props;
   const entries: [string, string][] = [
@@ -594,6 +746,7 @@ function managementEnvironment(
       auditLogTable: data.auditLog.tableName,
       rateLimitCountersTable: data.rateLimitCounters.tableName,
       rateLimitParameter: managementRateLimitParameterName(props.envName),
+      duplicateDetectionParameter: data.parameterNames.duplicateDetection,
     }),
     [FRONTEND_ORIGIN_VALUE + SSM_PARAMETER_SUFFIX, props.frontendOriginParameter],
     ...envOf(MANAGEMENT_ROUTE_ENV.identity, {
@@ -613,6 +766,8 @@ function managementEnvironment(
       agenciesTable: stores.agenciesTable.tableName,
       snapshotBucket: stores.snapshotBucket.bucketName,
       configBucket: data.configBucket.bucketName,
+      duplicateIndexTable: stores.duplicateIndexTable.tableName,
+      idempotencyKeysTable: stores.idempotencyKeysTable.tableName,
     }),
     ...envOf(MANAGEMENT_ROUTE_ENV.monitoring, {
       listingsTable: data.listings.tableName,
@@ -635,6 +790,11 @@ function managementEnvironment(
         ',',
         props.reloadableFunctions.map((fn) => fn.functionName),
       ),
+    }),
+    ...envOf(MANAGEMENT_ROUTE_ENV.duplicates, {
+      duplicateReportsTable: stores.duplicateReportsTable.tableName,
+      metricCountersTable: stores.metricCountersTable.tableName,
+      duplicateSweepStateMachineArn,
     }),
     [MANAGEMENT_CORS_ENV, corsOrigins.join(',')],
     // EMF namespace of the handler's metrics, same as API, MCP and connectors (Req 14.1).
@@ -681,6 +841,7 @@ function grantManagement(fn: NodejsFunction, props: ManagementStackProps): void 
     [
       ssmParameterArn(stack, props.frontendOriginParameter),
       ssmParameterArn(stack, managementRateLimitParameterName(props.envName)),
+      ssmParameterArn(stack, data.parameterNames.duplicateDetection),
     ],
   );
 
@@ -773,6 +934,29 @@ function grantManagement(fn: NodejsFunction, props: ManagementStackProps): void 
     ],
     [data.deletionBlocklist.tableArn],
   );
+  // Duplikat_Index (duplicate-detection): the writer puts and deletes profiles, blocks and exact
+  // keys in its transactions; the detector reads profiles, exact keys and the `byBlock` index.
+  allow(
+    fn,
+    [
+      'dynamodb:GetItem',
+      'dynamodb:BatchGetItem',
+      'dynamodb:PutItem',
+      'dynamodb:DeleteItem',
+      'dynamodb:ConditionCheckItem',
+    ],
+    [stores.duplicateIndexTable.tableArn],
+  );
+  allow(fn, ['dynamodb:Query'], [indexArn(stores.duplicateIndexTable, DUPLICATE_INDEX_BY_BLOCK)]);
+  // Idempotenzschlüssel: read before, put in the creating transaction.
+  allow(fn, ['dynamodb:GetItem', 'dynamodb:PutItem'], [stores.idempotencyKeysTable.tableArn]);
+  // Agenturübergreifende_Treffer: list by state, dismiss (conditional put in a transaction).
+  allow(fn, ['dynamodb:GetItem', 'dynamodb:PutItem'], [stores.duplicateReportsTable.tableArn]);
+  allow(
+    fn,
+    ['dynamodb:Query'],
+    [indexArn(stores.duplicateReportsTable, DUPLICATE_REPORTS_BY_STATE)],
+  );
   const snapshots = stores.snapshotBucket;
   allow(fn, ['s3:GetObject', 's3:PutObject'], [snapshots.arnForObjects(snapshotKey('*', '*'))]);
   fn.addToRolePolicy(
@@ -817,6 +1001,8 @@ function grantManagement(fn: NodejsFunction, props: ManagementStackProps): void 
     [
       ssmParameterArn(stack, data.parameterNames.accessMode),
       ssmParameterArn(stack, data.parameterNames.rateLimit),
+      // Ein/Aus of the Duplikat-Erkennung (`PUT /platform/duplicate-detection`).
+      ssmParameterArn(stack, data.parameterNames.duplicateDetection),
     ],
   );
   props.deletionStateMachine.grantStartExecution(fn);

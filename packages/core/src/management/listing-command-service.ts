@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   AssignAgencyRequest,
   authorize,
+  contentHash,
   CreateListingRequest,
   err,
   ManualContentInputBase,
@@ -13,10 +14,17 @@ import {
   SetStatusRequest,
   toApiErrors,
   typeCodes,
+  duplicateFlagOf,
+  IDEMPOTENCY_WINDOW_SECONDS,
+  IdempotencyKey,
+  idempotencyKeyHash,
+  idempotencyRequestHash,
+  withDuplicateFlag,
   type ApiError,
   type ChangeType,
   type Channel,
   type ListingContent,
+  type ListingFlag,
   type ListingView,
   type ManualContentInput,
   type Origin,
@@ -27,7 +35,22 @@ import {
   type VersionedState,
 } from '@open-estate/shared';
 import { z } from 'zod';
+import { systemClock, type Clock } from '../access/ttl-cache';
 import { prepareContent, type ContentRules, type FieldIssue } from '../content/prepare-content';
+import {
+  DuplicateIndexUnavailable,
+  type DuplicateAssessment,
+  type DuplicateDetector,
+} from '../duplicates/duplicate-detector';
+import {
+  creationTimeAfterCheck,
+  flagDetails,
+  flagsAfterCheck,
+  sameFlag,
+} from '../duplicates/duplicate-decision';
+import type { DuplicateDetectionSwitch } from '../duplicates/duplicate-detection-setting';
+import type { IdempotencyActorKey, IdempotencyStore } from '../duplicates/idempotency-store';
+import { creationTime } from '../search/listings-table';
 import type { Candidate } from '../content/pii-filter';
 import {
   AgencyAuditTrail,
@@ -41,15 +64,32 @@ import {
 import type { AgencyStore } from './agency-store';
 import type { ManagedListing, ManagedListingStore } from './listing-store';
 import type { ListingVersionStore } from './listing-version-store';
-import { contentToInput, toListingView } from './listing-view';
+import { contentToInput, scopeListingView, toListingView } from './listing-view';
 import type { SnapshotStore } from './snapshot-store';
-import type { VersionedListingWriter, WriteConflict } from './versioned-listing-writer';
+import { agencyScope } from './metric-counter-store';
+import type {
+  StateChange,
+  VersionedListingWriter,
+  WriteConflict,
+  WriteResult,
+} from './versioned-listing-writer';
 
 // Listing commands of the Management_API (design: "ListingCommandService und
 // VersionedListingWriter", Req 4, 6.2, 6.6, 8, 10.2, 10.5, 10.6).
 
 export type ListingAuditAction =
-  'listing.create' | 'listing.update' | 'listing.status' | 'listing.assign' | 'listing.restore';
+  | 'listing.create'
+  | 'listing.update'
+  | 'listing.status'
+  | 'listing.assign'
+  | 'listing.restore'
+  /** Repeated creation answered from its Idempotenzschlüssel (duplicate-detection Req 9.2). */
+  | 'listing.create.replay'
+  /** Markierung set, changed or removed by a write, or dismissed (duplicate-detection Req 7.7). */
+  | 'listing.flag.set'
+  | 'listing.flag.update'
+  | 'listing.flag.remove'
+  | 'listing.flag.dismiss';
 
 /** Content schema of the current rules: `ManualContentInput` with the taxonomy's type codes. */
 export type ManualContentSchema = z.ZodType<ManualContentInput>;
@@ -67,7 +107,8 @@ export interface ListingCommandServiceDeps {
   snapshots: Pick<SnapshotStore, 'get'>;
   /** Existence of the target agency of a Plattform_Admin (creation, assignment). */
   agencies: Pick<AgencyStore<unknown>, 'get'>;
-  writer: Pick<VersionedListingWriter<unknown>, 'write'>;
+  writer: Pick<VersionedListingWriter<unknown>, 'write'> &
+    Partial<Pick<VersionedListingWriter<unknown>, 'setFlags'>>;
   audit: AgencyAudit;
   /** Frontend origin (SSM `/open-estate/{env}/frontend-origin`) for the Öffentliche_Detail_URL. */
   frontendOrigin: string;
@@ -77,6 +118,26 @@ export interface ListingCommandServiceDeps {
   rules: ContentRules;
   /** Identifier of new listings; default `randomUUID`. */
   newId?: () => string;
+  /**
+   * Duplikat_Prüfung (duplicate-detection Req 5, 6, 8). Every production wiring sets it; without
+   * it the commands behave as before the feature (tests of unrelated behaviour).
+   */
+  duplicates?: Pick<DuplicateDetector, 'assess'>;
+  /**
+   * Ein/Aus of the Duplikat-Erkennung (design: "Ein- und Ausschalten"); default: always on.
+   * Switched off, no command checks or maintains the Duplikat_Index.
+   */
+  detection?: DuplicateDetectionSwitch;
+  /** Lookup of Idempotenzschlüssel (Req 9.2); required by {@link ListingCommandService.createWithKey}. */
+  idempotency?: Pick<IdempotencyStore<unknown>, 'get'>;
+  /** Time of the Duplikat_Prüfung and of idempotency records; default system clock. */
+  clock?: Clock;
+}
+
+/** Result of a creation with Idempotenzschlüssel: `replayed` = answered from an earlier request. */
+export interface CreateOutcome {
+  view: ListingView;
+  replayed: boolean;
 }
 
 /** Request bodies with the Listing_Inhalt still raw: it is validated by `prepareContent`. */
@@ -108,12 +169,14 @@ const contentErrors = (issues: readonly FieldIssue[]): ApiError[] =>
 const LIST_FIELD = { media: 'media', tour: 'tours' } as const;
 
 /**
- * Names of the fields dropped by the import rules (Req 4.10): PII paths, dropped media and tours
- * by their delivered position (`media.3`), and a truncated list by its field (`media`).
+ * Names of the fields dropped by the import rules (Req 4.10): PII paths, Objektmerkmale the
+ * listing type does not allow (duplicate-detection Req 2.5), dropped media and tours by their
+ * delivered position (`media.3`), and a truncated list by its field (`media`).
  */
 function droppedFieldNames(prepared: ReturnType<typeof prepareContent>): string[] {
   return [
     ...prepared.droppedPii,
+    ...prepared.droppedAttributes,
     ...prepared.mediaDrops.map((drop) => `${LIST_FIELD[drop.kind]}.${drop.index}`),
     ...prepared.mediaTruncations.map((truncation) => LIST_FIELD[truncation.kind]),
   ];
@@ -134,6 +197,17 @@ interface Command {
   changeType: ChangeType;
   restoredFrom?: number;
   dropped: string[];
+  /**
+   * Duplikat_Prüfung of the command: `CREATE` (new listing: flag and `INACTIVE`), `UPDATE` (flag
+   * only), `RELEASE` (activation of a flagged listing: flag removed, Verwerfungen); absent = none.
+   */
+  duplicates?: 'CREATE' | 'UPDATE' | 'RELEASE';
+  /** Anlagezeitpunkt of the listing (the creation time for a new one). */
+  createdAt: string;
+  /** Current Markierungen (none for a new listing). */
+  flags: ListingFlag[];
+  /** Idempotenzschlüssel record of a creation (Req 9.2). */
+  idempotency?: StateChange['idempotency'];
 }
 
 /**
@@ -154,10 +228,17 @@ export class ListingCommandService {
   private readonly trail: AgencyAuditTrail<ListingAuditAction>;
   private readonly newId: () => string;
 
+  private readonly clock: Clock;
+
   constructor(deps: ListingCommandServiceDeps) {
     this.deps = deps;
     this.trail = new AgencyAuditTrail<ListingAuditAction>(deps.audit);
     this.newId = deps.newId ?? randomUUID;
+    this.clock = deps.clock ?? systemClock;
+  }
+
+  private now(): string {
+    return new Date(this.clock()).toISOString();
   }
 
   /**
@@ -166,6 +247,17 @@ export class ListingCommandService {
    * an existing agency (`agencyId`, required).
    */
   async create(p: Principal, body: unknown): Promise<Result<ListingView, ApiError[]>> {
+    return this.createInternal(p, body, {});
+  }
+
+  private async createInternal(
+    p: Principal,
+    body: unknown,
+    options: {
+      /** Idempotency record for the id the creation assigns. */
+      idempotency?: (listingId: string) => NonNullable<StateChange['idempotency']>;
+    },
+  ): Promise<Result<ListingView, ApiError[]>> {
     const actor = { principal: p, channel: channelOf(p) };
     const action = 'listing.create';
     const rawAgency = (body as { agencyId?: unknown } | null)?.agencyId;
@@ -205,7 +297,97 @@ export class ListingCommandService {
       },
       changeType: 'CREATE',
       dropped: prepared.dropped,
+      duplicates: 'CREATE',
+      createdAt: this.now(),
+      flags: [],
+      ...(options.idempotency !== undefined && {
+        idempotency: options.idempotency(listingId),
+      }),
     });
+  }
+
+  /**
+   * `POST /listings` with `Idempotency-Key` (duplicate-detection Req 9.2–9.6): a repetition of the
+   * same request by the same actor within 24 hours answers with the listing it created
+   * (`replayed: true`) instead of creating another one; the same key with another body is
+   * refused with 409 `IDEMPOTENCY_KEY_REUSED`.
+   */
+  async createWithKey(
+    p: Principal,
+    body: unknown,
+    key: string,
+  ): Promise<Result<CreateOutcome, ApiError[]>> {
+    const actor = { principal: p, channel: channelOf(p) };
+    const store = this.deps.idempotency;
+    if (store === undefined) throw new Error('createWithKey without an idempotency store');
+    if (!IdempotencyKey.safeParse(key).success) {
+      const error = {
+        ...apiError(
+          'INVALID_PARAMETER',
+          'Idempotency-Key must be 1-128 printable ASCII characters',
+        ),
+        field: 'Idempotency-Key',
+      };
+      return this.trail.reject(actor, 'listing.create', 'listing', ownAgency(p), error);
+    }
+    const actorKey: IdempotencyActorKey =
+      p.kind === 'machine' ? `mk:${p.keyId}` : `user:${p.userId}`;
+    const keyHash = idempotencyKeyHash(key);
+    const requestHash = idempotencyRequestHash(body);
+
+    // A concurrent request with the same key may win between lookup and write: look again once.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const nowSeconds = Math.floor(this.clock() / 1000);
+      const existing = await store.get(actorKey, keyHash, nowSeconds);
+      if (existing !== null)
+        return this.replay(actor, existing.listingId, existing.requestHash === requestHash);
+      const record = (listingId: string) => ({
+        nowSeconds,
+        record: {
+          actorKey,
+          keyHash,
+          listingId,
+          requestHash,
+          createdAt: new Date(nowSeconds * 1000).toISOString(),
+          expiresAt: nowSeconds + IDEMPOTENCY_WINDOW_SECONDS,
+        },
+      });
+      try {
+        const created = await this.createInternal(p, body, { idempotency: record });
+        return created.ok ? ok({ view: created.value, replayed: false }) : created;
+      } catch (error) {
+        if (!(error instanceof IdempotencyRace)) throw error;
+      }
+    }
+    const error = apiError(
+      'SERVICE_UNAVAILABLE',
+      'Concurrent request with the same Idempotency-Key',
+    );
+    return this.trail.reject(actor, 'listing.create', 'listing', ownAgency(p), error);
+  }
+
+  /** Answer of a repeated request: the listing it created, or 409 for another body (Req 9.2, 9.3). */
+  private async replay(
+    actor: AgencyActor,
+    listingId: string,
+    sameRequest: boolean,
+  ): Promise<Result<CreateOutcome, ApiError[]>> {
+    const target = listingTarget(listingId);
+    const current = sameRequest ? await this.deps.listings.get(listingId) : null;
+    const agencyId = current?.management.agencyId ?? ownAgency(actor.principal);
+    if (current === null) {
+      // Another body, or the listing was removed meanwhile: the key stays bound to it.
+      const error = apiError(
+        'IDEMPOTENCY_KEY_REUSED',
+        'Idempotency-Key was already used for another request',
+      );
+      return this.trail.reject(actor, 'listing.create', 'listing', agencyId, {
+        ...error,
+        field: 'Idempotency-Key',
+      });
+    }
+    await this.trail.success(actor, 'listing.create.replay', target, agencyId);
+    return ok({ view: await this.viewFor(actor.principal, current), replayed: true });
   }
 
   /**
@@ -233,6 +415,8 @@ export class ListingCommandService {
     }
     const { baseVersion, customId } = parsed.data;
     const nextCustomId = customId === undefined ? management.customId : (customId ?? undefined);
+    // Only the Custom_Id changes: the Markierung stays as it is (duplicate-detection Req 6.4).
+    const contentChanged = contentHash(prepared.content) !== management.contentHash;
     return this.execute({
       actor,
       action: 'listing.update',
@@ -246,6 +430,7 @@ export class ListingCommandService {
       },
       changeType: 'UPDATE',
       dropped: prepared.dropped,
+      ...existingListing(current, contentChanged ? 'UPDATE' : undefined),
     });
   }
 
@@ -273,6 +458,17 @@ export class ListingCommandService {
         toApiErrors(parsed.error.issues),
       );
     }
+    const flagged = duplicateFlagOf(current.management.flags ?? []) !== undefined;
+    if (
+      flagged &&
+      parsed.data.status === 'ACTIVE' &&
+      current.management.status === 'ACTIVE' &&
+      (parsed.data.baseVersion ?? version) === version
+    ) {
+      // Already online (flagged by a change or the Abgleich): the release has no status to
+      // change, so it is the Verwerfung — no version (duplicate-detection Req 8.1, 8.2).
+      return this.dismissFlag(p, id, 'DUPLICATE');
+    }
     return this.execute({
       actor,
       action: 'listing.status',
@@ -282,6 +478,12 @@ export class ListingCommandService {
       next: { ...currentState(current), status: parsed.data.status },
       changeType: 'STATUS',
       dropped: [],
+      // Activating a flagged listing releases it (duplicate-detection Req 8.1); every other
+      // status change leaves the Markierungen alone (Req 6.4, 8.6).
+      ...existingListing(
+        current,
+        parsed.data.status === 'ACTIVE' && flagged ? 'RELEASE' : undefined,
+      ),
     });
   }
 
@@ -322,6 +524,8 @@ export class ListingCommandService {
       next: { ...currentState(current), agencyId: parsed.data.agencyId },
       changeType: 'UPDATE',
       dropped: [],
+      // The new agency is a new Prüfbereich (duplicate-detection Req 6.1).
+      ...existingListing(current, 'UPDATE'),
     });
   }
 
@@ -370,6 +574,7 @@ export class ListingCommandService {
       changeType: 'RESTORE',
       restoredFrom: record.version,
       dropped: prepared.dropped,
+      ...existingListing(current, 'UPDATE'),
     });
   }
 
@@ -424,16 +629,36 @@ export class ListingCommandService {
   private async execute(command: Command): Promise<Result<ListingView, ApiError[]>> {
     const { actor, action, listingId, auditAgencyId } = command;
     const target = listingTarget(listingId);
-    const result = await this.deps.writer.write({
-      listingId,
-      expectedVersion: command.expectedVersion,
-      next: command.next,
-      changeType: command.changeType,
-      channel: actor.channel,
-      actor: actorRef(actor.principal),
-      ...(command.restoredFrom !== undefined && { restoredFrom: command.restoredFrom }),
-    });
+    let result: WriteResult | undefined;
+    let decision: DuplicateDecision | undefined;
+    // A concurrent Exakt_Duplikat may claim the exact key between assessment and write; the
+    // second assessment then sees its owner and writes with a Markierung (Req 9.1).
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const decided = await this.decideDuplicates(command);
+      if (!decided.ok)
+        return this.trail.reject(actor, action, target, auditAgencyId, decided.error);
+      decision = decided.value;
+      result = await this.deps.writer.write({
+        listingId,
+        expectedVersion: command.expectedVersion,
+        next: decision.next,
+        changeType: command.changeType,
+        channel: actor.channel,
+        actor: actorRef(actor.principal),
+        ...(command.restoredFrom !== undefined && { restoredFrom: command.restoredFrom }),
+        ...(decision.flags !== undefined && { flags: decision.flags }),
+        ...(decision.statusReason !== undefined && { statusReason: decision.statusReason }),
+        ...(decision.dismiss.length > 0 && { dismiss: decision.dismiss }),
+        ...(decision.assessment !== undefined && { assessment: decision.assessment }),
+        ...(command.idempotency !== undefined && { idempotency: command.idempotency }),
+        ...(decision.createdAt !== undefined && { createdAt: decision.createdAt }),
+        ...(decision.switchedOff === true && { duplicateDetection: 'disabled' as const }),
+      });
+      if (result.ok || result.error.code !== 'EXACT_CLAIMED') break;
+    }
+    if (result === undefined || decision === undefined) throw new Error('execute without write');
     if (!result.ok) {
+      if (result.error.code === 'IDEMPOTENCY_RACE') throw new IdempotencyRace();
       return this.trail.reject(actor, action, target, auditAgencyId, conflictError(result.error));
     }
     const { outcome, listing } = result.value;
@@ -441,8 +666,199 @@ export class ListingCommandService {
       await this.trail.outcome(actor, action, target, auditAgencyId, 'UNCHANGED');
     } else {
       await this.trail.success(actor, action, target, auditAgencyId);
+      await this.auditFlagChange(actor, target, auditAgencyId, command, decision);
     }
-    return ok(toListingView(listing, this.deps.frontendOrigin, command.dropped));
+    return ok(await this.viewFor(actor.principal, listing, command.dropped));
+  }
+
+  /**
+   * Duplikat_Prüfung of a command (duplicate-detection Req 5, 6, 8.1): the Markierung after the
+   * write, the status of a new duplicate and the Verwerfungen of a release. 503 if the
+   * Duplikat_Index cannot be read (Req 5.8); nothing is written then.
+   */
+  private async decideDuplicates(command: Command): Promise<Result<DuplicateDecision, ApiError>> {
+    const detector = this.deps.duplicates;
+    const none: DuplicateDecision = { next: command.next, dismiss: [] };
+    if (detector === undefined) return ok(none);
+    // Read for every command: switched off, no write maintains the Duplikat_Index either.
+    const enabled = await this.detectionEnabled();
+    if (enabled === null) return err(duplicateCheckUnavailable());
+    if (!enabled) return ok(switchedOffDecision(command));
+    if (command.duplicates === undefined) return ok(none);
+
+    const { listingId, next } = command;
+    // A new listing is created when it is written: each attempt takes the current time, so a
+    // listing that lost the race for its exact key comes after the winner (Req 9.1).
+    let createdAt = command.duplicates === 'CREATE' ? this.now() : command.createdAt;
+    let assessment: DuplicateAssessment;
+    try {
+      assessment = await detector.assess({
+        listingId,
+        scope: agencyScope(next.agencyId),
+        createdAt,
+        content: next.content,
+        derivedSourceUrl: publicDetailUrl(this.deps.frontendOrigin, listingId),
+      });
+    } catch (error) {
+      if (!(error instanceof DuplicateIndexUnavailable)) throw error;
+      return err(duplicateCheckUnavailable());
+    }
+    const current = duplicateFlagOf(command.flags);
+    const self = { listingId, createdAt };
+
+    if (command.duplicates === 'RELEASE') {
+      // Every current Treffer, also those not named in the Markierung (Req 8.1).
+      const dismiss = [
+        ...new Set([
+          ...assessment.matches.map((match) => match.listingId),
+          ...(current?.matches.map((match) => match.listingId) ?? []),
+        ]),
+      ];
+      return ok({ next, flags: withDuplicateFlag(command.flags, null), dismiss, assessment });
+    }
+
+    if (command.duplicates === 'CREATE') createdAt = creationTimeAfterCheck(createdAt, assessment);
+    const { flags, flag } = flagsAfterCheck(
+      command.duplicates,
+      { ...self, createdAt },
+      assessment,
+      command.flags,
+      this.now(),
+    );
+    if (command.duplicates === 'CREATE' && flag !== null) {
+      // A new duplicate is stored, but not published: only the Original stays online (Req 5.2).
+      return ok({
+        next: { ...next, status: 'INACTIVE' },
+        flags,
+        statusReason: { code: 'DUPLICATE', originalId: flag.originalId },
+        dismiss: [],
+        assessment,
+        createdAt,
+      });
+    }
+    return ok({
+      next,
+      flags,
+      dismiss: [],
+      assessment,
+      ...(command.duplicates === 'CREATE' && { createdAt }),
+    });
+  }
+
+  /** Whether the Duplikat-Erkennung runs; `null` if the switch cannot be read. */
+  private async detectionEnabled(): Promise<boolean | null> {
+    const detection = this.deps.detection;
+    if (detection === undefined) return true;
+    try {
+      return await detection.isEnabled();
+    } catch {
+      return null;
+    }
+  }
+
+  /** One audit entry per changed Markierung (Req 7.7): codes and ids only. */
+  private async auditFlagChange(
+    actor: AgencyActor,
+    target: string,
+    agencyId: string | undefined,
+    command: Command,
+    decision: DuplicateDecision,
+  ): Promise<void> {
+    if (decision.flags === undefined) return;
+    const before = duplicateFlagOf(command.flags);
+    const after = duplicateFlagOf(decision.flags);
+    if (
+      before === after ||
+      (before !== undefined && after !== undefined && sameFlag(before, after))
+    ) {
+      return;
+    }
+    const flag = after ?? before;
+    if (flag === undefined) return;
+    const action: ListingAuditAction =
+      after === undefined
+        ? command.duplicates === 'RELEASE'
+          ? 'listing.flag.dismiss'
+          : 'listing.flag.remove'
+        : before === undefined
+          ? 'listing.flag.set'
+          : 'listing.flag.update';
+    await this.trail.flagChange(actor, action, target, agencyId, flagDetails(flag));
+  }
+
+  /**
+   * `DELETE /listings/{id}/flags/{code}` (duplicate-detection Req 8.2, 8.4): removes the
+   * Markierung without a version and records Verwerfungen against every current Treffer; the
+   * status stays. Without such a Markierung the call succeeds without a change.
+   */
+  async dismissFlag(
+    p: Principal,
+    id: string,
+    code: string,
+  ): Promise<Result<ListingView, ApiError[]>> {
+    const loaded = await this.load(p, id, 'listing:status', 'listing.flag.dismiss');
+    if (!loaded.ok) return loaded;
+    const { actor, current } = loaded.value;
+    const target = listingTarget(id);
+    const { agencyId } = current.management;
+    if (code !== 'DUPLICATE') {
+      const error = { ...apiError('INVALID_PARAMETER', 'Unknown flag code'), field: 'code' };
+      return this.trail.reject(actor, 'listing.flag.dismiss', target, agencyId, error);
+    }
+    const flags = current.management.flags ?? [];
+    const flag = duplicateFlagOf(flags);
+    if (flag === undefined) {
+      await this.trail.outcome(actor, 'listing.flag.dismiss', target, agencyId, 'UNCHANGED');
+      return ok(await this.viewFor(actor.principal, current));
+    }
+
+    const decided = await this.decideDuplicates({
+      actor,
+      action: 'listing.flag.dismiss',
+      listingId: id,
+      auditAgencyId: agencyId,
+      expectedVersion: current.management.version,
+      next: currentState(current),
+      changeType: 'STATUS',
+      dropped: [],
+      ...existingListing(current, 'RELEASE'),
+    });
+    if (!decided.ok) {
+      return this.trail.reject(actor, 'listing.flag.dismiss', target, agencyId, decided.error);
+    }
+    const writer = this.deps.writer;
+    if (writer.setFlags === undefined)
+      throw new Error('dismissFlag without VersionedListingWriter.setFlags');
+    const result = await writer.setFlags({
+      listingId: id,
+      expectedVersion: current.management.version,
+      flags: decided.value.flags ?? [],
+      dismiss: decided.value.dismiss,
+    });
+    if (!result.ok) {
+      return this.trail.reject(
+        actor,
+        'listing.flag.dismiss',
+        target,
+        agencyId,
+        conflictError(result.error),
+      );
+    }
+    await this.trail.flagChange(actor, 'listing.flag.dismiss', target, agencyId, flagDetails(flag));
+    return ok(await this.viewFor(actor.principal, result.value));
+  }
+
+  /** The answer's `ListingView`, without ids of other agencies in its Markierung (Req 7.6). */
+  private viewFor(
+    principal: Principal,
+    listing: ManagedListing,
+    dropped: readonly string[] = [],
+  ): Promise<ListingView> {
+    return scopeListingView(
+      toListingView(listing, this.deps.frontendOrigin, dropped),
+      principal,
+      this.deps.listings,
+    );
   }
 
   /** Audits the first error code and returns all errors. */
@@ -458,6 +874,61 @@ export class ListingCommandService {
     await this.trail.reject(actor, action, target, agencyId, first);
     return err(errors);
   }
+}
+
+/** What the Duplikat_Prüfung of a command changes in the write (duplicate-detection Req 5–8). */
+interface DuplicateDecision {
+  /** State to write; a new duplicate gets `INACTIVE` (Req 5.2). */
+  next: VersionedState;
+  /** Markierungen after the write; `undefined` = unchanged. */
+  flags?: ListingFlag[];
+  statusReason?: { code: 'DUPLICATE'; originalId: string };
+  /** Verwerfungen recorded by a release (Req 8.1). */
+  dismiss: string[];
+  assessment?: DuplicateAssessment;
+  /** Anlagezeitpunkt of a new listing as decided; stored as is (Req 4.3, 9.1). */
+  createdAt?: string;
+  /** The Duplikat-Erkennung is switched off: no check, no Duplikat_Index maintenance. */
+  switchedOff?: true;
+}
+
+const duplicateCheckUnavailable = (): ApiError =>
+  apiError('SERVICE_UNAVAILABLE', 'Duplicate check unavailable, retry later');
+
+/**
+ * Decision with the Duplikat-Erkennung switched off: the requested state as is and the
+ * Markierungen unchanged — except a release, which still removes the Markierung and records
+ * Verwerfungen against the Treffer it names (there is no index query to find others).
+ */
+function switchedOffDecision(command: Command): DuplicateDecision {
+  const decision: DuplicateDecision = { next: command.next, dismiss: [], switchedOff: true };
+  if (command.duplicates !== 'RELEASE') return decision;
+  const flag = duplicateFlagOf(command.flags);
+  return {
+    ...decision,
+    flags: withDuplicateFlag(command.flags, null),
+    dismiss: flag?.matches.map((match) => match.listingId) ?? [],
+  };
+}
+
+/** A concurrent request stored the same Idempotenzschlüssel first; the caller looks again. */
+class IdempotencyRace extends Error {
+  constructor() {
+    super('Concurrent request with the same Idempotency-Key');
+    this.name = 'IdempotencyRace';
+  }
+}
+
+/** Command fields of an existing listing: Anlagezeitpunkt, flags and the kind of check. */
+function existingListing(
+  current: ManagedListing,
+  duplicates: Command['duplicates'],
+): Pick<Command, 'createdAt' | 'flags' | 'duplicates'> {
+  return {
+    createdAt: creationTime(current),
+    flags: current.management.flags ?? [],
+    ...(duplicates !== undefined && { duplicates }),
+  };
 }
 
 /** Versioned state of the stored listing (content without id and provenance). */
@@ -499,5 +970,9 @@ function conflictError(conflict: WriteConflict): ApiError {
         ...apiError('CUSTOM_ID_TAKEN', 'Custom_Id is assigned to another listing of the agency'),
         field: 'customId',
       };
+    // Both are resolved by a repetition inside the service; they only surface after it.
+    case 'EXACT_CLAIMED':
+    case 'IDEMPOTENCY_RACE':
+      return apiError('SERVICE_UNAVAILABLE', 'Concurrent change, retry the request');
   }
 }

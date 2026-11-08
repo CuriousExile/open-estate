@@ -17,6 +17,8 @@ interact with manual changes.
 - [Authentication](#authentication)
 - [Permissions](#permissions)
 - [Example: a machine access end to end](#example-a-machine-access-end-to-end)
+- [Duplicate detection](#duplicate-detection)
+- [Repeating a creation safely](#repeating-a-creation-safely)
 - [Import modes](#import-modes)
 
 ## Base URL
@@ -92,6 +94,7 @@ use too. Do not edit it by hand: run `npm run docs:permissions` after changing p
 | `platform:operate`      | Admin API functions under `/platform/*`: deletions, API keys, rate limits, access mode, reload |        –        |       –        |        ✓         |             –              |
 | `monitoring:platform`   | Platform metrics, alarms, agency activity, history size                                        |        –        |       –        |        ✓         |             –              |
 | `listing:assign`        | Assign a listing to another agency                                                             |        –        |       –        |        ✓         |             –              |
+| `duplicate:review`      | Review and dismiss duplicates found across agencies                                            |        –        |       –        |        ✓         |             –              |
 
 <!-- END GENERATED: permission-matrix -->
 
@@ -287,6 +290,236 @@ curl -sS -X POST "${MGMT_URL}listings/${LISTING_ID}/restore" \
 
 The new version has `changeType` `RESTORE` and `restoredFrom` `1`. Restoring a version whose
 content equals the current content creates no new version.
+
+## Duplicate detection
+
+The platform recognises when a listing describes a property the same agency already offers — a
+listing posted twice, typed a little differently, or reposted with a new text. Only the first one
+stays online; every later one is stored, but **inactive** and with a `DUPLICATE` flag, so the agency
+can decide. The check runs on every channel (portal, machine access, admin mode, connectors), so
+this section applies to imports as well.
+
+Platform admins can switch the whole duplicate detection off (for example to save its cost) and on
+again; while it is off, listings are stored without check and without flag (see
+[Switching it off](#switching-it-off)).
+
+### When listings are checked
+
+| Event                                                           | Result                                                                                                                           |
+| --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /listings`, connector creates a listing                   | Duplicate of an older listing: stored `INACTIVE` with a flag (`detectedBy: CREATE`), whatever status was requested; answer `201` |
+| `PUT /listings/{id}`, restore, agency assignment, import update | The flag is set, updated or removed (`detectedBy: UPDATE`); the status never changes                                             |
+| Daily duplicate check (all listings, 03:00 UTC by default)      | Flags of all listings renewed (`detectedBy: SWEEP`), e.g. after rule changes; the status never changes                           |
+| Status or Custom_Id only                                        | The flag stays as it is (except for the release below)                                                                           |
+
+A listing is only compared with listings of **its own agency** (listings without agency form one
+group of their own). Flags never name listings of other agencies; duplicates across agencies are
+reported to platform admins only (see [below](#duplicates-across-agencies)). The older of two
+duplicates is the **original** (earlier creation time); a flag names the original and up to five
+matches.
+
+A stored duplicate version 1 carries `statusReason: {"code": "DUPLICATE", "originalId": …}` in
+the version history, so it is clear why the listing is inactive. `GET /listings?flag=DUPLICATE`
+lists the flagged listings of the agency; every `ListingSummary` has `flagCodes`.
+
+### Rules
+
+Two listings are compared in this order (defaults of `duplicate-detection.json`, see
+[configuration](configuration.md#duplicate-detection)):
+
+1. **Different properties.** Never duplicates if the country, the property group of the listing
+   type or every offer type differs, or if both have a value that differs for street and house
+   number, unit (`address.unit`), floor or parcel (`parcelId`).
+2. **Exact duplicate.** Equal in every compared part (normalised address, area, rooms, offers,
+   attributes, texts, media): a duplicate with value 1 and reason `EXACT`.
+3. **Location anchor.** Otherwise only pairs with a common anchor are compared further: same
+   street and house number, coordinates within 50 m, same parcel, same source URL, or same postal
+   code with nearly equal title and description. Two flats of the same size in the same city are
+   not enough.
+4. **Value.** The weights of all reasons that apply are added up (between 0 and 1). A pair is a
+   duplicate from a value of **0.7**.
+
+Before comparing, the platform normalises spelling: case, umlauts and accents (`Müller` =
+`Mueller`, `ß` = `ss`), punctuation and spacing, street suffixes (`Str.` = `Straße`), house numbers
+inside the street line, unit words (`Whg`, `WE`, `Apt`), postal code spacing and the decimals of
+areas and amounts. URLs are compared as given. A derived source URL (the public detail page) is not
+compared.
+
+| Reason              | Weight | Applies when                                                 |
+| ------------------- | -----: | ------------------------------------------------------------ |
+| `EXACT`             |      – | Exact duplicate (value 1)                                    |
+| `SAME_SOURCE_URL`   |   0.60 | Same source URL                                              |
+| `SAME_PARCEL`       |   0.45 | Same parcel reference                                        |
+| `SAME_ADDRESS`      |   0.35 | Same street and house number                                 |
+| `GEO_NEAR`          |   0.30 | Coordinates within 15 m                                      |
+| `GEO_ANCHOR`        |   0.15 | Coordinates within 50 m, but more than 15 m apart            |
+| `SAME_UNIT`         |   0.10 | Same unit                                                    |
+| `AREA_CLOSE`        |   0.20 | Living area within 2 %                                       |
+| `AREA_NEAR`         |   0.10 | Living area within 5 %                                       |
+| `AREA_DIFFERS`      |  −0.40 | Living areas differ by more than 10 %                        |
+| `ROOMS_EQUAL`       |   0.10 | Same number of rooms                                         |
+| `ROOMS_DIFFER`      |  −0.30 | Rooms differ by one or more                                  |
+| `ATTRIBUTES_EQUAL`  |   0.03 | Per property attribute both have with the same value         |
+| `ATTRIBUTES_DIFFER` |  −0.25 | A property attribute both have differs                       |
+| `PRICE_CLOSE`       |   0.05 | Same offer type and currency, price within 5 %               |
+| `TITLE_NEAR`        |   0.10 | Titles nearly equal                                          |
+| `DESCRIPTION_NEAR`  |   0.15 | Descriptions nearly equal                                    |
+| `MEDIA_SHARED`      |   0.15 | One media URL in common                                      |
+| `MEDIA_SHARED_2`    |   0.30 | Two or more media URLs in common (instead of `MEDIA_SHARED`) |
+
+The [property attributes](api.md#property-attributes) (`address.unit`, `floor`, `yearBuilt`,
+`plotArea`, `parcelId`, …) make the check more precise: identical flats of one building are told
+apart by their unit or floor. Without them, two flats of the same size, price and rooms at the
+same address are reported as possible duplicates — release the one that is not a copy.
+
+### Release and dismiss
+
+| Operation                                 | Effect                                                                                                                                                                                        |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `PUT /listings/{id}/status` with `ACTIVE` | Activates a flagged listing, removes the flag and records that it is no duplicate of any of its current matches (new version). For a listing that is already active it is the dismissal below |
+| `DELETE /listings/{id}/flags/DUPLICATE`   | Removes the flag and records the same for every current match; status and version stay. Without a flag: `200` without change                                                                  |
+
+Both need `listing:status`. A released or dismissed pair is never flagged again for each other,
+neither on later changes nor by the daily check. Flag changes are written to the audit log
+(`listing.flag.set`, `listing.flag.update`, `listing.flag.remove`, `listing.flag.dismiss`) with
+codes and ids only.
+
+#### Example: create a duplicate and release it
+
+Create the listing of [step 2](#2-create-a-listing-with-a-custom_id) a second time, this time
+without a Custom_Id, typed a little differently and with `"status": "ACTIVE"`:
+
+```sh
+curl -sS -X POST "${MGMT_URL}listings" \
+  -H "Authorization: Bearer $OEM_CREDENTIAL" -H 'Content-Type: application/json' \
+  -d '{
+    "status": "ACTIVE",
+    "content": {
+      "originalLocale": "de",
+      "title": "Helle Altbauwohnung in Mitte",
+      "description": "Drei Zimmer mit Balkon und Blick in den Hof.",
+      "translations": [],
+      "offers": [{ "offerType": "SALE", "price": "350000", "currency": "EUR" }],
+      "listingType": "apartment_unit",
+      "rooms": 3,
+      "area": "85.5",
+      "address": { "city": "Berlin", "postalCode": "10 115", "country": "DE" },
+      "media": [],
+      "tours": []
+    }
+  }' | tee duplicate.json | jq '{id, status, flags}'
+```
+
+The answer is `201`, but the listing is stored inactive:
+
+```json
+{
+  "id": "9b7e1d20-5c3a-4f8e-b1a2-6d4c8e0f2a77",
+  "status": "INACTIVE",
+  "flags": [
+    {
+      "code": "DUPLICATE",
+      "updatedAt": "2026-03-01T10:15:00.000Z",
+      "detectedBy": "CREATE",
+      "originalId": "4f0c2a8e-7d1b-4c55-9a43-2b6f0e8d9c11",
+      "matches": [
+        { "listingId": "4f0c2a8e-7d1b-4c55-9a43-2b6f0e8d9c11", "score": 1, "reasons": ["EXACT"] }
+      ]
+    }
+  ]
+}
+```
+
+After normalising (`350000` = `350000.00`, `85.5` = `85.50`, `10 115` = `10115`) both listings are
+equal in every compared part: an exact duplicate. Translations, the Custom_Id and the derived
+source URL are not compared. If the second listing is meant to be online — for example a second
+flat of the same size in the same building — release it:
+
+```sh
+export DUPLICATE_ID=$(jq -r '.id' duplicate.json)
+curl -sS -X PUT "${MGMT_URL}listings/${DUPLICATE_ID}/status" \
+  -H "Authorization: Bearer $OEM_CREDENTIAL" -H 'Content-Type: application/json' \
+  -d '{ "status": "ACTIVE" }' | jq '{status, version, flags}'
+```
+
+```json
+{ "status": "ACTIVE", "version": 2, "flags": [] }
+```
+
+To keep it offline but stop the notice, dismiss the flag instead:
+`curl -sS -X DELETE "${MGMT_URL}listings/${DUPLICATE_ID}/flags/DUPLICATE" -H "Authorization: Bearer $OEM_CREDENTIAL"`.
+
+### Duplicates across agencies
+
+The daily check also compares listings of different agencies. It never changes their status or
+flags; it records each pair as a report for platform admins (`duplicate:review`, not grantable to
+machine accesses):
+
+| Method | Path                                             | Permission         | Purpose                                                                                           |
+| ------ | ------------------------------------------------ | ------------------ | ------------------------------------------------------------------------------------------------- |
+| `GET`  | `/platform/duplicate-reports?state=&agencyId=`   | `duplicate:review` | Reports by descending value; `state` `OPEN` (default), `DISMISSED` or `RESOLVED`; paged           |
+| `POST` | `/platform/duplicate-reports/{reportId}/dismiss` | `duplicate:review` | Dismiss a report; it is not reopened while both listings exist                                    |
+| `POST` | `/platform/duplicate-sweeps`                     | `platform:operate` | Start the daily check now (`202`, `{executionName, alreadyRunning}`); a running check is returned |
+
+A report that the next check no longer finds becomes `RESOLVED`; if the pair matches again later,
+it is `OPEN` again. The metric `duplicate.cross_agency_open` counts the open reports,
+`listing.duplicate_flags` the flagged listings per agency (see `GET /metrics`).
+
+### Switching it off
+
+| Method | Path                            | Permission         | Purpose                                                                         |
+| ------ | ------------------------------- | ------------------ | ------------------------------------------------------------------------------- |
+| `GET`  | `/platform/duplicate-detection` | `platform:operate` | `{"enabled": true}` or `{"enabled": false}`                                     |
+| `PUT`  | `/platform/duplicate-detection` | `platform:operate` | Body `{"enabled": false}` or `{"enabled": true}`; answers the new state (below) |
+
+The admin mode has the same switch under **Operations**; a deployment sets the initial value
+(`-c duplicateDetection=disabled`, [configuration](configuration.md#switching-it-on-and-off)).
+Running functions apply a change within 60 seconds.
+
+While it is off, creations, changes and imports are stored as requested: no candidate search, no
+flag (a duplicate stays `ACTIVE`), no duplicate index writes; the daily check ends right after its
+start and `POST /platform/duplicate-sweeps` answers `409 DUPLICATE_DETECTION_DISABLED`. Existing
+flags and reports stay; activating a flagged listing or `DELETE /listings/{id}/flags/DUPLICATE`
+still releases it against the listings its flag names.
+
+Switching it on starts a check at once, which rebuilds the index and renews every flag:
+
+```sh
+# Platform admin's portal token in $PORTAL_TOKEN (machine accesses cannot hold platform:operate).
+curl -sS -X PUT "${MGMT_URL}platform/duplicate-detection" \
+  -H "Authorization: Bearer $PORTAL_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"enabled": true}'
+# {"enabled":true,"sweep":{"executionName":"manual-20260301T101500-000Z","alreadyRunning":false}}
+```
+
+`sweep` is missing if the check could not be started; the next daily run (or a manual start)
+catches up. Listings created while the detection was off are flagged by that check but stay online.
+
+## Repeating a creation safely
+
+`POST /listings` accepts an optional header `Idempotency-Key` (1–128 printable ASCII characters
+without spaces, for example the id of the listing in your CRM). Within 24 hours, a repetition with
+the same key and the same body returns the listing created first (`201` with header
+`Idempotent-Replayed: true`) instead of creating another one, so a request repeated after a timeout
+is harmless. Keys belong to the caller (user or machine access); other callers may use the same
+key.
+
+```sh
+curl -sS -i -X POST "${MGMT_URL}listings" \
+  -H "Authorization: Bearer $OEM_CREDENTIAL" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: crm-4712' \
+  -d @listing.json
+```
+
+| Case                                  | Answer                                                  |
+| ------------------------------------- | ------------------------------------------------------- |
+| First request                         | `201`, the new listing                                  |
+| Same key, same body, within 24 h      | `201`, the same listing, `Idempotent-Replayed: true`    |
+| Same key, another body, within 24 h   | `409 IDEMPOTENCY_KEY_REUSED`, nothing changed           |
+| Invalid key (empty, too long, spaces) | `400 INVALID_PARAMETER` with `field: "Idempotency-Key"` |
+
+Without the header, two identical requests create two listings — the second one as a flagged
+duplicate (see above).
 
 ## Import modes
 

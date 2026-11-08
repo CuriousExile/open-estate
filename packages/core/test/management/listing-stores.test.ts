@@ -7,13 +7,16 @@ import {
   S3ServiceException,
 } from '@aws-sdk/client-s3';
 import {
+  BatchGetCommand,
   DynamoDBDocumentClient,
   GetCommand,
   QueryCommand,
+  ScanCommand,
   UpdateCommand,
 } from '@aws-sdk/lib-dynamodb';
 import {
   agencyScope,
+  creationTime,
   DynamoDbListingKeyStore,
   DynamoDbListingVersionStore,
   DynamoDbManagedListingStore,
@@ -27,6 +30,7 @@ import {
   InMemorySnapshotStore,
   InMemoryTransactor,
   InvalidCursorError,
+  LISTING_FLAG_CODES_ATTRIBUTE,
   LISTINGS_BY_ID_PK_ATTRIBUTE,
   S3SnapshotStore,
   snapshotKey,
@@ -35,7 +39,12 @@ import {
   type ListingManagement,
   type ListingVersionRecord,
 } from '@open-estate/core';
-import { CONTENT_FIELDS, contentHash, type ListingContent } from '@open-estate/shared';
+import {
+  CONTENT_FIELDS,
+  contentHash,
+  type ListingContent,
+  type ListingFlag,
+} from '@open-estate/shared';
 import { exampleListing } from '../../../shared/test/arbitraries';
 
 const documentClient = () =>
@@ -88,6 +97,15 @@ const version = (
   ...overrides,
 });
 
+/** Duplikat_Markierung used by the flag tests (duplicate-detection Req 7.1). */
+const flag: ListingFlag = {
+  code: 'DUPLICATE',
+  updatedAt: '2026-01-02T10:00:00.000Z',
+  detectedBy: 'CREATE',
+  originalId: 'lst-0',
+  matches: [{ listingId: 'lst-0', score: 0.9, reasons: ['SAME_ADDRESS'] }],
+};
+
 describe('managed Listings item', () => {
   it('adds management attributes and keeps the listing projection and gsiPk', () => {
     const item = toManagedListingItem(listing, management());
@@ -118,6 +136,35 @@ describe('managed Listings item', () => {
     const item = { ...toManagedListingItem(listing, management()), status: 'DELETED' };
     expect(() => fromManagedListingItem(item)).toThrow();
   });
+
+  // Markierungen and Anlagezeitpunkt (duplicate-detection Req 4.3, 7.1, 7.5).
+  it('stores flags with their derived code list and reads them back without it', () => {
+    const flagged = management({ createdAt: '2026-01-01T09:00:00.000Z', flags: [flag] });
+    const item = toManagedListingItem(listing, flagged);
+    expect(item[LISTING_FLAG_CODES_ATTRIBUTE]).toEqual(['DUPLICATE']);
+    expect(fromManagedListingItem(item)).toEqual({ listing, management: flagged });
+    expect(fromManagedListingItem(item).management).not.toHaveProperty(
+      LISTING_FLAG_CODES_ATTRIBUTE,
+    );
+  });
+
+  it('stores no flag attributes for an empty flag list', () => {
+    const item = toManagedListingItem(listing, management({ flags: [] }));
+    expect(item).not.toHaveProperty('flags');
+    expect(item).not.toHaveProperty(LISTING_FLAG_CODES_ATTRIBUTE);
+  });
+
+  it('rejects two flags with the same code', () => {
+    const item = toManagedListingItem(listing, management({ flags: [flag] }));
+    expect(() => fromManagedListingItem({ ...item, flags: [flag, flag] })).toThrow();
+  });
+
+  it('uses createdAt as Anlagezeitpunkt and falls back to the provenance time', () => {
+    expect(creationTime({ listing, management: { createdAt: '2026-01-01T09:00:00.000Z' } })).toBe(
+      '2026-01-01T09:00:00.000Z',
+    );
+    expect(creationTime({ listing, management: {} })).toBe(listing.lastImportedAt);
+  });
 });
 
 describe('listing store fakes with transaction semantics', () => {
@@ -140,6 +187,26 @@ describe('listing store fakes with transaction semantics', () => {
     expect((await tx.transact([store.putOp(v2, 1)])).ok).toBe(true);
     expect((await store.get('lst-1'))?.management.version).toBe(2);
     expect(await store.get('unknown')).toBeNull();
+  });
+
+  it('guards writes and flag changes by the stored Markierungen (duplicate-detection 8.2)', async () => {
+    const store = new InMemoryManagedListingStore();
+    await tx.transact([store.putOp(toManagedListingItem(listing, management()), null)]);
+    // Set without a version, only while the flags are still the expected ones.
+    expect((await tx.transact([store.setFlagsOp('lst-1', 1, [flag], [flag])])).ok).toBe(false);
+    expect((await tx.transact([store.setFlagsOp('lst-1', 2, [flag], [])])).ok).toBe(false);
+    expect((await tx.transact([store.setFlagsOp('lst-1', 1, [flag], [])])).ok).toBe(true);
+    expect((await store.get('lst-1'))?.management).toMatchObject({ version: 1, flags: [flag] });
+    // A write based on the flags before that change fails; with the current ones it applies.
+    const v2 = toManagedListingItem(listing, management({ version: 2 }));
+    expect((await tx.transact([store.putOp(v2, 1, [])])).ok).toBe(false);
+    expect((await tx.transact([store.putOp(v2, 1, [flag])])).ok).toBe(true);
+    expect((await store.get('lst-1'))?.management.flags).toBeUndefined();
+    // Existence and version checks write nothing.
+    expect((await tx.transact([store.checkOp('lst-1', 2)])).ok).toBe(true);
+    expect((await tx.transact([store.checkOp('lst-1', 1)])).ok).toBe(false);
+    expect((await tx.transact([store.checkOp('lst-1')])).ok).toBe(true);
+    expect((await tx.transact([store.checkOp('gone')])).ok).toBe(false);
   });
 
   it('removes a listing outside a transaction (in-process deletion)', async () => {
@@ -230,6 +297,83 @@ describe('listing store fakes with transaction semantics', () => {
   });
 });
 
+describe('reads of the Duplikat_Abgleich (duplicate-detection Req 10.4, 12.4)', () => {
+  const tx = new InMemoryTransactor();
+  const item = (id: string) =>
+    toManagedListingItem({ ...listing, id }, management({ agencyId: 'agy-1' }));
+
+  it('scans every listing once across segments and reports unreadable items', async () => {
+    const store = new InMemoryManagedListingStore();
+    for (const id of ['a', 'b', 'c', 'd', 'e']) {
+      await tx.transact([store.putOp(item(id), null)]);
+    }
+    store.putRaw({ ...item('bad'), status: 'DELETED' } as never);
+    const seen: string[] = [];
+    for (let segment = 0; segment < 3; segment += 1) {
+      let cursor: string | undefined;
+      do {
+        const page = await store.scan({
+          segment,
+          segments: 3,
+          limit: 2,
+          ...(cursor !== undefined && { cursor }),
+        });
+        for (const entry of page.items) {
+          seen.push('invalid' in entry ? `!${entry.invalid}` : entry.listing.id);
+        }
+        cursor = page.cursor;
+      } while (cursor !== undefined);
+    }
+    expect(seen.sort()).toEqual(['!bad', 'a', 'b', 'c', 'd', 'e']);
+    expect([...(await store.getMany(['a', 'x', 'bad', 'a'])).keys()]).toEqual(['a']);
+    expect([...(await store.existing(['a', 'x', 'bad']))].sort()).toEqual(['a', 'bad']);
+  });
+
+  it('scans and batch-reads the DynamoDB table strongly consistent', async () => {
+    const client = documentClient();
+    const send = jest
+      .spyOn(client, 'send')
+      .mockImplementationOnce(async () => ({
+        Items: [item('a'), { id: 'bad' }],
+        LastEvaluatedKey: { id: 'bad' },
+      }))
+      .mockImplementationOnce(async () => ({
+        Responses: { Listings: [item('a')] },
+        UnprocessedKeys: { Listings: { Keys: [{ id: 'b' }] } },
+      }))
+      .mockImplementationOnce(async () => ({ Responses: { Listings: [item('b')] } }))
+      .mockImplementationOnce(async () => ({ Responses: { Listings: [{ id: 'a' }] } }));
+    const store = new DynamoDbManagedListingStore({ client, tableName: 'Listings' });
+
+    const page = await store.scan({ segment: 1, segments: 4, limit: 25 });
+    expect(page.items.map((e) => ('invalid' in e ? `!${e.invalid}` : e.listing.id))).toEqual([
+      'a',
+      '!bad',
+    ]);
+    expect(page.cursor).toBeDefined();
+    expect((send.mock.calls[0]?.[0] as ScanCommand).input).toEqual({
+      TableName: 'Listings',
+      ConsistentRead: true,
+      Segment: 1,
+      TotalSegments: 4,
+      Limit: 25,
+    });
+    expect([...(await store.getMany(['a', 'b'])).keys()]).toEqual(['a', 'b']);
+    expect((send.mock.calls[1]?.[0] as BatchGetCommand).input.RequestItems).toEqual({
+      Listings: { Keys: [{ id: 'a' }, { id: 'b' }], ConsistentRead: true },
+    });
+    expect([...(await store.existing(['a', 'b']))]).toEqual(['a']);
+    expect((send.mock.calls[3]?.[0] as BatchGetCommand).input.RequestItems).toEqual({
+      Listings: {
+        Keys: [{ id: 'a' }, { id: 'b' }],
+        ConsistentRead: true,
+        ProjectionExpression: '#id',
+        ExpressionAttributeNames: { '#id': 'id' },
+      },
+    });
+  });
+});
+
 describe('DynamoDB listing stores', () => {
   it('reads listings strongly consistent and builds the version-conditioned put', async () => {
     const client = documentClient();
@@ -259,6 +403,33 @@ describe('DynamoDB listing stores', () => {
       ExpressionAttributeNames: { '#version': 'version' },
       ExpressionAttributeValues: { ':expectedVersion': 4 },
     });
+    // Guarded by the stored Markierungen (duplicate-detection Req 8.2, 14.5).
+    expect(store.putOp(item, 4, []).item.Put).toMatchObject({
+      ConditionExpression: '#version = :expectedVersion AND attribute_not_exists(#flags)',
+      ExpressionAttributeNames: { '#version': 'version', '#flags': 'flags' },
+    });
+    expect(store.putOp(item, 4, [flag]).item.Put).toMatchObject({
+      ConditionExpression: '#version = :expectedVersion AND #flags = :expectedFlags',
+      ExpressionAttributeValues: { ':expectedVersion': 4, ':expectedFlags': [flag] },
+    });
+    expect(store.setFlagsOp('lst-1', 4, [], [flag]).item.Update).toMatchObject({
+      UpdateExpression: 'REMOVE #flags, #flagCodes',
+      ConditionExpression: '#version = :expectedVersion AND #flags = :expectedFlags',
+      ExpressionAttributeValues: { ':expectedVersion': 4, ':expectedFlags': [flag] },
+    });
+    expect(store.setFlagsOp('lst-1', 4, [flag], []).item.Update).toMatchObject({
+      UpdateExpression: 'SET #flags = :flags, #flagCodes = :flagCodes',
+      ConditionExpression: '#version = :expectedVersion AND attribute_not_exists(#flags)',
+      ExpressionAttributeValues: { ':flags': [flag], ':flagCodes': ['DUPLICATE'] },
+    });
+    expect(store.checkOp('lst-1', 4).item.ConditionCheck).toMatchObject({
+      Key: { id: 'lst-1' },
+      ConditionExpression: '#version = :expectedVersion',
+      ExpressionAttributeValues: { ':expectedVersion': 4 },
+    });
+    expect(store.checkOp('lst-1').item.ConditionCheck?.ConditionExpression).toBe(
+      'attribute_exists(#id)',
+    );
   });
 
   it('queries versions descending with the cursor as exclusive start key', async () => {

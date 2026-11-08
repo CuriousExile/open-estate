@@ -3,6 +3,8 @@
 // request body and checks it with the request schemas of the Management_API from `shared` before
 // any call. Kept free of Angular imports so it can be unit-tested with plain Jest.
 import {
+  allowedAttributes,
+  BINDABLE_ATTRIBUTES,
   CreateListingRequest,
   LISTING_BOUNDS,
   ListingView as ListingViewSchema,
@@ -14,6 +16,7 @@ import {
   Tour,
   typeCodes,
   type ApiError,
+  type BindableAttribute,
   type ListingStatus,
   type ListingView,
   type OfferType,
@@ -42,6 +45,62 @@ export interface UrlValues {
   url: string;
 }
 
+/**
+ * Objektmerkmale as typed (duplicate-detection Req 1.1); `address.unit` is the form field `unit`.
+ * Which of them are shown and sent depends on the group of the listing type (Req 2.7).
+ */
+export interface AttributeValues {
+  unit: string;
+  floor: string;
+  totalFloors: string;
+  yearBuilt: string;
+  plotArea: string;
+  bedrooms: string;
+  bathrooms: string;
+  parcelId: string;
+}
+
+/** Form field of each bindable Objektmerkmal, in display order. */
+export const ATTRIBUTE_FIELDS: Readonly<Record<BindableAttribute, keyof AttributeValues>> = {
+  'address.unit': 'unit',
+  floor: 'floor',
+  totalFloors: 'totalFloors',
+  yearBuilt: 'yearBuilt',
+  plotArea: 'plotArea',
+  bedrooms: 'bedrooms',
+  bathrooms: 'bathrooms',
+  parcelId: 'parcelId',
+};
+
+/** Integer Objektmerkmale (the others are a decimal area and texts). */
+const INTEGER_ATTRIBUTES = ['floor', 'totalFloors', 'yearBuilt', 'bedrooms', 'bathrooms'] as const;
+
+export function emptyAttributes(): AttributeValues {
+  return {
+    unit: '',
+    floor: '',
+    totalFloors: '',
+    yearBuilt: '',
+    plotArea: '',
+    bedrooms: '',
+    bathrooms: '',
+    parcelId: '',
+  };
+}
+
+/**
+ * Objektmerkmale the form shows for a listing type (Req 2.7): those of its group, in the order of
+ * {@link BINDABLE_ATTRIBUTES}. Without taxonomy or for an unknown type all of them — the
+ * Management_API decides then.
+ */
+export function visibleAttributes(
+  taxonomy: Taxonomy | undefined,
+  listingType: string,
+): BindableAttribute[] {
+  const allowed = taxonomy === undefined ? undefined : allowedAttributes(taxonomy, listingType);
+  return BINDABLE_ATTRIBUTES.filter((attribute) => allowed === undefined || allowed.has(attribute));
+}
+
 /** Raw form state; never modified by validation or by a failed call (Req 5.4, 5.5, 5.9). */
 export interface ListingFormValues {
   originalLocale: string;
@@ -63,6 +122,8 @@ export interface ListingFormValues {
   contact: { name: string; phone: string; email: string };
   /** Empty = the platform stores the Öffentliche_Detail_URL (Req 4.5). */
   sourceUrl: string;
+  /** Objektmerkmale; values of merkmale the type's group does not allow are kept, not sent. */
+  attributes: AttributeValues;
 }
 
 /** Lists of the form, in visual order. */
@@ -108,6 +169,7 @@ export function emptyFormValues(
     tours: [],
     contact: { name: '', phone: '', email: '' },
     sourceUrl: '',
+    attributes: emptyAttributes(),
   };
 }
 
@@ -170,6 +232,16 @@ export function fromListingView(view: ListingView): {
       email: c.contact?.email ?? '',
     },
     sourceUrl: view.sourceUrlDerived ? '' : c.sourceUrl,
+    attributes: {
+      unit: c.address.unit ?? '',
+      floor: optionalText(c.floor),
+      totalFloors: optionalText(c.totalFloors),
+      yearBuilt: optionalText(c.yearBuilt),
+      plotArea: c.plotArea ?? '',
+      bedrooms: optionalText(c.bedrooms),
+      bathrooms: optionalText(c.bathrooms),
+      parcelId: c.parcelId ?? '',
+    },
   };
   return {
     values,
@@ -180,6 +252,9 @@ export function fromListingView(view: ListingView): {
 // ---------------------------------------------------------------------------------------------
 // Request body
 // ---------------------------------------------------------------------------------------------
+
+const optionalText = (value: number | undefined): string =>
+  value === undefined ? '' : String(value);
 
 /** Decimal input → API representation: trimmed, decimal comma accepted ("1,5" → "1.5"). */
 export function normalizeDecimal(input: string): string {
@@ -216,9 +291,32 @@ function offerBody(offer: OfferValues): Record<string, unknown> {
   };
 }
 
+/**
+ * Objektmerkmale of the body (Req 2.7): only those allowed for the selected type's group and only
+ * non-empty ones; `address.unit` goes into the address.
+ */
+function attributeBody(
+  v: ListingFormValues,
+  taxonomy: Taxonomy | undefined,
+): { top: Record<string, unknown>; unit?: string } {
+  const top: Record<string, unknown> = {};
+  let unit: string | undefined;
+  for (const attribute of visibleAttributes(taxonomy, v.listingType)) {
+    const field = ATTRIBUTE_FIELDS[attribute];
+    const raw = v.attributes[field];
+    if (raw.trim() === '') continue;
+    if (field === 'unit') unit = raw.trim();
+    else if (field === 'plotArea') top[field] = normalizeDecimal(raw);
+    else if (field === 'parcelId') top[field] = raw.trim();
+    else if ((INTEGER_ATTRIBUTES as readonly string[]).includes(field)) top[field] = toNumber(raw);
+  }
+  return { top, ...(unit !== undefined && { unit }) };
+}
+
 /** Listing_Inhalt in API representation; empty optional inputs are omitted. */
-export function contentBody(v: ListingFormValues): Record<string, unknown> {
+export function contentBody(v: ListingFormValues, taxonomy?: Taxonomy): Record<string, unknown> {
   const street = v.address.street.trim();
+  const attributes = attributeBody(v, taxonomy);
   const geoGiven = v.geo.lat.trim() !== '' || v.geo.lon.trim() !== '';
   const contact = Object.fromEntries(
     Object.entries(v.contact).filter(([, value]) => value.trim() !== ''),
@@ -242,7 +340,9 @@ export function contentBody(v: ListingFormValues): Record<string, unknown> {
       postalCode: v.address.postalCode.trim(),
       country: code(v.address.country),
       ...(street !== '' && { street: v.address.street }),
+      ...(attributes.unit !== undefined && { unit: attributes.unit }),
     },
+    ...attributes.top,
     ...(geoGiven && { geo: { lat: toNumber(v.geo.lat), lon: toNumber(v.geo.lon) } }),
     ...(sourceUrl !== '' && { sourceUrl }),
     media: v.media.map((m) => ({ url: m.url.trim() })),
@@ -252,12 +352,16 @@ export function contentBody(v: ListingFormValues): Record<string, unknown> {
   };
 }
 
-/** `POST /listings` (no context) or `PUT /listings/{id}` (with the edited listing's context). */
+/**
+ * `POST /listings` (no context) or `PUT /listings/{id}` (with the edited listing's context).
+ * With the taxonomy, only the Objektmerkmale of the type's group are sent (Req 2.7).
+ */
 export function requestBody(
   values: ListingFormValues,
   context?: EditContext,
+  taxonomy?: Taxonomy,
 ): Record<string, unknown> {
-  const content = contentBody(values);
+  const content = contentBody(values, taxonomy);
   const customId = values.customId.trim();
   if (context === undefined) {
     return { content, status: values.status, ...(customId !== '' && { customId }) };
@@ -377,6 +481,25 @@ function messageFor(field: string, custom: boolean): Message {
       };
     case 'listingType':
       return { messageKey: 'portal.listings.error.listingType' };
+    // Objektmerkmale (duplicate-detection Req 1.2).
+    case 'unit':
+      return text(B.unit);
+    case 'parcelId':
+      return text(B.parcelId);
+    case 'floor':
+      return custom
+        ? { messageKey: 'portal.listings.error.floorAboveBuilding' }
+        : { messageKey: 'portal.listings.error.integer', params: B.floor };
+    case 'totalFloors':
+    case 'yearBuilt':
+    case 'bedrooms':
+    case 'bathrooms':
+      return { messageKey: 'portal.listings.error.integer', params: B[field] };
+    case 'plotArea':
+      return {
+        messageKey: 'portal.listings.error.plotArea',
+        params: { min: decimal(B.plotArea.minMinor), max: decimal(B.plotArea.maxMinor) },
+      };
     case 'offerType':
       return { messageKey: 'portal.listings.error.offerType' };
     case 'offers':
@@ -434,7 +557,7 @@ export function validateListingForm(
   values: ListingFormValues,
   options: { context?: EditContext; taxonomy?: Taxonomy } = {},
 ): ListingFormResult {
-  const body = requestBody(values, options.context);
+  const body = requestBody(values, options.context, options.taxonomy);
   const result = listingRequestSchema(options.context !== undefined, options.taxonomy).safeParse(
     body,
   );

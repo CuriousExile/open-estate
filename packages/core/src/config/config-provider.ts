@@ -117,6 +117,30 @@ export async function loadConfig(
   return new CachedConfigProvider(values, files);
 }
 
+/**
+ * Optional config file: a missing file yields `fallback`, an invalid one throws `ConfigError`
+ * (like a required file). Any other failure — a missing `CONFIG_BUCKET`, access denied — still
+ * propagates, so a misconfigured deployment is not mistaken for "file not configured".
+ */
+export async function loadOptionalConfigFile<T>(
+  key: string,
+  schema: ZodType<T>,
+  fallback: T,
+  sources: ConfigSources = {},
+): Promise<T> {
+  try {
+    return (await loadConfig({ files: [key] }, sources)).loadJson(key, schema);
+  } catch (error) {
+    const onlyThisFileMissing =
+      error instanceof ConfigError &&
+      error.code === 'CONFIG_MISSING' &&
+      error.names.length === 1 &&
+      error.names[0] === key;
+    if (onlyThisFileMissing) return fallback;
+    throw error;
+  }
+}
+
 async function loadSsm(
   client: SSMClient,
   refs: ReadonlyMap<string, readonly string[]>,

@@ -13,6 +13,13 @@ export const AREA_MIN_MINOR = 100;
 export const AREA_MAX_MINOR = 10_000_000;
 
 /**
+ * Plot area bounds in square metres (duplicate-detection Req 1.1): 1–10,000,000, in hundredths.
+ * Wider than {@link AREA_MAX_MINOR} because a plot is not a living area (10,000,000 m² = 1,000 ha).
+ */
+export const PLOT_AREA_MIN_MINOR = 100;
+export const PLOT_AREA_MAX_MINOR = 1_000_000_000;
+
+/**
  * Canonical plain decimal: digits only, no sign, no leading zeros (except a single "0"),
  * optional "." followed by one or two fraction digits. Rejects whitespace, "+"/"-",
  * exponent notation ("1e3"), "1." and ".5".
@@ -80,3 +87,6 @@ export const Money = decimalSchema(9, MONEY_MIN_MINOR, MONEY_MAX_MINOR);
 
 /** API: decimal string in m² (1–100000, ≤ 2 fraction digits); internal: hundredths of m². */
 export const Area = decimalSchema(6, AREA_MIN_MINOR, AREA_MAX_MINOR);
+
+/** API: decimal string in m² (1–10000000, ≤ 2 fraction digits); internal: hundredths of m². */
+export const PlotArea = decimalSchema(8, PLOT_AREA_MIN_MINOR, PLOT_AREA_MAX_MINOR);

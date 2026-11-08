@@ -2,6 +2,7 @@
 // **Validates: Requirements 15.1, 15.4**
 import fc from 'fast-check';
 import {
+  BINDABLE_ATTRIBUTES,
   validateTaxonomy,
   type FlatTaxonomyConfig,
   type NestedTaxonomyConfig,
@@ -77,14 +78,25 @@ function expectedViolations(config: TaxonomyConfig): string[] {
   return [...expected].sort();
 }
 
-/** Reference normalization: nested groups in config order, types in config order. */
-function expectedTaxonomy(config: TaxonomyConfig): { code: string; types: string[] }[] {
+/**
+ * Reference normalization: nested groups in config order, types in config order. The generated
+ * configs carry no `attributes`, so every group allows all bindable Objektmerkmale (Req 2.2);
+ * the merkmal rules themselves are covered by Property 4 of `duplicate-detection`.
+ */
+function expectedTaxonomy(
+  config: TaxonomyConfig,
+): { code: string; types: string[]; attributes: string[] }[] {
+  const attributes = [...BINDABLE_ATTRIBUTES];
   if (!('types' in config))
-    return config.groups.map((g) => ({ code: g.code, types: [...g.types] }));
+    return config.groups.map((g) => ({ code: g.code, types: [...g.types], attributes }));
   // Only called for valid configs: group codes are unique and every type references one of them.
   const buckets = new Map<string, string[]>(config.groups.map((g) => [g.code, []]));
   for (const type of config.types) buckets.get(type.group)?.push(type.code);
-  return config.groups.map((g) => ({ code: g.code, types: buckets.get(g.code) ?? [] }));
+  return config.groups.map((g) => ({
+    code: g.code,
+    types: buckets.get(g.code) ?? [],
+    attributes,
+  }));
 }
 
 function typeCodesOf(config: TaxonomyConfig): string[] {

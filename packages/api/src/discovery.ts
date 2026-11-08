@@ -1,6 +1,7 @@
 import type { APIGatewayProxyResult } from 'aws-lambda';
 import type { AccessGuard } from '@open-estate/core';
 import {
+  BINDABLE_ATTRIBUTES,
   Currency,
   ERROR_CODES,
   formatDecimal,
@@ -10,6 +11,7 @@ import {
   requestSchemaOverride,
   SEARCH_QUERY_BOUNDS,
   tourHostIndex,
+  type BindableAttribute,
   type ExchangeRatesConfig,
   type LocaleConfig,
   type Schemas,
@@ -68,17 +70,25 @@ const decimalRange = ({ minMinor, maxMinor }: { minMinor: number; maxMinor: numb
 
 /** Field bounds as clients send them: amounts and area as decimal strings (Req 3.2, 4.7). */
 function fieldBounds() {
-  const { money, area, ...listing } = LISTING_BOUNDS;
+  const { money, area, plotArea, ...listing } = LISTING_BOUNDS;
   return {
-    listing: { ...listing, money: decimalRange(money), area: decimalRange(area) },
+    listing: {
+      ...listing,
+      money: decimalRange(money),
+      area: decimalRange(area),
+      plotArea: decimalRange(plotArea),
+    },
     search: SEARCH_QUERY_BOUNDS,
   };
 }
 
 /** `GET /meta` response; the frontend reads `taxonomy`, `locales`, `defaultCurrency`, `tourProviders`. */
 export interface MetaDocument {
-  /** Every group with all of its type codes, in configuration order (Req 15.9). */
-  taxonomy: { groups: { code: string; types: string[] }[] };
+  /**
+   * Every group with all of its type codes, in configuration order (Req 15.9), and the Objektmerkmale
+   * its listings may carry (duplicate-detection Req 2.6; all bindable attributes without binding).
+   */
+  taxonomy: { groups: { code: string; types: string[]; attributes: BindableAttribute[] }[] };
   offerTypes: string[];
   locales: { defaultLocale: string; enabled: { locale: string; label: string }[] };
   defaultCurrency: string;
@@ -93,7 +103,11 @@ export function buildMetaDocument(input: DiscoveryInput): MetaDocument {
   const rates = input.exchangeRates;
   return {
     taxonomy: {
-      groups: input.taxonomy.groups.map((g) => ({ code: g.code, types: [...g.types] })),
+      groups: input.taxonomy.groups.map((g) => ({
+        code: g.code,
+        types: [...g.types],
+        attributes: [...g.attributes],
+      })),
     },
     offerTypes: [...input.schemas.enums.offerTypes],
     locales: {
@@ -172,7 +186,17 @@ function componentSchemas(enums: Schemas['enums']) {
     'Meta',
     z.object({
       taxonomy: z.object({
-        groups: z.array(z.object({ code: PropertyGroup, types: z.array(ListingType) })),
+        groups: z.array(
+          z.object({
+            code: PropertyGroup,
+            types: z.array(ListingType),
+            attributes: z.array(z.enum(BINDABLE_ATTRIBUTES)).meta({
+              description:
+                'Optional property attributes (Objektmerkmale) listings of this group may carry; ' +
+                '`address.unit` stands for the field `address.unit`.',
+            }),
+          }),
+        ),
       }),
       offerTypes: z.array(OfferType),
       locales: z.object({

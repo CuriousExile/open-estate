@@ -6,38 +6,27 @@ import {
   CONFIG_BUCKET_ENV,
   ConfigError,
   describeInitFailure,
+  DUPLICATE_DETECTION_PARAMETER_ENV,
   DynamoDbConnectorRunStore,
-  DynamoDbDeletionBlocklistCheck,
-  DynamoDbListingKeyStore,
-  DynamoDbListingVersionStore,
-  DynamoDbManagedListingStore,
-  DynamoDbMetricCounterStore,
-  DynamoDbTransactor,
-  I18nConfig,
   isConfigFailure,
   loadConfig,
-  READ_MODEL_CONFIG_FILES,
+  loadOptionalConfigFile,
   READ_MODEL_ENV,
-  S3SnapshotStore,
   systemClock,
-  VersionedListingWriter,
   type ConfigSources,
 } from '@open-estate/core';
-import {
-  assertValidTaxonomy,
-  buildSchemas,
-  PiiAllowlistConfig,
-  TaxonomyConfig,
-  TourProvidersConfig,
-} from '@open-estate/shared';
-import { z, type ZodType } from 'zod';
+import { z } from 'zod';
 import { CRAWLER_ALLOWLIST_CONFIG_KEY } from './compliance/crawler-allowlist';
 import { CONNECTORS_CONFIG_KEY, connectorsFileSchema } from './connector-config';
 import type { SecretResolver } from './connectors/secrets';
 import { createDefaultRegistry } from './default-registry';
 import { ConnectorFramework, type ConnectorRunSummary } from './framework';
-import { DynamoDbDeletionBlocklist } from './pipeline/deletion-blocklist';
-import { ImportPipeline } from './pipeline/import-pipeline';
+import {
+  createImportPipeline,
+  IMPORT_CONFIG_FILES,
+  loadImportConfig,
+  PII_ALLOWLIST_FILE,
+} from './pipeline/import-pipeline-factory';
 import type { LogSink } from './run-logger';
 
 // Lambda of one connector run (design: "Connector-Orchestrierung": Scheduler → Step Functions →
@@ -46,7 +35,7 @@ import type { LogSink } from './run-logger';
 // both set to the connector's `timeoutSeconds` (Req 5.7).
 
 /** Object key of the PII allowlist in the private config bucket. */
-export const PII_ALLOWLIST_CONFIG_KEY = 'pii-allowlist.json';
+export const PII_ALLOWLIST_CONFIG_KEY = PII_ALLOWLIST_FILE;
 
 /** Environment variables of the connector Lambda (set by the IngestionStack). */
 export const CONNECTOR_LAMBDA_ENV = {
@@ -60,6 +49,13 @@ export const CONNECTOR_LAMBDA_ENV = {
   runRejectionsTable: 'RUN_REJECTIONS_TABLE_NAME',
   /** `VersionSnapshots` bucket of the `VersionedListingWriter`. */
   snapshotBucket: 'SNAPSHOT_BUCKET_NAME',
+  /** Duplikat_Index of the Duplikat_Prüfung of imports (duplicate-detection Req 5.1, 6.1). */
+  duplicateIndexTable: 'DUPLICATE_INDEX_TABLE_NAME',
+  /**
+   * SSM parameter with Ein/Aus of the Duplikat-Erkennung (`enabled` | `disabled`), read at most
+   * once a minute. Optional: without it the check always runs.
+   */
+  duplicateDetectionParameter: DUPLICATE_DETECTION_PARAMETER_ENV,
   configBucket: CONFIG_BUCKET_ENV,
   /** Connector this function is provisioned for; other ids are refused. */
   connectorId: 'CONNECTOR_ID',
@@ -67,15 +63,14 @@ export const CONNECTOR_LAMBDA_ENV = {
 
 /** Files the connector Lambda reads from the private config bucket. */
 export const CONNECTOR_CONFIG_FILES = {
-  taxonomy: READ_MODEL_CONFIG_FILES.taxonomy,
-  i18n: READ_MODEL_CONFIG_FILES.i18n,
+  taxonomy: IMPORT_CONFIG_FILES.taxonomy,
+  i18n: IMPORT_CONFIG_FILES.i18n,
   connectors: CONNECTORS_CONFIG_KEY,
-  /** Optional: missing ⇒ no tour provider allowed (default-deny, Req 16.9). */
-  tourProviders: READ_MODEL_CONFIG_FILES.tourProviders,
-  /** Optional: missing ⇒ every PII field is dropped (Req 18.3). */
-  piiAllowlist: PII_ALLOWLIST_CONFIG_KEY,
+  tourProviders: IMPORT_CONFIG_FILES.tourProviders,
+  piiAllowlist: IMPORT_CONFIG_FILES.piiAllowlist,
   /** Optional, read per crawler run: missing ⇒ no crawl target allowed (Req 6.1). */
   crawlerAllowlist: CRAWLER_ALLOWLIST_CONFIG_KEY,
+  duplicateDetection: IMPORT_CONFIG_FILES.duplicateDetection,
 } as const;
 
 /** Input of one invocation, e.g. `{ "connectorId": "partner-db", "runId": "<execution name>" }`. */
@@ -111,26 +106,6 @@ export class UnknownConnectorError extends Error {
   }
 }
 
-/** Optional file: a missing file yields `fallback`, an invalid one throws `ConfigError`. */
-async function loadOptional<T>(
-  key: string,
-  schema: ZodType<T>,
-  fallback: T,
-  sources: ConfigSources,
-): Promise<T> {
-  try {
-    return (await loadConfig({ files: [key] }, sources)).loadJson(key, schema);
-  } catch (error) {
-    const onlyThisFileMissing =
-      error instanceof ConfigError &&
-      error.code === 'CONFIG_MISSING' &&
-      error.names.length === 1 &&
-      error.names[0] === key;
-    if (onlyThisFileMissing) return fallback;
-    throw error;
-  }
-}
-
 function requireEnv(env: Readonly<Record<string, string | undefined>>, names: string[]): void {
   const missing = names.filter((name) => !env[name]?.trim());
   if (missing.length > 0) throw new ConfigError('CONFIG_MISSING', missing);
@@ -160,47 +135,44 @@ export async function initConnectorHandler(
   const s3 = sources.s3 ?? new S3Client({});
   const configSources: ConfigSources = { ...sources, env, s3 };
 
-  const [config, tourProviders, piiAllowlist] = await Promise.all([
-    loadConfig({ files: [files.taxonomy, files.i18n, files.connectors] }, configSources),
-    loadOptional(files.tourProviders, TourProvidersConfig, { providers: [] }, configSources),
-    loadOptional(files.piiAllowlist, PiiAllowlistConfig, { allowedFields: [] }, configSources),
+  const [config, importConfig] = await Promise.all([
+    loadConfig({ files: [files.connectors] }, configSources),
+    loadImportConfig(configSources),
   ]);
-  const taxonomy = assertValidTaxonomy(config.loadJson(files.taxonomy, TaxonomyConfig));
-  const locales = config.loadJson(files.i18n, I18nConfig);
   const connectors = config.loadJson(files.connectors, connectorsFileSchema);
 
   const dynamo = sources.dynamo ?? DynamoDBDocumentClient.from(new DynamoDBClient({}));
-  const table = (name: string) => ({ client: dynamo, tableName: env[name] ?? '' });
-  const listings = new DynamoDbManagedListingStore(table(names.listingsTable));
-  const keys = new DynamoDbListingKeyStore(table(names.listingKeysTable));
-  const blocklistTable = env[names.deletionBlocklistTable] ?? '';
   const now = sources.now;
-  const writer = new VersionedListingWriter({
-    listings,
-    versions: new DynamoDbListingVersionStore(table(names.listingVersionsTable)),
-    keys,
-    blocklist: new DynamoDbDeletionBlocklistCheck({ tableName: blocklistTable }),
-    counters: new DynamoDbMetricCounterStore(table(names.metricCountersTable)),
-    snapshots: new S3SnapshotStore({ client: s3, bucketName: env[names.snapshotBucket] ?? '' }),
-    transactor: new DynamoDbTransactor({ client: dynamo }),
-    clock: now === undefined ? systemClock : () => now().getTime(),
-  });
-  const pipeline = new ImportPipeline({
-    listingSchema: buildSchemas(taxonomy, locales).listing,
-    reader: {
-      listings,
-      keys,
-      blocklist: new DynamoDbDeletionBlocklist({ client: dynamo, tableName: blocklistTable }),
+  const clock = now === undefined ? systemClock : () => now().getTime();
+  const name = (variable: string) => env[variable] ?? '';
+  const detectionParameter = env[names.duplicateDetectionParameter]?.trim() || undefined;
+  const pipeline = createImportPipeline({
+    names: {
+      listingsTable: name(names.listingsTable),
+      deletionBlocklistTable: name(names.deletionBlocklistTable),
+      listingVersionsTable: name(names.listingVersionsTable),
+      listingKeysTable: name(names.listingKeysTable),
+      metricCountersTable: name(names.metricCountersTable),
+      snapshotBucket: name(names.snapshotBucket),
+      duplicateIndexTable: name(names.duplicateIndexTable),
     },
-    writer,
-    piiAllowlist,
-    tourProviders,
+    config: importConfig,
+    dynamo,
+    s3,
+    clock,
+    ...(detectionParameter !== undefined && { duplicateDetectionParameter: detectionParameter }),
+    ...(sources.ssm !== undefined && { ssm: sources.ssm }),
   });
   const registry = createDefaultRegistry({
     // Read per run, so allowlist changes apply without a restart; validated by the crawler.
     webCrawler: {
       loadAllowlist: () =>
-        loadOptional(files.crawlerAllowlist, z.unknown(), EMPTY_CRAWLER_ALLOWLIST, configSources),
+        loadOptionalConfigFile(
+          files.crawlerAllowlist,
+          z.unknown(),
+          EMPTY_CRAWLER_ALLOWLIST,
+          configSources,
+        ),
     },
     ...(sources.secrets && { secrets: sources.secrets }),
   });

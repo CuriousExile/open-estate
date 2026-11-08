@@ -10,7 +10,7 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@aws-sdk/client-cloudwatch": "3.1149.0",
+    "@aws-sdk/client-cloudwatch": "3.1142.0",
     "@open-estate/admin": "0.0.0",
     "@open-estate/api": "0.0.0",
     "@open-estate/core": "0.0.0",

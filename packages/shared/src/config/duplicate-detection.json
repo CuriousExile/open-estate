@@ -1,0 +1,65 @@
+{
+  "threshold": 0.7,
+  "maxCandidates": 200,
+  "textNearHamming": 3,
+  "geoNearMeters": 15,
+  "tolerances": {
+    "areaClosePercent": 2,
+    "areaNearPercent": 5,
+    "areaDiffersPercent": 10,
+    "pricePercent": 5,
+    "plotAreaClosePercent": 2,
+    "plotAreaDiffersPercent": 5
+  },
+  "weights": {
+    "SAME_SOURCE_URL": 0.6,
+    "SAME_PARCEL": 0.45,
+    "SAME_ADDRESS": 0.35,
+    "GEO_NEAR": 0.3,
+    "GEO_ANCHOR": 0.15,
+    "SAME_UNIT": 0.1,
+    "AREA_CLOSE": 0.2,
+    "AREA_NEAR": 0.1,
+    "AREA_DIFFERS": -0.4,
+    "ROOMS_EQUAL": 0.1,
+    "ROOMS_DIFFER": -0.3,
+    "ATTRIBUTES_EQUAL": 0.03,
+    "ATTRIBUTES_DIFFER": -0.25,
+    "PRICE_CLOSE": 0.05,
+    "TITLE_NEAR": 0.1,
+    "DESCRIPTION_NEAR": 0.15,
+    "MEDIA_SHARED": 0.15,
+    "MEDIA_SHARED_2": 0.3
+  },
+  "normalization": {
+    "streetSuffixes": {
+      "str": ["strasse", "straße", "str"],
+      "pl": ["platz", "pl"],
+      "weg": ["weg"],
+      "allee": ["allee", "al"],
+      "gasse": ["gasse", "g"],
+      "st": ["street", "st"],
+      "rd": ["road", "rd"],
+      "ave": ["avenue", "ave", "av"],
+      "ln": ["lane", "ln"],
+      "dr": ["drive", "dr"]
+    },
+    "unitNoiseWords": [
+      "whg",
+      "wohnung",
+      "we",
+      "einheit",
+      "apt",
+      "apartment",
+      "flat",
+      "unit",
+      "nr",
+      "no",
+      "top"
+    ]
+  },
+  "sweep": {
+    "timeUtc": "03:00",
+    "segments": 8
+  }
+}

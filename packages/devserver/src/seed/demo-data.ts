@@ -129,6 +129,80 @@ export interface ManualSeed {
   content: ContentInput;
 }
 
+/**
+ * Demo of the Duplikat-Erkennung (duplicate-detection): a repost of Berlin-Mitte by another member
+ * (stored INACTIVE with a Duplikat_Markierung), a flat in the same building (another unit, so no
+ * duplicate) and the same flat offered by Alpenblick (an Agenturübergreifender_Treffer after the
+ * Duplikat_Abgleich).
+ */
+export const DUPLICATE_DEMOS: Readonly<
+  Record<'repost' | 'neighbour' | 'otherAgency', ContentInput>
+> = {
+  repost: {
+    originalLocale: 'de',
+    title: '3-Zimmer-Altbau in Berlin Mitte mit Südbalkon – neu eingestellt',
+    description:
+      'Altbau mit Stuck und Dielen, Balkon nach Süden. Ruhige Seitenstraße, U-Bahn in fünf Minuten.',
+    translations: [],
+    offers: [sale('489000.00')],
+    listingType: 'apartment_unit',
+    rooms: 3,
+    area: '82.50',
+    address: {
+      city: 'Berlin',
+      postalCode: '10115',
+      country: 'DE',
+      street: 'Ackerstr. 12',
+      unit: 'WE 3',
+    },
+    media: media('apartment-day-white', 'interior-day-sand'),
+    tours: [],
+    floor: 2,
+    totalFloors: 5,
+  },
+  neighbour: {
+    originalLocale: 'de',
+    title: '2-Zimmer-Wohnung im Dachgeschoss, Ackerstraße',
+    description: 'Gleiches Haus, andere Wohnung: ausgebautes Dachgeschoss mit Gaube.',
+    translations: [],
+    offers: [sale('349000.00')],
+    listingType: 'apartment_unit',
+    rooms: 2,
+    area: '64',
+    address: {
+      city: 'Berlin',
+      postalCode: '10115',
+      country: 'DE',
+      street: 'Ackerstraße 12',
+      unit: 'WE 7',
+    },
+    media: media('apartment-day-navy'),
+    tours: [],
+    floor: 4,
+    totalFloors: 5,
+  },
+  otherAgency: {
+    originalLocale: 'de',
+    title: 'Altbauwohnung Berlin-Mitte, 3 Zimmer, Südbalkon',
+    description: 'Im Auftrag der Eigentümer: Altbau mit Stuck, Dielenboden und Südbalkon.',
+    translations: [],
+    offers: [sale('495000.00')],
+    listingType: 'apartment_unit',
+    rooms: 3,
+    area: '82.5',
+    address: {
+      city: 'Berlin',
+      postalCode: '10115',
+      country: 'DE',
+      street: 'Ackerstraße 12',
+      unit: 'WE 3',
+    },
+    media: [],
+    tours: [],
+    floor: 2,
+  },
+};
+
 /** Listings created in the portal (origin `MANUAL`). */
 export const MANUAL_LISTINGS: readonly ManualSeed[] = [
   {
@@ -154,10 +228,22 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       listingType: 'apartment_unit',
       rooms: 3,
       area: '82.5',
-      address: { city: 'Berlin', postalCode: '10115', country: 'DE', street: 'Ackerstraße 12' },
+      address: {
+        city: 'Berlin',
+        postalCode: '10115',
+        country: 'DE',
+        street: 'Ackerstraße 12',
+        unit: 'WE 3',
+      },
       geo: { lat: 52.532, lon: 13.385 },
       media: media('apartment-day-white', 'interior-day-sand', 'photo:residence-balcony'),
       tours: [],
+      // Objektmerkmale (duplicate-detection Req 1.1).
+      floor: 2,
+      totalFloors: 5,
+      yearBuilt: 1905,
+      bedrooms: 2,
+      bathrooms: 1,
     },
   },
   {
@@ -231,6 +317,9 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       address: { city: 'Hamburg', postalCode: '20249', country: 'DE' },
       media: [],
       tours: [],
+      floor: 6,
+      totalFloors: 6,
+      yearBuilt: 2019,
     },
   },
   {
@@ -251,6 +340,10 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       geo: { lat: 53.85, lon: 10.69 },
       media: media('townhouses-day-terracotta', 'interior-golden-terracotta'),
       tours: [],
+      yearBuilt: 1998,
+      plotArea: '210.00',
+      bedrooms: 3,
+      bathrooms: 2,
     },
   },
   {
@@ -290,6 +383,11 @@ export const MANUAL_LISTINGS: readonly ManualSeed[] = [
       address: { city: 'Potsdam', postalCode: '14469', country: 'DE' },
       media: media('house-golden-white', 'interior-night-white', 'photo:residence-garden'),
       tours: [],
+      yearBuilt: 1912,
+      plotArea: '1450.00',
+      bedrooms: 5,
+      bathrooms: 3,
+      parcelId: 'Flur 7/112',
     },
   },
   {

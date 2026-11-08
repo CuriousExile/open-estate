@@ -110,31 +110,44 @@ deleted with the stack). Replace `123456789012` and `eu-central-1` with your acc
    export API_URL=$(output Api ApiUrl)                       # ends with /dev/
    export FRONTEND_URL=$(output Frontend FrontendUrl)
    export OPEN_ESTATE_ADMIN_URL=$(output Admin AdminApiUrl)  # read by open-estate-admin
-   export OPEN_ESTATE_RELOAD_FUNCTIONS=$(output Admin ReloadFunctionNames)
+   export OPEN_ESTATE_RELOAD_FUNCTIONS=$(output Management ReloadFunctionNames)
    ADMIN_POLICY_ARN=$(output Admin AdministratorPolicyArn)
+   RELOAD_POLICY_ARN=$(output Management ReloadPolicyArn)
    OVERDUE_TOPIC_ARN=$(output Admin OverdueTopicArn)
    ALARM_TOPIC_ARN=$(output Monitoring AlarmTopicArn)
    ```
 
-   | Stack        | Output                                          | Used for                                                       |
-   | ------------ | ----------------------------------------------- | -------------------------------------------------------------- |
-   | `Api`        | `ApiUrl`                                        | Base URL of the Search API and the MCP server (`/mcp`)         |
-   | `Frontend`   | `FrontendUrl`, `DistributionDomainName`         | The web frontend (CloudFront)                                  |
-   | `Admin`      | `AdminApiUrl`                                   | `OPEN_ESTATE_ADMIN_URL` of the admin CLI                       |
-   | `Admin`      | `AdministratorPolicyArn`                        | Managed policy to attach to administrators                     |
-   | `Admin`      | `ReloadFunctionNames`                           | `OPEN_ESTATE_RELOAD_FUNCTIONS` of `open-estate-admin reload`   |
-   | `Admin`      | `OverdueTopicArn`                               | Notifications about overdue deletion requests                  |
-   | `Monitoring` | `AlarmTopicArn`, `DashboardName`                | Latency alarms and the CloudWatch dashboard                    |
-   | `Data`       | `ListingsTableName`, `ConfigBucketName`         | Seed script; configuration files                               |
-   | `Search`     | `CollectionEndpoint`, `IndexerDeadLetterQueueUrl` | Only with OpenSearch                                         |
+   | Stack            | Output                                               | Used for                                                     |
+   | ---------------- | ---------------------------------------------------- | ------------------------------------------------------------ |
+   | `Api`            | `ApiUrl`                                             | Base URL of the Search API and the MCP server (`/mcp`)       |
+   | `Frontend`       | `FrontendUrl`, `DistributionDomainName`              | The web frontend (CloudFront)                                |
+   | `Admin`          | `AdminApiUrl`                                        | `OPEN_ESTATE_ADMIN_URL` of the admin CLI                     |
+   | `Admin`          | `AdministratorPolicyArn`                             | Managed policy to attach to administrators                   |
+   | `Admin`          | `ReloadFunctionNames`                                | API, MCP and connector functions only (no Management API)    |
+   | `Admin`          | `OverdueTopicArn`                                    | Notifications about overdue deletion requests                |
+   | `Monitoring`     | `AlarmTopicArn`, `DashboardName`                     | Latency alarms and the CloudWatch dashboard                  |
+   | `Management`     | `ReloadFunctionNames`                                | `OPEN_ESTATE_RELOAD_FUNCTIONS` of `open-estate-admin reload` |
+   | `Management`     | `ReloadPolicyArn`                                    | Managed policy: administrators may reload the Management API |
+   | `Data`           | `ListingsTableName`, `ConfigBucketName`              | Seed script; configuration files                             |
+   | `Data`           | `DeletionBlocklistTableName`                         | Seed script, load-test generator                             |
+   | `ManagementData` | `ListingVersionsTableName`, `ListingKeysTableName`   | Seed script, load-test generator                             |
+   | `ManagementData` | `MetricCountersTableName`, `DuplicateIndexTableName` | Seed script, load-test generator                             |
+   | `ManagementData` | `SnapshotBucketName`                                 | Seed script, load-test generator                             |
+   | `Search`         | `CollectionEndpoint`, `IndexerDeadLetterQueueUrl`    | Only with OpenSearch                                         |
 
-8. **Seed the sample listings** (8 fictitious listings with source `seed`; re-running is
-   idempotent). The script finds the table through the `ListingsTableName` output of
-   `OpenEstate-<env>-Data`; `--table <name>` or `LISTINGS_TABLE_NAME` override the lookup.
+8. **Seed the sample listings** (11 fictitious listings with source `seed`; re-running is
+   idempotent). The script writes them through the import pipeline of the connectors, so they get
+   versions, field origins, counters and the duplicate check like imported listings: the repost
+   `seed-de-berlin-010` is stored `INACTIVE` with the `DUPLICATE` flag. It finds the stores through
+   the outputs of `OpenEstate-<env>-Data` and `OpenEstate-<env>-ManagementData` and reads taxonomy,
+   allowlists and `duplicate-detection.json` from the deployed config bucket, so deploy first. The
+   connector Lambda's variables (`LISTINGS_TABLE_NAME`, `DUPLICATE_INDEX_TABLE_NAME`, …,
+   `CONFIG_BUCKET`) override single lookups. `--concurrency <n>` (default 1) imports in parallel;
+   above 1 the repost may be created next to the original and is only flagged by the next sweep.
 
    ```bash
    npm run seed --workspace @open-estate/infra -- --env dev
-   # Seeded 8 listing(s) into OpenEstate-dev-Data-Listings…
+   # Seeded 11 listing(s) into OpenEstate-dev-Data-Listings…: 11 created (1 as possible duplicates), 0 updated, 0 unchanged, 0 rejected
    ```
 
 9. **Verify the API.**
@@ -153,12 +166,14 @@ deleted with the stack). Replace `123456789012` and `eu-central-1` with your acc
     API URL from the generated `runtime-config.json`; branding comes from `theme-config.json`.
 
 11. **Set up an administrator and the admin CLI.** The Admin API is IAM-authorized; every call is
-    SigV4-signed with your AWS credentials. Attach the managed policy to the administrator's user
-    or role:
+    SigV4-signed with your AWS credentials. Attach the managed policies to the administrator's
+    user or role (the second one lets `open-estate-admin reload` restart the Management API, which
+    is created after the Admin stack):
 
     ```bash
     aws iam attach-user-policy --user-name alice --policy-arn "$ADMIN_POLICY_ARN"
-    # or: aws iam attach-role-policy --role-name OpsAdmin --policy-arn "$ADMIN_POLICY_ARN"
+    aws iam attach-user-policy --user-name alice --policy-arn "$RELOAD_POLICY_ARN"
+    # or: aws iam attach-role-policy --role-name OpsAdmin --policy-arn "$ADMIN_POLICY_ARN" (same for the second)
     ```
 
     Then use the CLI (built in step 2; reference: [packages/admin/README.md](../packages/admin/README.md)):
@@ -294,26 +309,29 @@ All settings are CDK context values: `-c key=value` on the command line (or `con
 Relative paths resolve against the working directory, which is `packages/infra` when you use the
 workspace scripts.
 
-| Key                  | Default                                      | Example                                              | Effect                                                                                              |
-| -------------------- | -------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `env`                | `dev`                                        | `-c env=prod`                                        | Stack prefix, stage name, removal policy                                                            |
-| `defaultCurrency`    | `EUR`                                        | `-c defaultCurrency=THB`                             | Initial SSM `default-currency` (ISO 4217)                                                           |
-| `accessMode`         | `open`                                       | `-c accessMode=api-keys`                             | Initial SSM `access-mode`; change at runtime with `set-access-mode`                                 |
-| `rateLimit`          | `{"requests":60,"windowSeconds":60}`         | `-c rateLimit='{"requests":300,"windowSeconds":60}'` | Initial SSM `rate-limit` (1–10000 requests, 1–3600 s); change at runtime with `set-rate-limit`      |
-| `searchProvider`     | `dynamodb`                                   | `-c searchProvider=opensearch`                       | Adds the Search stack and the stream indexer                                                        |
-| `configDir`          | `packages/shared/src/config`                 | `-c configDir=../../my-config`                       | Directory validated and uploaded to the config bucket (taxonomy, allowlists, `connectors.json`)     |
-| `i18nConfigFile`     | `packages/frontend/public/i18n-config.json`  | `-c i18nConfigFile=../../my-config/i18n.json`        | Enabled locales, shared by frontend, API and MCP                                                    |
-| `wafRateLimit`       | `2000`                                       | `-c wafRateLimit=5000`                               | WAF block threshold per IP and 5 minutes (10–2,000,000,000)                                          |
-| `corsAllowedOrigins` | none                                         | `-c corsAllowedOrigins=http://localhost:4200`        | Extra browser origins besides the CloudFront origin (comma-separated, no path, no `*`)             |
-| `frontendAssetDir`   | `packages/frontend/dist/browser`             | `-c frontendAssetDir=../frontend/dist/browser`       | Built SPA to upload (must contain `index.html`)                                                     |
-| `frontendPriceClass` | `PriceClass_100`                             | `-c frontendPriceClass=PriceClass_All`               | CloudFront edge locations                                                                           |
-| `logLevel`           | `INFO`                                       | `-c logLevel=WARN`                                   | Powertools log level of every runtime Lambda (`DEBUG`, `INFO`, `WARN`, `ERROR`, `CRITICAL`, `SILENT`); raise it to cut CloudWatch Logs volume |
-| `metricsDisabled`    | `false`                                      | `-c metricsDisabled=true`                            | `true` stops the per-request `RequestLatency` EMF metric on every Lambda. Also removes the data behind the latency alarms and dashboard, so keep it off for monitored environments |
+| Key                  | Default                                     | Example                                              | Effect                                                                                              |
+| -------------------- | ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `env`                | `dev`                                       | `-c env=prod`                                        | Stack prefix, stage name, removal policy                                                            |
+| `defaultCurrency`    | `EUR`                                       | `-c defaultCurrency=THB`                             | Initial SSM `default-currency` (ISO 4217)                                                           |
+| `accessMode`         | `open`                                      | `-c accessMode=api-keys`                             | Initial SSM `access-mode`; change at runtime with `set-access-mode`                                 |
+| `rateLimit`          | `{"requests":60,"windowSeconds":60}`        | `-c rateLimit='{"requests":300,"windowSeconds":60}'` | Initial SSM `rate-limit` (1–10000 requests, 1–3600 s); change at runtime with `set-rate-limit`      |
+| `duplicateDetection` | `enabled`                                   | `-c duplicateDetection=disabled`                     | Initial SSM `duplicate-detection`: `disabled` starts the platform without duplicate check, duplicate index and daily check (saves their cost); a platform admin switches it in the admin mode (Operations) |
+| `searchProvider`     | `dynamodb`                                  | `-c searchProvider=opensearch`                       | Adds the Search stack and the stream indexer                                                        |
+| `configDir`          | `packages/shared/src/config`                | `-c configDir=../../my-config`                       | Directory validated and uploaded to the config bucket (taxonomy, allowlists, `connectors.json`)     |
+| `i18nConfigFile`     | `packages/frontend/public/i18n-config.json` | `-c i18nConfigFile=../../my-config/i18n.json`        | Enabled locales, shared by frontend, API and MCP                                                    |
+| `wafRateLimit`       | `2000`                                      | `-c wafRateLimit=5000`                               | WAF block threshold per IP and 5 minutes (10–2,000,000,000)                                         |
+| `corsAllowedOrigins` | none                                        | `-c corsAllowedOrigins=http://localhost:4200`        | Extra browser origins besides the CloudFront origin (comma-separated, no path, no `*`)              |
+| `frontendAssetDir`   | `packages/frontend/dist/browser`            | `-c frontendAssetDir=../frontend/dist/browser`       | Built SPA to upload (must contain `index.html`)                                                     |
+| `frontendPriceClass` | `PriceClass_100`                            | `-c frontendPriceClass=PriceClass_All`               | CloudFront edge locations                                                                           |
+| `logLevel`           | `INFO`                                      | `-c logLevel=WARN`                                   | Powertools log level of every runtime Lambda (`DEBUG`, `INFO`, `WARN`, `ERROR`, `CRITICAL`, `SILENT`); raise it to cut CloudWatch Logs volume |
+| `metricsDisabled`    | `false`                                     | `-c metricsDisabled=true`                            | `true` stops the per-request `RequestLatency` EMF metric on every Lambda. Also removes the data behind the latency alarms and dashboard, so keep it off for monitored environments |
 
 The SSM parameters (`/open-estate/<env>/default-currency`, `access-mode`, `rate-limit`,
-`search-provider`, `config-bucket`) receive the context value when CloudFormation creates or
-changes them. Values set later with `open-estate-admin` stay until a deployment changes that
-parameter's template value, so keep context and runtime settings consistent.
+`search-provider`, `config-bucket`, `duplicate-detection`) receive the context value when
+CloudFormation creates or changes them. Values set later with `open-estate-admin` or in the admin
+mode stay until a deployment changes that parameter's template value, so keep context and runtime
+settings consistent (for example, deploy with `-c duplicateDetection=disabled` as long as you keep
+the duplicate detection switched off).
 
 Taxonomy and allowlist changes in `configDir` reach the config bucket with the next deployment.
 Functions load them only at init, and a deployment that changes only config files does not
@@ -325,9 +343,9 @@ or after editing files in the bucket directly.
 Each entry: **symptom → cause → fix.** API errors always have the body
 `{"errors":[{"code":"…","message":"…"}]}`; the `code` identifies the case.
 
-**Finding Lambda logs.** All functions log JSON lines (`level`, `message`, fields). The Search API
-and MCP function names are in the `ReloadFunctionNames` output; their logs are in
-`/aws/lambda/<function name>`. Example:
+**Finding Lambda logs.** All functions log JSON lines (`level`, `message`, fields). The Search API,
+MCP, connector and Management API function names are in the `ReloadFunctionNames` output of the
+Management stack; their logs are in `/aws/lambda/<function name>`. Example:
 
 ```bash
 aws logs tail "/aws/lambda/$(echo "$OPEN_ESTATE_RELOAD_FUNCTIONS" | cut -d, -f1)" --since 1h
@@ -440,7 +458,7 @@ browser may report it as a CORS error; check the status in the network tab.
 - **Fix:** attach the policy (step 11), refresh credentials (`aws sso login`), check
   `aws sts get-caller-identity` and that `OPEN_ESTATE_ADMIN_URL` includes the stage
   (`…/dev`). `reload` failures name `lambda:GetFunctionConfiguration`/`UpdateFunctionConfiguration`
-  — also granted by that policy.
+  — granted by that policy, for the Management API by `ReloadPolicyArn` of the Management stack.
 
 ### CORS errors in the browser
 

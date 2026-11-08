@@ -9,6 +9,10 @@ import {
   AuditEntry,
   ConnectorRunView,
   DryRunResponse,
+  DuplicateDetectionView,
+  DuplicateReportPage,
+  DuplicateReportView,
+  DuplicateSweepStarted,
   MemberView,
   MetricResult,
   page,
@@ -247,6 +251,52 @@ export const fetchAuditLog = (
   api.request('GET', '/audit-log', {
     query: { ...query, pageToken },
     ...opts(signal, (v) => AuditPage.parse(v)),
+  });
+
+// --- Agenturübergreifende_Treffer (duplicate-detection Req 10.2, 11.3, 11.5, 11.7) -----------
+
+export interface DuplicateReportQuery {
+  state: 'OPEN' | 'DISMISSED' | 'RESOLVED';
+  agencyId?: string;
+}
+
+export const fetchDuplicateReports = (
+  api: AdminRequester,
+  { query, pageToken, signal }: Call & { query: DuplicateReportQuery; pageToken?: string },
+) =>
+  api.request('GET', '/platform/duplicate-reports', {
+    query: { ...query, pageToken },
+    ...opts(signal, (v) => DuplicateReportPage.parse(v)),
+  });
+
+export const dismissDuplicateReport = (
+  api: AdminRequester,
+  reportId: string,
+  { signal }: Call = {},
+) =>
+  api.request('POST', `/platform/duplicate-reports/${encodeURIComponent(reportId)}/dismiss`, {
+    ...opts(signal, (v) => DuplicateReportView.parse(v)),
+  });
+
+export const startDuplicateSweep = (api: AdminRequester, { signal }: Call = {}) =>
+  api.request('POST', '/platform/duplicate-sweeps', {
+    ...opts(signal, (v) => DuplicateSweepStarted.parse(v)),
+  });
+
+/** Ein/Aus of the Duplikat-Erkennung (duplicate-detection design: "Ein- und Ausschalten"). */
+export const getDuplicateDetection = (api: AdminRequester, { signal }: Call = {}) =>
+  api.request('GET', '/platform/duplicate-detection', {
+    ...opts(signal, (v) => DuplicateDetectionView.parse(v)),
+  });
+
+export const setDuplicateDetection = (
+  api: AdminRequester,
+  enabled: boolean,
+  { signal }: Call = {},
+) =>
+  api.request('PUT', '/platform/duplicate-detection', {
+    body: { enabled },
+    ...opts(signal, (v) => DuplicateDetectionView.parse(v)),
   });
 
 // --- operations `/platform/*` (Req 10.7) -----------------------------------------------------

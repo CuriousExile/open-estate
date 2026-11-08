@@ -1,5 +1,7 @@
 import {
+  DuplicateDetector,
   fromManagedListingItem,
+  InMemoryDuplicateIndexStore,
   InMemoryListingKeyStore,
   InMemoryListingVersionStore,
   InMemoryManagedListingStore,
@@ -12,7 +14,12 @@ import {
   type InMemoryOp,
   type ManagedListing,
 } from '@open-estate/core';
-import type { Listing } from '@open-estate/shared';
+import {
+  DEFAULT_DUPLICATE_CONFIG,
+  type DuplicateConfig,
+  type Listing,
+  type Taxonomy,
+} from '@open-estate/shared';
 import { InMemoryDeletionBlocklist } from './deletion-blocklist';
 import type { ImportTargetReader } from './import-target';
 
@@ -21,6 +28,11 @@ export interface InMemoryImportStoreOptions {
   readonly blocklist?: InMemoryDeletionBlocklist;
   /** Time of versions and provenance (`lastImportedAt`). */
   readonly clock?: Clock;
+  /**
+   * Duplikat-Erkennung (duplicate-detection Req 5, 6): with it, the writer keeps an in-memory
+   * Duplikat_Index and `detector` checks like the production wiring.
+   */
+  readonly duplicates?: { readonly taxonomy: Taxonomy; readonly config?: DuplicateConfig };
 }
 
 /**
@@ -36,12 +48,24 @@ export class InMemoryImportStore {
   readonly blocklist: InMemoryDeletionBlocklist;
   readonly writer: VersionedListingWriter<InMemoryOp>;
   readonly reader: ImportTargetReader;
+  readonly duplicateIndex = new InMemoryDuplicateIndexStore();
+  /** Duplikat_Prüfung for the pipeline; `undefined` without the `duplicates` option. */
+  readonly detector: DuplicateDetector | undefined;
 
   constructor({
     blocklist = new InMemoryDeletionBlocklist(),
     clock = systemClock,
+    duplicates,
   }: InMemoryImportStoreOptions = {}) {
     this.blocklist = blocklist;
+    this.detector =
+      duplicates === undefined
+        ? undefined
+        : new DuplicateDetector({
+            index: this.duplicateIndex,
+            taxonomy: duplicates.taxonomy,
+            config: duplicates.config ?? DEFAULT_DUPLICATE_CONFIG,
+          });
     this.writer = new VersionedListingWriter({
       listings: this.listings,
       versions: this.versions,
@@ -51,6 +75,9 @@ export class InMemoryImportStore {
       snapshots: this.snapshots,
       transactor: new InMemoryTransactor(),
       clock,
+      ...(this.detector !== undefined && {
+        duplicates: { index: this.duplicateIndex, detector: this.detector },
+      }),
     });
     this.reader = { listings: this.listings, keys: this.keys, blocklist };
   }

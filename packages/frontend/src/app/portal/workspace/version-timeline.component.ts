@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, input, output } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { formatDateTime } from '../../listing/listing-detail-model';
 import { canRestore, type TimelineItem } from './version-timeline-model';
@@ -11,7 +12,7 @@ import { changeTypeKey, channelKey, statusKey } from './workspace-model';
  */
 @Component({
   selector: 'oe-version-timeline',
-  imports: [TranslocoPipe],
+  imports: [RouterLink, TranslocoPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <ol class="timeline">
@@ -59,6 +60,12 @@ import { changeTypeKey, channelKey, statusKey } from './workspace-model';
                 'portal.workspace.history.importInfo'
                   | transloco: { connector: connector.connectorId, runId: connector.runId }
               }}
+            </p>
+          }
+          @if (item.autoDeactivated; as reason) {
+            <p class="auto-deactivated" data-status-reason="DUPLICATE">
+              {{ 'portal.workspace.history.autoDeactivated' | transloco }}
+              <a [routerLink]="['/portal/listings', reason.originalId]">{{ reason.originalId }}</a>
             </p>
           }
           @if (item.restoredFrom !== undefined) {
@@ -177,6 +184,12 @@ import { changeTypeKey, channelKey, statusKey } from './workspace-model';
     }
     .overwritten-note {
       font-size: 0.9rem;
+    }
+    .auto-deactivated {
+      color: var(--color-gold);
+    }
+    .auto-deactivated a {
+      color: var(--color-accent);
     }
     .pill {
       justify-self: start;

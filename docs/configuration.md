@@ -2,17 +2,19 @@
 
 Open Estate is configured with JSON files. You don't change application code to rebrand the frontend,
 add a language, extend the property taxonomy, allow a 3D tour provider or set exchange rates. This
-page covers those areas. Connector configuration (`connectors.json`, `pii-allowlist.json`,
-`crawler-allowlist.json`) is described in [connectors.md](connectors.md).
+page covers those areas, plus the rules of the duplicate detection. Connector configuration
+(`connectors.json`, `pii-allowlist.json`, `crawler-allowlist.json`) is described in
+[connectors.md](connectors.md).
 
-| File                                             | Read by                                    | Takes effect                       |
-| ------------------------------------------------ | ------------------------------------------ | ---------------------------------- |
-| `packages/frontend/public/theme-config.json`     | Frontend                                   | Deploy, then reload the page       |
-| `packages/frontend/public/i18n-config.json`      | Frontend; mirrored to API, MCP, connectors | Deploy (frontend); reload (Lambda) |
-| `packages/frontend/public/i18n/<locale>.json`    | Frontend                                   | Deploy, then reload the page       |
-| `packages/shared/src/config/taxonomy.json`       | API, MCP, connectors; frontend via `/meta` | Deploy, then reload (Lambda)       |
-| `packages/shared/src/config/tour-providers.json` | API, MCP, connectors; CSP of the frontend  | Deploy, then reload (Lambda)       |
-| `packages/shared/src/config/exchange-rates.json` | API, MCP; frontend via `/meta`             | Deploy, then reload (Lambda)       |
+| File                                                  | Read by                                                    | Takes effect                                    |
+| ----------------------------------------------------- | ---------------------------------------------------------- | ----------------------------------------------- |
+| `packages/frontend/public/theme-config.json`          | Frontend                                                   | Deploy, then reload the page                    |
+| `packages/frontend/public/i18n-config.json`           | Frontend; mirrored to API, MCP, connectors                 | Deploy (frontend); reload (Lambda)              |
+| `packages/frontend/public/i18n/<locale>.json`         | Frontend                                                   | Deploy, then reload the page                    |
+| `packages/shared/src/config/taxonomy.json`            | API, MCP, connectors, Management API; frontend via `/meta` | Deploy, then reload (Lambda)                    |
+| `packages/shared/src/config/tour-providers.json`      | API, MCP, connectors, Management API; CSP of the frontend  | Deploy, then reload (Lambda)                    |
+| `packages/shared/src/config/exchange-rates.json`      | API, MCP; frontend via `/meta`                             | Deploy, then reload (Lambda)                    |
+| `packages/shared/src/config/duplicate-detection.json` | Management API, connectors, daily duplicate check          | See [Duplicate detection](#duplicate-detection) |
 
 ## Applying changes
 
@@ -31,15 +33,18 @@ The frontend serves `index.html`, `theme-config.json`, `i18n-config.json` and `i
 `Cache-Control: no-cache`, and each deploy invalidates them in CloudFront. Changes show up the next
 time a user loads the page (Req 8.2).
 
-API, MCP and connector Lambdas load the taxonomy, the locale list and the tour allowlist only once,
-when an execution environment starts (cold start). A deploy uploads the new files to the config
-bucket, but it does not restart running instances. To restart the Lambdas that read these files,
-run `open-estate-admin reload` (see [packages/admin/README.md](../packages/admin/README.md#reload)).
-The AdminStack output `ReloadFunctionNames` lists those functions:
+API, MCP, connector and Management API Lambdas load the taxonomy, the locale list, the tour
+allowlist and the duplicate rules only once, when an execution environment starts (cold start). A
+deploy uploads the new files to the config bucket, but it does not restart running instances. To
+restart the Lambdas that read these files, run `open-estate-admin reload` (see
+[packages/admin/README.md](../packages/admin/README.md#reload)) or, as Plattform_Admin, use
+`POST /platform/reload` of the Management API. The ManagementStack output `ReloadFunctionNames`
+lists those functions (the administrator needs the `ReloadPolicyArn` policy of that stack for the
+Management API itself):
 
 ```bash
 export OPEN_ESTATE_RELOAD_FUNCTIONS=$(aws cloudformation describe-stacks \
-  --stack-name OpenEstate-prod-Admin \
+  --stack-name OpenEstate-prod-Management \
   --query "Stacks[0].Outputs[?OutputKey=='ReloadFunctionNames'].OutputValue" --output text)
 npx open-estate-admin reload
 ```
@@ -408,6 +413,33 @@ locale. A missing label shows the code itself.
 { "taxonomy.group.hospitality": "Hospitality", "taxonomy.type.hotel": "Hotel" }
 ```
 
+### Property attributes per group
+
+A group may list the optional [property attributes](api.md#property-attributes) its listings can
+carry in `attributes`. Without `attributes`, a group allows all of them.
+
+```json
+{
+  "groups": [
+    {
+      "code": "apartment",
+      "types": ["apartment_unit", "condominium", "penthouse", "loft"],
+      "attributes": ["address.unit", "floor", "totalFloors", "yearBuilt", "bedrooms", "bathrooms"]
+    },
+    { "code": "land", "types": ["building_plot"], "attributes": ["plotArea", "parcelId"] }
+  ]
+}
+```
+
+Allowed values: `address.unit`, `floor`, `totalFloors`, `yearBuilt`, `plotArea`, `bedrooms`,
+`bathrooms`, `parcelId`; anything else is `UNKNOWN_ATTRIBUTE`, a code listed twice in one group
+`DUPLICATE_ATTRIBUTE` (`address.houseNumber` is always allowed).
+An attribute the listing type's group does not allow is dropped on every channel: the Management
+API names it in `droppedFields` of its answer, connectors in the run log; the rest of the listing is
+stored. `/meta` publishes the lists
+(`taxonomy.groups[].attributes`), and the portal's listing form shows exactly the attributes of the
+selected type's group. In the flat format, put `attributes` on the group objects.
+
 ## 3D tour providers
 
 `tour-providers.json` is the allowlist of hosts that 3D tours may be embedded from. It is
@@ -489,3 +521,99 @@ The file is optional. Without it `/meta` has no `exchangeRates`, the frontend of
 *Original currency*, and price filters compare in one currency. Rates are never fetched from an
 external service: update the file by hand, deploy and run `open-estate-admin reload` (see
 [known issues](known-issues.md#search-api)).
+
+## Duplicate detection
+
+### Switching it on and off
+
+The duplicate detection costs reads and writes on every listing write (candidate search, the
+duplicate index) and a daily check that reads every listing. If that is too expensive for now,
+switch it off; nothing is lost and it can be switched on again at any time. The value is the SSM
+parameter `/open-estate/<env>/duplicate-detection` (`enabled` or `disabled`):
+
+- **At deployment:** `-c duplicateDetection=disabled` (default `enabled`, see
+  [installation](installation.md#configuration-overrides)). The deployment only writes the
+  parameter when this value changes, so a value switched in the admin mode stays.
+- **At runtime:** admin mode → **Operations** → **Duplicate detection** (switch, asks before
+  switching off), or `PUT /platform/duplicate-detection` with `{"enabled": false}` (Plattform_Admin,
+  `platform:operate`). Running functions apply it within 60 seconds; no reload, no deployment.
+- **Local demo:** `DEV_DUPLICATE_DETECTION=disabled npm run dev` (see [local-demo.md](local-demo.md)).
+
+While it is off:
+
+- creations and changes through the Management API, the connectors, `npm run seed` and the
+  load-test generator are stored as requested: no candidate search, no flag, a duplicate stays
+  `ACTIVE`, and the duplicate index is not maintained (no writes);
+- the daily check ends right after its start (logged with `"status":"SKIPPED"`), and
+  `POST /platform/duplicate-sweeps` answers `409 DUPLICATE_DETECTION_DISABLED`;
+- existing flags and reports across agencies stay visible; agencies can still release a flagged
+  listing or dismiss its flag, and platform admins can dismiss reports;
+- `Idempotency-Key` on `POST /listings` keeps working (it is independent of the check).
+
+Switching it on in the admin mode (or with `PUT /platform/duplicate-detection`) starts a duplicate
+check at once: it rebuilds the index from all listings and sets or removes every flag, so
+duplicates created while the detection was off are flagged then — but stay online, because the
+check never changes a status. Until that run has finished, creations are checked against the index
+as it was when the detection was switched off. Switched on by a deployment instead, the next daily
+run catches up.
+
+### Rules
+
+`duplicate-detection.json` holds the rules of the duplicate detection (how they work:
+[Management API](management-api.md#duplicate-detection)). The file is optional; without it the
+defaults below apply. Every key is optional, objects are strict (unknown keys are rejected), and
+synth reports every invalid value (`DuplicateConfig` in `packages/shared/src/duplicates/config.ts`).
+
+```json
+{
+  "threshold": 0.7,
+  "maxCandidates": 200,
+  "textNearHamming": 3,
+  "geoNearMeters": 15,
+  "tolerances": {
+    "areaClosePercent": 2,
+    "areaNearPercent": 5,
+    "areaDiffersPercent": 10,
+    "pricePercent": 5,
+    "plotAreaClosePercent": 2,
+    "plotAreaDiffersPercent": 5
+  },
+  "weights": { "SAME_ADDRESS": 0.35, "AREA_CLOSE": 0.2, "…": "…" },
+  "normalization": {
+    "streetSuffixes": { "str": ["strasse", "straße", "str"], "…": ["…"] },
+    "unitNoiseWords": ["whg", "wohnung", "we", "einheit", "apt", "apartment", "flat", "unit", "nr", "no", "top"]
+  },
+  "sweep": { "timeUtc": "03:00", "segments": 8 }
+}
+```
+
+| Key                   | Default                              | Range   | Meaning                                                                                                       |
+| --------------------- | ------------------------------------ | ------- | ------------------------------------------------------------------------------------------------------------- |
+| `threshold`           | 0.7                                  | 0.05–1  | A pair with a location anchor is a duplicate from this value                                                  |
+| `maxCandidates`       | 200                                  | 10–1000 | Listings compared per check at most; the most specific matches are kept                                       |
+| `textNearHamming`     | 3                                    | 0–7     | Title/description signatures with at most this many different bits count as nearly equal                      |
+| `geoNearMeters`       | 15                                   | 1–50    | Distance of `GEO_NEAR`; up to 50 m counts as `GEO_ANCHOR`                                                     |
+| `tolerances.*Percent` | see above                            | 0–100   | Area, price and plot area tolerances; `areaClose ≤ areaNear ≤ areaDiffers`, `plotAreaClose ≤ plotAreaDiffers` |
+| `weights.<REASON>`    | see [table](management-api.md#rules) | −1–1    | Weight of each reason except `EXACT`                                                                          |
+| `normalization`       | German and English                   | –       | Street suffix spellings (canonical → aliases) and words ignored in unit designations                          |
+| `sweep.timeUtc`       | `03:00`                              | HH:MM   | Start of the daily check (UTC)                                                                                |
+| `sweep.segments`      | 8                                    | 1–64    | Parallel parts of the daily check; raise for very large stocks                                                |
+
+When changes take effect:
+
+- **Daily check:** reads the file at the start of every run, so changed rules apply to all
+  listings with the next run (or start one: `POST /platform/duplicate-sweeps`, admin mode →
+  "Duplicates across agencies"). Changes of `normalization` or `textNearHamming` make the run
+  rebuild every stored profile.
+- **Management API and connectors:** read the file when an execution environment starts. Run
+  `open-estate-admin reload` or `POST /platform/reload`; both restart the connectors and the
+  Management API.
+- **`sweep.timeUtc`:** the schedule is created at synth time; a new time needs a deployment.
+
+The defaults were calibrated with a catalog of realistic pairs
+(`packages/shared/test/duplicates/calibration.test.ts`): reposts with a new text, typing variants,
+price changes within 5 %, shared photos and parcels are duplicates; neighbouring house numbers,
+other units or floors, other postal codes, sale versus rent, and equal flats without any location
+anchor are not. Without unit or floor, identical flats at one address are reported as possible
+duplicates. Run that test after changing weights or the threshold.
+
