@@ -281,9 +281,9 @@ interface Pending {
       <form class="inline" (submit)="saveAccessMode($event)" novalidate>
         <label class="field">
           <span>{{ 'portal.admin.ops.accessMode.label' | transloco }}</span>
-          <select [value]="accessMode()" (change)="accessMode.set(modeOf($event))">
+          <select (change)="accessMode.set(modeOf($event))">
             @for (mode of modes; track mode) {
-              <option [value]="mode">
+              <option [value]="mode" [selected]="mode === accessMode()">
                 {{ 'portal.admin.ops.accessMode.' + mode | transloco }}
               </option>
             }

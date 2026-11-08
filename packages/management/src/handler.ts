@@ -131,7 +131,12 @@ export function createManagementHandler(deps: ManagementHandlerDeps): Management
     });
     const outcome: Outcome = admitted.ok
       ? { reply: await route.run(input, admitted.value), route, principal: admitted.value }
-      : { reply: failure(admitted.error), route };
+      : {
+          // The reply carries the error only; an identified caller is for the audit entry.
+          reply: failure(admitted.error),
+          route,
+          ...(admitted.principal !== undefined && { principal: admitted.principal }),
+        };
     await auditDenial(event, method, outcome);
     return outcome.reply;
   }

@@ -83,9 +83,26 @@ export function cognitoAccessTokenVerifier({
   };
 }
 
+/**
+ * Result of {@link Authenticator.authenticate}. A refusal names the caller when the credential was
+ * valid but its agency is suspended (`AGENCY_SUSPENDED`): the `access-denied` audit entry records
+ * the actor "if known" (Req 2.8). Only for the audit — the response contains the error alone.
+ */
+export type AuthenticationResult =
+  | { readonly ok: true; readonly value: Principal }
+  | { readonly ok: false; readonly error: ApiError; readonly principal?: Principal };
+
 export interface Authenticator {
   /** Errors: `AUTH_MISSING` | `AUTH_INVALID` | `MACHINE_ACCESS_EXPIRED` (401), `AGENCY_SUSPENDED` (403). */
-  authenticate(authorization: string | undefined): Promise<Result<Principal, ApiError>>;
+  authenticate(authorization: string | undefined): Promise<AuthenticationResult>;
+}
+
+/** A refused but identified caller (`AGENCY_SUSPENDED`); other refusals stay anonymous. */
+function identified(
+  refusal: { readonly ok: false; readonly error: ApiError },
+  principal: Principal,
+): AuthenticationResult {
+  return refusal.error.code === 'AGENCY_SUSPENDED' ? { ...refusal, principal } : refusal;
 }
 
 export interface AuthenticatorOptions {
@@ -163,7 +180,7 @@ export class CachingAuthenticator implements Authenticator {
     this.lastUsedThrottle = new TtlCache(this.clock, LAST_USED_WRITE_INTERVAL_MS);
   }
 
-  async authenticate(authorization: string | undefined): Promise<Result<Principal, ApiError>> {
+  async authenticate(authorization: string | undefined): Promise<AuthenticationResult> {
     if (authorization === undefined || authorization.trim() === '') return fail('AUTH_MISSING');
     const credential = BEARER.exec(authorization)?.[1];
     if (credential === undefined) return fail('AUTH_INVALID');
@@ -172,7 +189,7 @@ export class CachingAuthenticator implements Authenticator {
       : this.authenticateUser(credential);
   }
 
-  private async authenticateUser(token: string): Promise<Result<Principal, ApiError>> {
+  private async authenticateUser(token: string): Promise<AuthenticationResult> {
     const userId = await this.tokenVerifier.verify(token);
     if (userId === null) return fail('AUTH_INVALID');
     const membership = await this.membershipCache.get(userId, () => this.memberships.get(userId));
@@ -184,12 +201,19 @@ export class CachingAuthenticator implements Authenticator {
     }
     const agencyId = membership.agencyId;
     if (agencyId === undefined) return fail('AUTH_INVALID');
+    const principal: Principal = {
+      kind: 'user',
+      userId,
+      displayName,
+      role: membership.role,
+      agencyId,
+    };
     const agencyCheck = await this.checkAgency(agencyId);
-    if (!agencyCheck.ok) return agencyCheck;
-    return ok({ kind: 'user', userId, displayName, role: membership.role, agencyId });
+    if (!agencyCheck.ok) return identified(agencyCheck, principal);
+    return ok(principal);
   }
 
-  private async authenticateMachine(credential: string): Promise<Result<Principal, ApiError>> {
+  private async authenticateMachine(credential: string): Promise<AuthenticationResult> {
     const parsed = parseMachineCredential(credential);
     if (parsed === null) return fail('AUTH_INVALID');
     const { keyId, secret } = parsed;
@@ -201,16 +225,17 @@ export class CachingAuthenticator implements Authenticator {
     if (access.expiresAt !== undefined && Date.parse(access.expiresAt) <= now) {
       return fail('MACHINE_ACCESS_EXPIRED');
     }
-    const agencyCheck = await this.checkAgency(access.agencyId);
-    if (!agencyCheck.ok) return agencyCheck;
-    await this.touchLastUsed(keyId, now);
-    return ok({
+    const principal: Principal = {
       kind: 'machine',
       keyId,
       label: access.label,
       agencyId: access.agencyId,
       permissions: [...access.permissions],
-    });
+    };
+    const agencyCheck = await this.checkAgency(access.agencyId);
+    if (!agencyCheck.ok) return identified(agencyCheck, principal);
+    await this.touchLastUsed(keyId, now);
+    return ok(principal);
   }
 
   private async checkAgency(agencyId: string): Promise<Result<null, ApiError>> {

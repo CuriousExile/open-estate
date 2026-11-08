@@ -1,9 +1,0 @@
-{
-  "apiBaseUrl": "/api",
-  "portal": {
-    "issuer": "http://127.0.0.1:4310/oidc",
-    "cognitoDomainUrl": "http://127.0.0.1:4310/oidc",
-    "clientId": "local-portal-client",
-    "managementApiUrl": "/management"
-  }
-}

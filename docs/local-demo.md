@@ -23,11 +23,36 @@ start (no watch mode): after changing backend code or the seed data
 (`packages/devserver/src/seed/`), restart `npm run dev`. Nothing needs to be deployed for that;
 `ng serve` reloads frontend changes by itself.
 
-`npm run dev:server` starts only the dev server (no Angular, works on Node 20). Environment
-variables: `DEV_PORT` (default `4310`), `DEV_HOST` (loopback addresses only),
-`DEV_FRONTEND_ORIGIN` (default `http://127.0.0.1:4200`), `DEV_QUIET=1` (no request log). The
-SPA's dev configuration ([`packages/frontend/dev/`](../packages/frontend/dev/)) assumes the default
-ports.
+`npm run dev:server` starts only the dev server (no Angular, works on Node 20).
+
+### Ports and environment variables
+
+Both `npm run dev` and `npm run dev:server` read these variables:
+
+| Variable              | Default                                  | Meaning                                                  |
+| --------------------- | ---------------------------------------- | -------------------------------------------------------- |
+| `DEV_PORT`            | `4310`                                   | Port of the dev server (APIs, MCP, OIDC, demo images)    |
+| `DEV_FRONTEND_PORT`   | `4200`                                   | Port of the SPA (`ng serve`)                             |
+| `DEV_HOST`            | `127.0.0.1`                              | Interface of the dev server; loopback addresses only     |
+| `DEV_FRONTEND_ORIGIN` | `http://127.0.0.1:<DEV_FRONTEND_PORT>`   | Only if the browser reaches the SPA under another origin |
+| `DEV_QUIET`           | unset                                    | `1`: no request log                                      |
+| `DEV_TEST_HOOKS`      | unset                                    | `1`: `POST /__test__/reset` re-seeds all state (browser tests) |
+
+For example, to run a second demo next to one on the default ports:
+
+```bash
+DEV_PORT=5310 DEV_FRONTEND_PORT=5200 npm run dev    # SPA at http://127.0.0.1:5200
+```
+
+`npm run dev` validates the variables before anything starts and refuses equal ports. Nothing in
+the SPA's dev setup contains a port. The `ng serve` proxy
+([`packages/frontend/dev/proxy.local.mjs`](../packages/frontend/dev/proxy.local.mjs)) reads
+`DEV_HOST` and `DEV_PORT`. The dev server generates the SPA's `runtime-config.json` (with its own
+OIDC issuer), like the ManagementStack does in AWS. If you start `ng serve --configuration local`
+yourself, set the same `DEV_PORT` (and `DEV_HOST`) as for the dev server, and pass
+`--port <DEV_FRONTEND_PORT>`.
+
+The URLs below use the default ports:
 
 | What                 | URL                                                               |
 | -------------------- | ----------------------------------------------------------------- |
@@ -38,11 +63,11 @@ ports.
 | OIDC issuer          | `http://127.0.0.1:4310/oidc` (`/.well-known/openid-configuration`) |
 | Overview             | `http://127.0.0.1:4310/` (JSON with URLs and users)               |
 | Demo images          | `http://127.0.0.1:4310/demo-media/…` (see [Demo images](#demo-images)) |
+| SPA runtime config   | `http://127.0.0.1:4310/runtime-config.json` (generated, see above) |
 
-The SPA reaches `/api`, `/management` and `/demo-media` through the `ng serve` proxy
-(`packages/frontend/dev/proxy.local.json`); its `runtime-config.json` comes from
-`packages/frontend/dev/` via the `local` build configuration, the deployed
-`public/runtime-config.json` stays untouched.
+The SPA reaches `/api`, `/management`, `/mcp`, `/demo-media` and `/runtime-config.json` through
+the `ng serve` proxy (`packages/frontend/dev/proxy.local.mjs`). The `local` build configuration
+leaves out `public/runtime-config.json`; the deployed file stays untouched.
 
 ### Demo images
 
@@ -58,7 +83,8 @@ downloaded:
 - `/demo-media/photos/<name>.webp` — crops of `packages/frontend/public/hero-background.png`
   (`packages/devserver/media/photos/`).
 
-On purpose, Rostock (sale) has no images and München-Schwabing (rent) a broken image URL, so the
+On purpose, Rostock (sale) has no images and München-Schwabing (rent) a broken image URL (it belongs
+to the suspended agency, so it is public only after reactivating Alpenblick Makler), so the
 placeholder shows. Management API responses keep the stored `https://demo-media.localhost` URLs
 (the portal validates them with the listing schema), so images in the portal's public preview show
 the placeholder.
@@ -123,13 +149,15 @@ suspensions and role changes show up quickly.
    with `country=TH`, and the choice is remembered (`localStorage`; `/?country=TH` preselects it).
    Type `pat` or `lub` into *City*: the suggestions come from `GET /api/locations` and only list
    cities of the selected country. Rooms take numbers only (`1`, `3.5`).
-2. **Listing detail** — open a result (`/listings/{id}`): offers, key facts, original listing link.
-   Images are placeholders on `example.org` and are hidden.
+2. **Listing detail** — open a result (`/listings/{id}`): offers, key facts, original listing link,
+   the image carousel; Rostock shows the image placeholder.
 3. **Portal login** — open <http://127.0.0.1:4200/portal>, pick **Anna Albers**.
 4. **Create a listing** — *Listings → New listing*, fill in title, offer, type, rooms, area, city.
-   It is created `INACTIVE` and is not searchable yet.
-5. **Activate** — set the status to *Active*; search for its city in the public search: it appears
-   immediately.
+   By default it is created `INACTIVE` and is not searchable.
+5. **Activate** — *Activate* it in its workspace (or in the listing overview); search for its city
+   in the public search: it appears immediately. While signed in, the public search lets you
+   manage the agency's own listings (platform admins: all): *Deactivate* / *Activate* and *Edit*
+   on the result cards, and *Manage this listing* above the listing detail.
 6. **Edit** — change the price; the workspace shows version 3.
 7. **History** — open `NL-BER-001` (Berlin-Mitte): history with portal versions of two users,
    the diff between versions, *Restore* an older version. `CRM-4711` (Winterhude) shows the field
@@ -141,7 +169,7 @@ suspensions and role changes show up quickly.
 10. **Admin mode** — sign out, sign in as **Paula Plattform**, *Administration*: agencies (open
     Nordlicht → *Suspend agency …*: the confirmation shows the affected listings and users from the
     dry run; cancel), *Platform monitoring*
-    (alarms, endpoints — synthetic; choose *Last 30 days* for the agency activity), *Operations*
+    (alarms, endpoints — synthetic; agency activity per day), *Operations*
     (deletion request dry run, API keys, access mode, reload).
 11. **MCP** — call a tool with `curl`:
 

@@ -11,6 +11,8 @@ export default tseslint.config(
       '**/coverage/**',
       '**/cdk.out/**',
       '**/.angular/**',
+      // Run logs and Playwright reports/traces (generated JS).
+      'logs/**',
     ],
   },
   eslint.configs.recommended,

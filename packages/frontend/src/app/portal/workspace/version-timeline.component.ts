@@ -45,8 +45,11 @@ import { changeTypeKey, channelKey, statusKey } from './workspace-model';
             </time>
           </div>
           <p>
-            <span class="muted">{{ channelKey(item.channel) | transloco }} ·</span>
-            <span class="muted">{{ item.actor.kindKey | transloco }}</span>
+            <!-- One span: whitespace between two elements is dropped ("Portal ·User"). -->
+            <span class="muted"
+              >{{ channelKey(item.channel) | transloco }} ·
+              {{ item.actor.kindKey | transloco }}</span
+            >
             {{ item.actor.name }}
             · {{ statusKey(item.status) | transloco }}
           </p>

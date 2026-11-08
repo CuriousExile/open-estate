@@ -65,7 +65,7 @@ export type ListingCommands = Pick<
 
 /** Use cases behind the listing routes. */
 export interface ListingServices {
-  queries: Pick<ListingQueryService, 'get' | 'getByCustomId' | 'list'>;
+  queries: Pick<ListingQueryService, 'get' | 'getByCustomId' | 'list' | 'lookup'>;
   versions: Pick<VersionService, 'list' | 'get' | 'diff'>;
   /**
    * Command service; resolved asynchronously because the content rules come from the config

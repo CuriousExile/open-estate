@@ -10,7 +10,15 @@
 // No AWS account or credentials are needed. Logs: logs/run-everything/<step>.log, summary:
 // logs/run-everything/summary.md. Exit code 0 means no step failed.
 import { spawn, spawnSync } from 'node:child_process';
-import { createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  createWriteStream,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { createRequire } from 'node:module';
 import { createServer } from 'node:net';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -104,7 +112,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;]*m/g;
 const KEY_LINE =
-  /^(FAIL |\s+● |\s+\{ seed: |\s+Counterexample: |.*error TS\d+|.*\[ERROR\]|\s+\S+\.(ts|html|scss):\d+:\d+:|\s+\d+:\d+\s+error\s|\/\S+\.(ts|js|mjs)$|\[warn\] |.*Error: |npm (ERR!|error) |BAD )/;
+  /^(FAIL |\s+✘ |\s+● |\s+\{ seed: |\s+Counterexample: |.*error TS\d+|.*\[ERROR\]|\s+\S+\.(ts|html|scss):\d+:\d+:|\s+\d+:\d+\s+error\s|\/\S+\.(ts|js|mjs)$|\[warn\] |.*Error: |npm (ERR!|error) |BAD )/;
 
 /**
  * The lines that matter in a failed step's log: failing suites and tests, fast-check seeds with a
@@ -189,6 +197,13 @@ async function smokeLocalDemo(log) {
         (b) => b.includes('"openapi"'),
       ],
       [
+        // The SPA's runtime config follows the (random) port instead of a hard-coded 4310.
+        'GET /runtime-config.json',
+        `${base}/runtime-config.json`,
+        undefined,
+        (b) => b.includes(`"issuer": "${base}/oidc"`),
+      ],
+      [
         'GET /oidc discovery',
         `${base}/oidc/.well-known/openid-configuration`,
         undefined,
@@ -215,6 +230,36 @@ async function smokeLocalDemo(log) {
   } finally {
     server.kill('SIGTERM');
   }
+}
+
+/**
+ * Why the browser tests cannot run here, or nothing: they need a Chromium for Playwright
+ * (`npm run test:browser:install`) or PLAYWRIGHT_CHROMIUM_EXECUTABLE pointing to one.
+ */
+function browserSkipReason() {
+  const custom = process.env['PLAYWRIGHT_CHROMIUM_EXECUTABLE']?.trim();
+  if (custom) {
+    return existsSync(custom)
+      ? undefined
+      : `PLAYWRIGHT_CHROMIUM_EXECUTABLE=${custom} does not exist`;
+  }
+  try {
+    const { chromium } = createRequire(join(ROOT, 'package.json'))('playwright-core');
+    return existsSync(chromium.executablePath())
+      ? undefined
+      : 'no Chromium for Playwright (run `npm run test:browser:install` once)';
+  } catch {
+    return 'Playwright is not installed';
+  }
+}
+
+/** Playwright tests of the SPA against their own local demo, on free ports. */
+async function browserTests(log) {
+  const [frontendPort, devPort] = [await freePort(), await freePort()];
+  return run(...npx('playwright', 'test', '-c', 'packages/browser-tests'), log, {
+    BROWSER_TEST_FRONTEND_PORT: String(frontendPort),
+    BROWSER_TEST_DEV_PORT: String(devPort),
+  });
 }
 
 function dockerAvailable() {
@@ -336,6 +381,13 @@ const STEPS = [
     title: 'Local demo smoke test (APIs, MCP, login)',
     fn: smokeLocalDemo,
     needs: ['build'],
+  },
+  {
+    id: 'browser',
+    title: 'Browser tests (Playwright, local demo)',
+    fn: browserTests,
+    needs: ['install'],
+    skip: browserSkipReason,
   },
   {
     id: 'integration',

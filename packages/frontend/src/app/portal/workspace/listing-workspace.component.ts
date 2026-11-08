@@ -25,6 +25,13 @@ import { LocaleService } from '../../locale/locale.service';
 import { ManagementApiClient } from '../../management/management-api-client.service';
 import type { ManagementError } from '../../management/management-client';
 import { StartupState } from '../../startup/startup-state';
+import {
+  isVersionConflict,
+  nextStatus,
+  setListingStatus,
+  statusNoticeKey,
+  toggleListingKey,
+} from '../shared/listing-status';
 import { FieldProvenanceComponent } from './field-provenance.component';
 import { fieldProvenanceRows, missingImportVersions } from './field-provenance-model';
 import { RestoreDialogComponent, type RestoreDialogState } from './restore-dialog.component';
@@ -129,8 +136,20 @@ const TAB_KEYS: Record<WorkspaceTab, string> = {
           <dt class="label">{{ 'portal.workspace.meta.updatedAt' | transloco }}</dt>
           <dd>{{ formatDateTime(view.updatedAt, locale.active()) }}</dd>
         </dl>
-        @if (session.can('listing:write')) {
-          <a class="pill" routerLink="edit">{{ 'portal.workspace.edit' | transloco }}</a>
+        <div class="head-actions">
+          @if (session.can('listing:write')) {
+            <a class="pill" routerLink="edit">{{ 'portal.workspace.edit' | transloco }}</a>
+          }
+          @if (session.can('listing:status')) {
+            <button type="button" class="pill" [disabled]="statusBusy()" (click)="toggleStatus()">
+              {{
+                (statusBusy() ? 'portal.status.saving' : toggleListingKey(view.status)) | transloco
+              }}
+            </button>
+          }
+        </div>
+        @if (statusError(); as message) {
+          <p role="alert" class="error">{{ message }}</p>
         }
       </header>
 
@@ -264,7 +283,8 @@ const TAB_KEYS: Record<WorkspaceTab, string> = {
     dd + dt {
       margin-left: 0.75rem;
     }
-    .tabs {
+    .tabs,
+    .head-actions {
       display: flex;
       flex-wrap: wrap;
       gap: 0.5rem;
@@ -360,6 +380,11 @@ export class ListingWorkspaceComponent {
     return this.versions().map((entry) => toTimelineItem(entry, current));
   });
 
+  /** A (de)activation is running. */
+  protected readonly statusBusy = signal(false);
+  protected readonly statusError = signal<string | undefined>(undefined);
+  protected readonly toggleListingKey = toggleListingKey;
+
   protected readonly statusKey = statusKey;
   protected readonly originKey = originKey;
   protected readonly formatDateTime = formatDateTime;
@@ -417,6 +442,42 @@ export class ListingWorkspaceComponent {
     const token = this.nextPageToken();
     if (token === undefined || this.historyLoading()) return;
     void this.loadVersions(this.id(), token, this.controller.signal);
+  }
+
+  /**
+   * Activates or deactivates the listing (Req 6.2): a new version, content and history stay; the
+   * public search follows within 60 s (locally at once). The current version is the Bezugsversion.
+   */
+  protected async toggleStatus(): Promise<void> {
+    const view = this.view();
+    if (!view || this.statusBusy()) return;
+    const id = this.id();
+    const signal = this.controller.signal;
+    this.statusBusy.set(true);
+    this.statusError.set(undefined);
+    const result = await setListingStatus(
+      this.api,
+      id,
+      nextStatus(view.status),
+      view.version,
+      signal,
+    );
+    if (signal.aborted) return;
+    this.statusBusy.set(false);
+    if (result.ok) {
+      this.state.set({ kind: 'ready', view: result.value });
+      this.notice.set(statusNoticeKey(result.value.status));
+      void this.loadVersions(id, undefined, signal);
+      return;
+    }
+    const message = this.message(result.error);
+    if (message === undefined) return;
+    this.statusError.set(message);
+    if (isVersionConflict(result.error)) {
+      // Changed in the meantime: show the current state; the user decides again.
+      await this.loadListing(id, signal);
+      void this.loadVersions(id, undefined, signal);
+    }
   }
 
   /** Opens the confirmation with the Diff from the current version to `version` (Req 8.6). */

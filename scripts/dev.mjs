@@ -6,6 +6,9 @@
 // Usage: npm run dev            (both)
 //        npm run dev:server     (dev server only)
 // Ctrl+C / SIGTERM stops both processes.
+//
+// Ports: DEV_PORT (dev server, default 4310) and DEV_FRONTEND_PORT (ng serve, default 4200), e.g.
+//        DEV_PORT=5310 DEV_FRONTEND_PORT=5200 npm run dev
 import { spawn, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -13,8 +16,6 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
-const DEV_PORT = process.env.DEV_PORT ?? '4310';
-const HEALTH_URL = `http://127.0.0.1:${DEV_PORT}/health`;
 
 const [major, minor] = process.versions.node.split('.').map(Number);
 if (major < 22 || (major === 22 && minor < 12)) {
@@ -35,6 +36,30 @@ const build = spawnSync(
   },
 );
 if (build.status !== 0) process.exit(build.status ?? 1);
+
+// Same validation and defaults as the dev server itself (DEV_HOST, DEV_PORT, DEV_FRONTEND_PORT,
+// DEV_FRONTEND_ORIGIN). ng serve inherits the environment, so its proxy (dev/proxy.local.mjs)
+// targets the same dev server.
+const { readNetworkConfig } = require(join(ROOT, 'packages/devserver/dist/config.js'));
+let network;
+try {
+  network = readNetworkConfig(process.env);
+} catch (error) {
+  console.error(`[dev] ${error.message}`);
+  process.exit(1);
+}
+if (network.port === network.frontendPort) {
+  console.error(`[dev] DEV_PORT and DEV_FRONTEND_PORT must differ (both ${network.port})`);
+  process.exit(1);
+}
+const origin = new URL(network.frontendOrigin); // validated by readNetworkConfig
+if (Number(origin.port || (origin.protocol === 'https:' ? 443 : 80)) !== network.frontendPort) {
+  console.warn(
+    `[dev] DEV_FRONTEND_ORIGIN=${network.frontendOrigin} does not use DEV_FRONTEND_PORT ` +
+      `${network.frontendPort}; ng serve listens on ${network.frontendPort}.`,
+  );
+}
+const HEALTH_URL = `${network.publicUrl}/health`;
 
 const children = new Set();
 let stopping = false;
@@ -89,5 +114,9 @@ if (!(await waitForHealth(30_000))) {
   const ng = require.resolve('@angular/cli/bin/ng.js', {
     paths: [join(ROOT, 'packages/frontend')],
   });
-  start('ng serve', [ng, 'serve', '--configuration', 'local'], join(ROOT, 'packages/frontend'));
+  start(
+    'ng serve',
+    [ng, 'serve', '--configuration', 'local', '--port', String(network.frontendPort)],
+    join(ROOT, 'packages/frontend'),
+  );
 }

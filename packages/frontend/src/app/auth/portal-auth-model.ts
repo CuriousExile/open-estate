@@ -127,6 +127,24 @@ export function rememberReturnUrl(storage: KeyValueStorage, url: string): void {
   storage.setItem(RETURN_URL_KEY, sanitizeReturnUrl(url));
 }
 
+/**
+ * `sessionStorage` flag of a portal sign-in in this tab. Public pages (search, listing page) check
+ * it before asking the identity provider, so anonymous visitors cause no login-related requests.
+ */
+export const SIGNED_IN_KEY = 'oe.portal.signedIn';
+
+export function markSignedIn(storage: KeyValueStorage): void {
+  storage.setItem(SIGNED_IN_KEY, '1');
+}
+
+export function clearSignedIn(storage: KeyValueStorage): void {
+  storage.removeItem(SIGNED_IN_KEY);
+}
+
+export function wasSignedIn(storage: KeyValueStorage): boolean {
+  return storage.getItem(SIGNED_IN_KEY) === '1';
+}
+
 /** Reads and clears the remembered route (one-shot). */
 export function takeReturnUrl(storage: KeyValueStorage): string | undefined {
   const value = storage.getItem(RETURN_URL_KEY);

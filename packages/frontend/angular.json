@@ -68,10 +68,6 @@
                   "glob": "**/*",
                   "input": "public",
                   "ignore": ["runtime-config.json"]
-                },
-                {
-                  "glob": "runtime-config.json",
-                  "input": "dev"
                 }
               ]
             }
@@ -91,7 +87,7 @@
               "buildTarget": "frontend:build:local",
               "host": "127.0.0.1",
               "port": 4200,
-              "proxyConfig": "dev/proxy.local.json"
+              "proxyConfig": "dev/proxy.local.mjs"
             }
           },
           "defaultConfiguration": "development"

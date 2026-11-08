@@ -27,9 +27,18 @@ const member: Principal = {
 
 const TOKENS: Record<string, Principal> = { 'Bearer good': member };
 
+const suspendedMember: Principal = { ...member, userId: 'u2', displayName: 'Sven', agencyId: 'a9' };
+
 const authenticator: Authenticator = {
   async authenticate(authorization) {
     if (authorization === undefined) return err({ code: 'AUTH_MISSING', message: 'missing' });
+    if (authorization === 'Bearer suspended') {
+      return {
+        ok: false,
+        error: { code: 'AGENCY_SUSPENDED', message: 'Agency suspended' },
+        principal: suspendedMember,
+      };
+    }
     const principal = TOKENS[authorization];
     return principal === undefined
       ? err({ code: 'AUTH_INVALID', message: 'invalid' })
@@ -158,6 +167,25 @@ describe('createManagementHandler', () => {
         action: 'POST /agencies',
         target: '/agencies',
         result: 'FORBIDDEN',
+      }),
+    ]);
+  });
+
+  it('audits AGENCY_SUSPENDED with the identified actor and agency, not in the reply (Req 2.8)', async () => {
+    const { handler, audit } = setup();
+    const response = await handler(request('GET', '/listings/l1', 'Bearer suspended'));
+    expect(response.statusCode).toBe(403);
+    expect(JSON.parse(response.body)).toEqual({
+      errors: [{ code: 'AGENCY_SUSPENDED', message: 'Agency suspended' }],
+    });
+    expect(audit.entries).toEqual([
+      expect.objectContaining({
+        category: 'access-denied',
+        actor: { kind: 'user', userId: 'u2', displayName: 'Sven' },
+        channel: 'PORTAL',
+        agencyId: 'a9',
+        action: 'GET /listings/{id}',
+        result: 'AGENCY_SUSPENDED',
       }),
     ]);
   });

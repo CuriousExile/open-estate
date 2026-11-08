@@ -23,6 +23,14 @@ import { CodeLabelPipe } from '../../locale/code-label.pipe';
 import { LocaleService } from '../../locale/locale.service';
 import { ManagementApiClient } from '../../management/management-api-client.service';
 import { StartupState } from '../../startup/startup-state';
+import {
+  isVersionConflict,
+  nextStatus,
+  setListingStatus,
+  statusChangedKey,
+  toggleLabelKey,
+  toggleNamedKey,
+} from '../shared/listing-status';
 import { CodeOptionsPipe } from '../../ui/select/code-options.pipe';
 import { SelectComponent } from '../../ui/select/select.component';
 import {
@@ -195,6 +203,15 @@ import {
         }
       </form>
 
+      <p class="notice" role="status">
+        @if (statusNotice(); as n) {
+          {{ n.key | transloco: n.params }}
+        }
+      </p>
+      @if (statusError(); as message) {
+        <p class="notice error" role="alert">{{ message }}</p>
+      }
+
       @if (errorText(); as message) {
         <div class="notice error" role="alert">
           <p>{{ message }}</p>
@@ -223,7 +240,7 @@ import {
               <th scope="col">{{ 'portal.field.offers' | transloco }}</th>
               <th scope="col">{{ 'portal.field.listingType' | transloco }}</th>
               <th scope="col">{{ 'portal.listings.column.updatedAt' | transloco }}</th>
-              @if (session.can('listing:write')) {
+              @if (hasActions()) {
                 <th scope="col">
                   <span class="visually-hidden">{{
                     'portal.listings.column.actions' | transloco
@@ -265,15 +282,30 @@ import {
                 <td>
                   <time [attr.datetime]="row.updatedAt">{{ timestamp(row.updatedAt) }}</time>
                 </td>
-                @if (session.can('listing:write')) {
-                  <td>
-                    <a
-                      [routerLink]="['/portal/listings', row.id, 'edit']"
-                      [attr.aria-label]="
-                        'portal.listings.editNamed' | transloco: { title: row.title }
-                      "
-                      >{{ 'portal.listings.editAction' | transloco }}</a
-                    >
+                @if (hasActions()) {
+                  <td class="row-actions">
+                    @if (session.can('listing:write')) {
+                      <a
+                        [routerLink]="['/portal/listings', row.id, 'edit']"
+                        [attr.aria-label]="
+                          'portal.listings.editNamed' | transloco: { title: row.title }
+                        "
+                        >{{ 'portal.listings.editAction' | transloco }}</a
+                      >
+                    }
+                    @if (session.can('listing:status')) {
+                      <button
+                        type="button"
+                        class="link"
+                        [disabled]="statusBusy() === row.id"
+                        [attr.aria-label]="
+                          toggleNamedKey(row.status) | transloco: { title: row.title }
+                        "
+                        (click)="toggleStatus(row)"
+                      >
+                        {{ toggleLabelKey(row.status) | transloco }}
+                      </button>
+                    }
                   </td>
                 }
               </tr>
@@ -411,6 +443,23 @@ import {
     .notice p {
       margin: 0;
     }
+    .notice:empty {
+      display: none;
+    }
+    .row-actions {
+      display: flex;
+      gap: 0.75rem;
+      white-space: nowrap;
+    }
+    .link {
+      padding: 0;
+      border: 0;
+      background: none;
+      color: var(--color-accent);
+      font: inherit;
+      text-decoration: underline;
+      cursor: pointer;
+    }
     .table-wrap {
       overflow-x: auto;
     }
@@ -491,6 +540,19 @@ export class ListingTableComponent implements OnInit {
   protected readonly loading = signal(false);
   protected readonly errorText = signal<string | undefined>(undefined);
 
+  /** Id of the listing whose status is being changed. */
+  protected readonly statusBusy = signal<string | undefined>(undefined);
+  protected readonly statusNotice = signal<
+    { key: string; params: Readonly<Record<string, string>> } | undefined
+  >(undefined);
+  protected readonly statusError = signal<string | undefined>(undefined);
+  protected readonly toggleLabelKey = toggleLabelKey;
+  protected readonly toggleNamedKey = toggleNamedKey;
+  /** Edit links or status toggles: the actions column is shown. */
+  protected readonly hasActions = computed(
+    () => this.session.can('listing:write') || this.session.can('listing:status'),
+  );
+
   /** Filters of the shown list; changed only by a valid submit or reset. */
   private query: ListingQuery = {};
   /** Agency filter of the shown list (Admin_Modus only). */
@@ -555,6 +617,31 @@ export class ListingTableComponent implements OnInit {
 
   protected reload(): void {
     void this.load(this.pager());
+  }
+
+  /**
+   * Activates or deactivates a listing of the list (Req 6.2): agencies their own listings,
+   * Plattform_Admins every listing (Admin_Modus uses this table). The row shows the new state;
+   * the listing stays in the list until the next load, even if it no longer matches a filter.
+   */
+  protected async toggleStatus(row: ListingSummary): Promise<void> {
+    if (this.statusBusy() !== undefined) return;
+    this.statusBusy.set(row.id);
+    this.statusNotice.set(undefined);
+    this.statusError.set(undefined);
+    const result = await setListingStatus(this.api, row.id, nextStatus(row.status), row.version);
+    this.statusBusy.set(undefined);
+    if (!result.ok) {
+      this.statusError.set(this.api.errorMessage(result.error));
+      // Changed in the meantime (or gone): show the current list.
+      if (isVersionConflict(result.error)) this.reload();
+      return;
+    }
+    const { status, version, updatedAt } = result.value;
+    this.rows.update((rows) =>
+      rows.map((r) => (r.id === row.id ? { ...r, status, version, updatedAt } : r)),
+    );
+    this.statusNotice.set({ key: statusChangedKey(status), params: { title: row.title } });
   }
 
   protected timestamp(iso: string): string {

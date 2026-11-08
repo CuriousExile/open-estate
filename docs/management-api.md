@@ -194,6 +194,17 @@ export LISTING_ID=$(jq -r '.id' listing.json)
 URL-encode Custom_Ids with reserved characters (`/`, `?`, `#`, spaces). An unknown Custom_Id
 answers `404 NOT_FOUND`.
 
+To check several listings at once — for example a page of Search API results — look them up by
+id: `GET /listings?ids=<id>,<id>,…` (1 to 50 ids) answers with the `ListingSummary` (status,
+version, Custom_Id, …) of every listing among them that you may read, in the given order, in one
+page. Unknown ids and listings of other agencies are left out, as if they did not exist; `ids`
+cannot be combined with the other filters or `pageToken`.
+
+```sh
+curl -sS -G "${MGMT_URL}listings" --data-urlencode "ids=${LISTING_ID},some-other-id" \
+  -H "Authorization: Bearer $OEM_CREDENTIAL" | jq '.items[] | {id, status, version}'
+```
+
 ### 4. Change the listing status
 
 `PUT /listings/{id}/status` sets `ACTIVE` or `INACTIVE`. `baseVersion` is optional here; if given,

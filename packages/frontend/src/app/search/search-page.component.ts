@@ -22,6 +22,7 @@ import { ApiClientService } from '../api/api-client.service';
 import { withPriceCurrency } from '../currency/currency-model';
 import { CurrencyService } from '../currency/currency.service';
 import { ListingDetailComponent } from '../listing/listing-detail.component';
+import { ListingManageComponent } from '../listing/listing-manage.component';
 import { convertPriceInput } from '../listing/listing-format';
 import { LocationService } from '../location/location.service';
 import { withCountry } from '../location/location-model';
@@ -51,7 +52,13 @@ import {
  */
 @Component({
   selector: 'oe-search-page',
-  imports: [ListingDetailComponent, ResultListComponent, SearchFormComponent, TranslocoPipe],
+  imports: [
+    ListingDetailComponent,
+    ListingManageComponent,
+    ResultListComponent,
+    SearchFormComponent,
+    TranslocoPipe,
+  ],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <ng-template #headerContent>
@@ -69,9 +76,13 @@ import {
 
     @if (searched()) {
       <!-- Hidden, not removed, while a detail is open: loaded pages survive. The result list
-           (with the image carousel) is a lazy chunk, so the start page stays small. -->
+           (with the image carousel) and the detail view are lazy chunks, so the start page stays
+           small. Both blocks are shown 'on immediate': without a trigger, a defer block waits for
+           browser idle time (requestIdleCallback), which a busy browser can withhold for seconds,
+           so asked-for results or a clicked listing would not appear (browser test
+           packages/browser-tests/tests/search/rendering.spec.ts). -->
       <div [hidden]="selectedId() !== undefined">
-        @defer {
+        @defer (on immediate) {
           <oe-result-list
             #results
             class="shell-results"
@@ -81,8 +92,16 @@ import {
         }
       </div>
       @if (selectedListing(); as listing) {
-        @defer {
+        @defer (on immediate) {
+          <!-- For agency users and admins signed in to the portal: edit and (de)activate. -->
+          <oe-listing-manage
+            [listing]="listing"
+            (statusChange)="resultList()?.markManaged($event)"
+          />
           <oe-listing-detail [listing]="listing" (close)="closeDetail()" />
+        } @loading (after 150ms) {
+          <!-- Results are hidden already; on a slow network the chunk takes a moment. -->
+          <p class="notice glass" role="status">{{ 'listingPage.loading' | transloco }}</p>
         }
       } @else if (loadingListing()) {
         <p class="notice glass" role="status">{{ 'listingPage.loading' | transloco }}</p>
@@ -106,7 +125,7 @@ export class SearchPageComponent {
   private readonly locations = inject(LocationService);
   private readonly currency = inject(CurrencyService);
   private readonly meta = inject(StartupState).meta();
-  private readonly resultList = viewChild<ResultListComponent>('results');
+  protected readonly resultList = viewChild<ResultListComponent>('results');
   private readonly headerContent = viewChild.required<TemplateRef<unknown>>('headerContent');
 
   private readonly query = toSignal(this.route.queryParams, { initialValue: {} });

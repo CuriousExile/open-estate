@@ -360,6 +360,38 @@ describe('ListingQueryService', () => {
       updatedAt: '2026-03-01T10:00:00.000Z',
     });
   });
+
+  it('looks up listings by id: readable ones in the given order, the rest left out', async () => {
+    const s = setup();
+    await s.write('a', state(content('a')));
+    await s.write('b', state(content('b'), { agencyId: 'agy-2' }));
+    await s.write('c', state(content('c'), { status: 'INACTIVE' }));
+    const ids = (r: Awaited<ReturnType<typeof s.queries.lookup>>) =>
+      r.ok ? r.value.items.map((i) => i.id) : r.error.map((e) => e.code);
+
+    // Agency actors: their own listings in any status; another agency's and unknown ids are
+    // left out, like absent ones (Req 2.6); duplicates once; no further page.
+    expect(ids(await s.queries.lookup(member(), ['c', 'b', 'missing', 'a', 'c']))).toEqual([
+      'c',
+      'a',
+    ]);
+    const page = await s.queries.lookup(member(), ['a']);
+    expect(page.ok && page.value.nextCursor).toBeUndefined();
+    // Plattform_Admins: every listing.
+    expect(ids(await s.queries.lookup(admin, ['b', 'a']))).toEqual(['b', 'a']);
+    expect(ids(await s.queries.lookup(member('agy-2'), ['a', 'b']))).toEqual(['b']);
+    // Without listing:read: refused and audited like the overview.
+    expect(ids(await s.queries.lookup(machineWithout, ['a']))).toEqual(['FORBIDDEN']);
+    expect(s.audit.entries.at(-1)).toMatchObject({
+      category: 'access-denied',
+      action: 'listing.list',
+      result: 'FORBIDDEN',
+    });
+    // Found and left-out listings are not audited.
+    const before = s.audit.entries.length;
+    await s.queries.lookup(member(), ['a', 'b']);
+    expect(s.audit.entries.length).toBe(before);
+  });
 });
 
 describe('VersionService', () => {

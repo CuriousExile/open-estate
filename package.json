@@ -23,7 +23,8 @@
     "packages/frontend",
     "packages/infra",
     "packages/loadtest",
-    "packages/devserver"
+    "packages/devserver",
+    "packages/browser-tests"
   ],
   "scripts": {
     "build": "tsc -b && npm run build --workspace @open-estate/frontend",
@@ -43,9 +44,11 @@
     "test:platform": "jest --selectProjects platform",
     "test:frontend": "jest --selectProjects frontend",
     "test:infra": "jest --selectProjects infra",
-    "typecheck:tests": "tsc -p tsconfig.test.json && tsc -p packages/infra/tsconfig.test.json && tsc -p packages/frontend/tsconfig.test.json",
+    "typecheck:tests": "tsc -p tsconfig.test.json && tsc -p packages/infra/tsconfig.test.json && tsc -p packages/frontend/tsconfig.test.json && tsc -p packages/browser-tests/tsconfig.json",
     "test:integration": "DYNAMODB_ENDPOINT=${DYNAMODB_ENDPOINT:-http://localhost:8000} OPENSEARCH_ENDPOINT=${OPENSEARCH_ENDPOINT:-http://localhost:9200} OPEN_ESTATE_TEST_TIER=full jest --forceExit --testPathPatterns '\\.integration\\.test\\.ts$'",
     "test:e2e": "OPEN_ESTATE_TEST_TIER=full jest --forceExit --runInBand --testPathPatterns '\\.e2e\\.test\\.ts$'",
+    "test:browser": "playwright test -c packages/browser-tests",
+    "test:browser:install": "playwright install chromium",
     "synth": "npm run synth --workspace @open-estate/infra",
     "verify": "npm run lint && npm run build && npm run typecheck:tests && npm run test:full && npm run synth",
     "everything": "node scripts/run-everything.mjs"

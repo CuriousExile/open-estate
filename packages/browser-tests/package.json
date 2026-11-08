@@ -1,0 +1,13 @@
+{
+  "name": "@open-estate/browser-tests",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Playwright browser tests of the SPA against the local demo (packages/devserver)",
+  "license": "Apache-2.0",
+  "scripts": {
+    "test": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.0"
+  }
+}

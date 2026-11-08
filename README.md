@@ -64,6 +64,7 @@ packages/
   infra/       # AWS CDK app, seed data
   loadtest/    # Load tests
   devserver/   # DEV ONLY: local demo server (in-memory, local login), not deployed
+  browser-tests/ # Playwright tests of the SPA against the local demo
 docs/          # Installation, API, MCP, connector and configuration guides
 ```
 
@@ -113,7 +114,8 @@ npm run dev     # local demo: SPA, Search API, MCP server, Management API, in me
 
 `npm run dev` serves the SPA at <http://127.0.0.1:4200> and the APIs at `http://127.0.0.1:4310`
 (`/api/listings`, `/mcp`, `/management`), with demo data and a password-less local login (DEV
-ONLY, never expose it): [docs/local-demo.md](docs/local-demo.md). On Node 20 only the backend runs:
+ONLY, never expose it): [docs/local-demo.md](docs/local-demo.md). Other ports:
+`DEV_PORT=5310 DEV_FRONTEND_PORT=5200 npm run dev`. On Node 20 only the backend runs:
 `npm run dev:server`.
 
 | Works offline                                   | Needs AWS                                  |
@@ -122,6 +124,7 @@ ONLY, never expose it): [docs/local-demo.md](docs/local-demo.md). On Node 20 onl
 | `npm run synth` (synthesizes every CDK stack)   | `npm run test:e2e` (a deployed stack)      |
 | Local demo (`npm run dev`, `npm run dev:server`) | Cognito login, CloudWatch, real S3 media  |
 | `npm run test:integration` (needs Docker)       |                                            |
+| `npm run test:browser` (Playwright, local demo) |                                            |
 
 ## Deploying to AWS
 
@@ -148,6 +151,7 @@ suite for every small change.
 | `npm test -- <path or name>`  | Single files, e.g. `npm test -- search-service`                   | Tight loop              |
 | `npm run test:full`           | Everything, property tests at full run counts (CI runs this)      | Before a commit / PR    |
 | `npm run verify`              | Lint, build, test typecheck, full tests, synth                    | Final check             |
+| `npm run test:browser`        | Playwright tests of the SPA in Chromium against the local demo ([packages/browser-tests](packages/browser-tests/README.md)) | After UI changes |
 
 Areas: `shared`, `search` (search and read model, Search API, MCP), `management` (agencies,
 listing versions, Management and Admin API), `ingestion` (connectors, crawler, import pipeline),

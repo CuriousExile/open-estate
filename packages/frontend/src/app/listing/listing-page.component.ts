@@ -3,6 +3,7 @@ import { Router, RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
 import { ApiClientService } from '../api/api-client.service';
 import { ListingDetailComponent } from './listing-detail.component';
+import { ListingManageComponent } from './listing-manage.component';
 import { toListingPageState, type ListingPageState } from './listing-page-model';
 
 /**
@@ -12,11 +13,12 @@ import { toListingPageState, type ListingPageState } from './listing-page-model'
  */
 @Component({
   selector: 'oe-listing-page',
-  imports: [ListingDetailComponent, RouterLink, TranslocoPipe],
+  imports: [ListingDetailComponent, ListingManageComponent, RouterLink, TranslocoPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @let s = state();
     @if (s.kind === 'found') {
+      <oe-listing-manage [listing]="s.listing" />
       <oe-listing-detail [listing]="s.listing" (close)="toSearch()" />
     } @else if (s.kind === 'loading') {
       <p class="notice glass" role="status">{{ 'listingPage.loading' | transloco }}</p>

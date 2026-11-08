@@ -118,6 +118,27 @@ describe('listing requests', () => {
     expect(DiffQuery.parse({ from: '1', to: '3' })).toEqual({ from: 1, to: 3 });
   });
 
+  it('parses a lookup by ids: 1 to 50 comma-separated ids, without other filters or paging', () => {
+    expect(ListListingsQuery.parse({ ids: 'a,b,c' }).ids).toEqual(['a', 'b', 'c']);
+    const ids = (n: number) => Array.from({ length: n }, (_, i) => `id-${i}`).join(',');
+    expect(ListListingsQuery.safeParse({ ids: ids(50) }).success).toBe(true);
+    expect(ListListingsQuery.safeParse({ ids: ids(51) }).success).toBe(false);
+    expect(ListListingsQuery.safeParse({ ids: '' }).success).toBe(false);
+    expect(ListListingsQuery.safeParse({ ids: 'a,,b' }).success).toBe(false);
+    for (const other of [
+      { status: 'ACTIVE' },
+      { q: 'Loft' },
+      { agencyId: 'a1' },
+      { pageToken: 't' },
+    ]) {
+      const result = ListListingsQuery.safeParse({ ids: 'a', ...other });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(['ids']);
+    }
+    // pageSize has a default and is ignored by the lookup.
+    expect(ListListingsQuery.safeParse({ ids: 'a', pageSize: '5' }).success).toBe(true);
+  });
+
   it('rejects an empty agency update', () => {
     expect(UpdateAgencyRequest.safeParse({}).success).toBe(false);
     expect(UpdateAgencyRequest.safeParse({ state: 'SUSPENDED' }).success).toBe(true);

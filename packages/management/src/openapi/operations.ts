@@ -202,7 +202,10 @@ const LISTINGS: Record<string, OperationDoc> = {
   'GET /listings': {
     operationId: 'listListings',
     summary: 'Listing overview with filters',
-    description: 'Plattform_Admins may filter by `agencyId`; agency actors see their own agency.',
+    description:
+      'Plattform_Admins may filter by `agencyId`; agency actors see their own agency. With `ids`, ' +
+      'a lookup of up to 50 listings (e.g. a page of search results): those the caller may read, ' +
+      'in the given order, in one page; unknown ids and other agencies’ listings are left out.',
     tag: 'Listings',
     permission: 'listing:read',
     responses: [ok('ListingPage')],

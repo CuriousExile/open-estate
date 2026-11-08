@@ -31,10 +31,14 @@ import { ADMIN_STYLES } from './admin-styles';
         <h1 id="admin-agencies-title" class="label">{{ 'portal.admin.agencies' | transloco }}</h1>
         <label class="field">
           <span>{{ 'portal.admin.agencyView.state' | transloco }}</span>
-          <select [value]="stateFilter()" (change)="setState($event)">
-            <option value="">{{ 'portal.admin.any' | transloco }}</option>
+          <select (change)="setState($event)">
+            <option value="" [selected]="stateFilter() === ''">
+              {{ 'portal.admin.any' | transloco }}
+            </option>
             @for (state of states; track state) {
-              <option [value]="state">{{ 'portal.admin.agencyState.' + state | transloco }}</option>
+              <option [value]="state" [selected]="state === stateFilter()">
+                {{ 'portal.admin.agencyState.' + state | transloco }}
+              </option>
             }
           </select>
         </label>

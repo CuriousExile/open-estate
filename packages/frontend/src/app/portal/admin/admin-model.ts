@@ -159,6 +159,13 @@ export const DEFAULT_PLATFORM_PERIOD: PlatformPeriodKey = '24h';
 export const isPlatformPeriodKey = (value: string): value is PlatformPeriodKey =>
   Object.hasOwn(PLATFORM_PERIODS, value);
 
+/**
+ * Interval of `GET /monitoring/agency-activity`: its metric `listing.changes` is a daily counter
+ * and the Management_API refuses other intervals (`INVALID_PARAMETER`), so the activity is always
+ * asked per UTC day — the days that overlap the selected period.
+ */
+export const AGENCY_ACTIVITY_INTERVAL: MetricInterval = 'day';
+
 /** Query of the period ending `now`. */
 export function platformPeriod(
   key: PlatformPeriodKey,

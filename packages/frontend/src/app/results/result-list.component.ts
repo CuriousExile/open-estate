@@ -13,11 +13,22 @@ import {
   viewChild,
   viewChildren,
 } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { TranslocoPipe } from '@jsverse/transloco';
-import type { LocalizedListing } from '@open-estate/shared';
+import { ListingPage, type ListingStatus, type LocalizedListing } from '@open-estate/shared';
 import type { SearchParams } from '../api/api-client';
 import { ApiClientService } from '../api/api-client.service';
+import { PortalPresence } from '../auth/portal-presence.service';
 import { CurrencyService } from '../currency/currency.service';
+import { manageRights, worthAsking } from '../listing/listing-manage-model';
+import { ManagementApiClient } from '../management/management-api-client.service';
+import {
+  nextStatus,
+  setListingStatus,
+  statusChangedKey,
+  toggleLabelKey,
+  toggleNamedKey,
+} from '../portal/shared/listing-status';
 import { CodeLabelPipe } from '../locale/code-label.pipe';
 import { LocaleService } from '../locale/locale.service';
 import { ImageCarouselComponent } from '../ui/image-carousel/image-carousel.component';
@@ -38,7 +49,7 @@ import {
  */
 @Component({
   selector: 'oe-result-list',
-  imports: [CodeLabelPipe, ImageCarouselComponent, TranslocoPipe],
+  imports: [CodeLabelPipe, ImageCarouselComponent, RouterLink, TranslocoPipe],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (state().searched) {
@@ -46,6 +57,14 @@ import {
         <h2 #heading id="results-heading" class="label" tabindex="-1">
           {{ 'results.heading' | transloco }}
         </h2>
+        <p class="manage-notice" role="status">
+          @if (manageNotice(); as n) {
+            {{ n.key | transloco: n.params }}
+          }
+        </p>
+        @if (manageError(); as message) {
+          <p class="manage-error" role="alert">{{ message }}</p>
+        }
 
         @if (errorMessage(); as error) {
           <div class="notice glass" role="alert">
@@ -63,7 +82,8 @@ import {
         @if (rows().length > 0) {
           <ol class="grid">
             @for (row of rows(); track row.id) {
-              <li class="card glass">
+              @let m = managed().get(row.id);
+              <li class="card glass" [class.inactive]="m?.status === 'INACTIVE'">
                 <oe-image-carousel
                   class="media"
                   [media]="row.listing.media"
@@ -111,6 +131,37 @@ import {
                     <dd>{{ 'results.areaValue' | transloco: { value: row.area } }}</dd>
                   </div>
                 </dl>
+                @if (m) {
+                  <!-- Signed-in agency users and admins: manage right from the card. -->
+                  <div class="manage">
+                    @if (m.status === 'INACTIVE') {
+                      <p class="label">{{ 'listingManage.state.INACTIVE' | transloco }}</p>
+                    }
+                    @if (rights().status) {
+                      <button
+                        type="button"
+                        class="pill"
+                        [disabled]="manageBusy() === row.id"
+                        [attr.aria-label]="
+                          toggleNamedKey(m.status) | transloco: { title: row.title }
+                        "
+                        (click)="toggleStatus(m, row.title)"
+                      >
+                        {{ toggleLabelKey(m.status) | transloco }}
+                      </button>
+                    }
+                    @if (rights().edit) {
+                      <a
+                        class="pill"
+                        [routerLink]="['/portal/listings', row.id, 'edit']"
+                        [attr.aria-label]="
+                          'portal.listings.editNamed' | transloco: { title: row.title }
+                        "
+                        >{{ 'portal.listings.editAction' | transloco }}</a
+                      >
+                    }
+                  </div>
+                }
                 <svg class="arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                   <path d="M7 17 17 7M9 7h8v8" fill="none" stroke="currentColor" stroke-width="2" />
                 </svg>
@@ -259,6 +310,29 @@ import {
       background: var(--color-accent);
       color: var(--color-on-accent);
     }
+    /* Above the card-wide link of the title button. */
+    .manage {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 0.5rem;
+      margin-right: 3rem;
+    }
+    .manage a {
+      color: inherit;
+      text-decoration: none;
+    }
+    .card.inactive {
+      opacity: 0.7;
+    }
+    .manage-notice:empty {
+      display: none;
+    }
+    .manage-error {
+      color: var(--color-error);
+    }
     .pager {
       display: flex;
       align-items: center;
@@ -296,6 +370,25 @@ export class ResultListComponent {
   });
   /** Tooltip of converted prices: approximate, with the date of the static rates. */
   protected readonly convertedHint = computed(() => ({ date: this.currency.ratesDate() }));
+
+  private readonly presence = inject(PortalPresence);
+  private readonly management = inject(ManagementApiClient);
+  /**
+   * Listings shown here that the user signed in to the portal in this tab may manage (own
+   * agency; Plattform_Admins: all), by id — from one `GET /listings?ids=` per result page.
+   */
+  protected readonly managed = signal<ReadonlyMap<string, ManagedState>>(new Map());
+  protected readonly rights = computed(() => manageRights(this.presence.me()));
+  /** Id of the listing whose status is being changed. */
+  protected readonly manageBusy = signal<string | undefined>(undefined);
+  protected readonly manageNotice = signal<
+    { key: string; params: Readonly<Record<string, string>> } | undefined
+  >(undefined);
+  protected readonly manageError = signal<string | undefined>(undefined);
+  protected readonly toggleLabelKey = toggleLabelKey;
+  protected readonly toggleNamedKey = toggleNamedKey;
+  /** The shown page; changes only when another page is shown (pages are cached). */
+  private readonly page = computed(() => currentPage(this.state()));
   protected readonly empty = computed(() => isEmptyResult(this.state()));
   protected readonly hasNext = computed(() => hasNextPage(this.state()));
   protected readonly errorMessage = computed(() => {
@@ -306,7 +399,20 @@ export class ResultListComponent {
   constructor() {
     effect(() => {
       const params = this.params();
-      if (params !== undefined) untracked(() => this.loader.search(params));
+      if (params === undefined) return;
+      untracked(() => {
+        this.managed.set(new Map());
+        this.manageNotice.set(undefined);
+        this.manageError.set(undefined);
+        this.loader.search(params);
+      });
+    });
+    effect((onCleanup) => {
+      const items = this.page()?.items;
+      if (items === undefined || items.length === 0) return;
+      const controller = new AbortController();
+      onCleanup(() => controller.abort());
+      untracked(() => void this.loadManaged(items, controller.signal));
     });
     inject(DestroyRef).onDestroy(() => this.loader.cancel());
   }
@@ -319,9 +425,72 @@ export class ResultListComponent {
     (button ?? this.heading())?.nativeElement.focus();
   }
 
+  /**
+   * A listing was (de)activated elsewhere (its detail view): its card follows. It stays in the
+   * list until the next search, so the change can be undone here.
+   */
+  markManaged(listing: ManagedState): void {
+    this.managed.update((map) => new Map(map).set(listing.id, pickState(listing)));
+  }
+
+  /** Deactivates or activates the listing of a card (Req 6.2). */
+  protected async toggleStatus(current: ManagedState, title: string): Promise<void> {
+    if (this.manageBusy() !== undefined) return;
+    this.manageBusy.set(current.id);
+    this.manageError.set(undefined);
+    const result = await setListingStatus(
+      this.management,
+      current.id,
+      nextStatus(current.status),
+      current.version,
+    );
+    this.manageBusy.set(undefined);
+    if (!result.ok) {
+      this.manageError.set(this.management.errorMessage(result.error));
+      return;
+    }
+    this.markManaged(result.value);
+    this.manageNotice.set({ key: statusChangedKey(result.value.status), params: { title } });
+  }
+
+  /** One lookup per page, only for signed-in users with manage rights (none for visitors). */
+  private async loadManaged(
+    items: readonly LocalizedListing[],
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (!(await this.presence.signedIn()) || signal.aborted) return;
+    const me = this.presence.me();
+    const ids = items.filter((listing) => worthAsking(me, listing)).map((l) => l.id);
+    if (ids.length === 0) return;
+    const result = await this.management.get('/listings', {
+      signal,
+      query: { ids: ids.join(',') },
+      parse: (value) => ListingPage.parse(value),
+    });
+    if (signal.aborted || !result.ok) return;
+    this.managed.update((map) => {
+      const next = new Map(map);
+      for (const summary of result.value.items) next.set(summary.id, pickState(summary));
+      return next;
+    });
+  }
+
   /** Changes the page and moves focus to the list start, so keyboard users continue there. */
   protected go(direction: 'previous' | 'next'): void {
     this.loader[direction]();
     this.heading()?.nativeElement.focus();
   }
 }
+
+/** What a card needs to manage a listing. */
+export interface ManagedState {
+  readonly id: string;
+  readonly status: ListingStatus;
+  readonly version: number;
+}
+
+const pickState = ({ id, status, version }: ManagedState): ManagedState => ({
+  id,
+  status,
+  version,
+});

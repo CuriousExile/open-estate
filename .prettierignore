@@ -2,6 +2,8 @@ node_modules/
 dist/
 coverage/
 cdk.out/
+# Run logs and Playwright reports/traces (generated).
+logs/
 package-lock.json
 # Documentation and spec files are maintained by hand.
 *.md

@@ -30,6 +30,7 @@ import {
   type RunPageValue,
 } from './admin-api';
 import {
+  AGENCY_ACTIVITY_INTERVAL,
   countAlarming,
   DEFAULT_PLATFORM_PERIOD,
   endpointRows,
@@ -89,9 +90,13 @@ const valueOf = <T>(state: Loadable<T>): T | undefined =>
         </h1>
         <label class="field">
           <span>{{ 'portal.admin.period.label' | transloco }}</span>
-          <select [value]="period()" (change)="setPeriod($event)">
+          <!-- [selected] per option: a [value] on the select is applied before the @for options
+               exist, so the first option would show instead of the active period. -->
+          <select (change)="setPeriod($event)">
             @for (key of periods; track key) {
-              <option [value]="key">{{ 'portal.admin.period.' + key | transloco }}</option>
+              <option [value]="key" [selected]="key === period()">
+                {{ 'portal.admin.period.' + key | transloco }}
+              </option>
             }
           </select>
         </label>
@@ -226,6 +231,7 @@ const valueOf = <T>(state: Loadable<T>): T | undefined =>
 
     <section class="glass card" aria-labelledby="admin-activity">
       <h2 id="admin-activity">{{ 'portal.admin.activity.title' | transloco }}</h2>
+      <p class="note">{{ 'portal.admin.activity.hint' | transloco }}</p>
       @switch (activity().status) {
         @case ('loading') {
           <p class="note" role="status">{{ 'portal.admin.loading' | transloco }}</p>
@@ -617,7 +623,11 @@ export class AdminMonitoringComponent {
     this.activity.set({ status: 'loading' });
     const [platform, activity] = await Promise.all([
       fetchPlatform(this.api, { ...query, signal: this.signal }),
-      fetchAgencyActivity(this.api, { ...query, signal: this.signal }),
+      fetchAgencyActivity(this.api, {
+        ...query,
+        interval: AGENCY_ACTIVITY_INTERVAL,
+        signal: this.signal,
+      }),
     ]);
     if (generation !== this.periodGeneration) return;
     this.settle(platform, this.platform, (metrics) => metrics);

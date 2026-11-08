@@ -163,4 +163,28 @@ export class ListingQueryService {
     const result = await this.deps.listings.query(scoped, page);
     return ok({ ...result, items: result.items.map(toListingSummary) });
   }
+
+  /**
+   * `GET /listings?ids=` (e.g. one page of search results, for the manage controls of the SPA):
+   * the listings among `ids` the principal may read, in the given order, in one page. Unknown ids
+   * and listings of other agencies are left out, exactly as if they did not exist (Req 2.6); like
+   * `list`, only a missing `listing:read` is refused (and audited).
+   */
+  async lookup(
+    actor: AgencyActor,
+    ids: readonly string[],
+  ): Promise<ListingReadResult<KeyPage<ListingSummary>>> {
+    const { principal } = actor;
+    const agencyId = ownAgency(principal);
+    const denied = decisionError(authorize(principal, LISTING_READ, agencyId), LISTING_READ);
+    if (denied !== null)
+      return this.trail.reject(actor, 'listing.list', 'listing', agencyId, denied);
+
+    const found = await Promise.all(
+      [...new Set(ids)].map((id) => readableListing(this.deps.listings, principal, id)),
+    );
+    return ok({
+      items: found.flatMap((result) => (result.ok ? [toListingSummary(result.value)] : [])),
+    });
+  }
 }

@@ -88,8 +88,11 @@ import type { Confirmation } from './admin-model';
   `,
 })
 export class ConfirmDialogComponent {
-  /** Open while set. */
-  readonly confirmation = input<Confirmation | undefined>(undefined);
+  /**
+   * Open while set. `null` counts as unset: a template's safe navigation (`pending()?.x`) yields
+   * `null`, not `undefined`, and must not open an empty modal dialog.
+   */
+  readonly confirmation = input<Confirmation | null | undefined>(undefined);
   readonly busy = input(false);
   readonly confirmed = output();
   readonly cancelled = output();
@@ -99,7 +102,7 @@ export class ConfirmDialogComponent {
   constructor() {
     effect(() => {
       const element = this.dialog().nativeElement;
-      if (this.confirmation() !== undefined) {
+      if (this.confirmation() != null) {
         if (!element.open) element.showModal();
       } else if (element.open) {
         element.close();

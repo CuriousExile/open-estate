@@ -1,4 +1,5 @@
 import {
+  afterNextRender,
   ChangeDetectionStrategy,
   Component,
   computed,
@@ -191,8 +192,20 @@ export class ImageCarouselComponent {
   protected readonly drag = signal(0);
   protected gesture: Gesture | undefined;
   private suppressClick = false;
+  /**
+   * `false` until the first render. The carousel's DOM and listeners exist before Angular binds
+   * its inputs, and DOM events can arrive in between — e.g. `pointerenter` when the carousel
+   * appears under a resting pointer. Reading the required inputs then throws (NG0950), so the
+   * handlers that read them ignore such events: nothing is on screen yet that they could refer to.
+   */
+  private rendered = false;
+
+  constructor() {
+    afterNextRender(() => (this.rendered = true));
+  }
 
   protected prefetch(): void {
+    if (!this.rendered) return;
     this.intent.set(true);
     this.loaded.set(imagesToLoad(this.loaded(), this.index(), this.slides().length, true));
   }
@@ -210,7 +223,7 @@ export class ImageCarouselComponent {
   }
 
   protected onKeydown(event: KeyboardEvent): void {
-    if (this.slides().length < 2) return;
+    if (!this.rendered || this.slides().length < 2) return;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       this.step(event.key === 'ArrowLeft' ? -1 : 1);
@@ -219,7 +232,9 @@ export class ImageCarouselComponent {
 
   protected onPointerDown(event: PointerEvent): void {
     this.suppressClick = false;
-    if (this.slides().length < 2 || !event.isPrimary || event.button !== 0) return;
+    if (!this.rendered || this.slides().length < 2 || !event.isPrimary || event.button !== 0) {
+      return;
+    }
     this.gesture = { id: event.pointerId, x: event.clientX, y: event.clientY, dragging: false };
   }
 

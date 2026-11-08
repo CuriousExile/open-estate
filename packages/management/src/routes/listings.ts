@@ -90,6 +90,11 @@ export function createListingRoutes(services: ListingServices): Route[] {
       path: '/listings',
       query: ListListingsQuery,
       handle: ({ principal, query }) => {
+        // A lookup by ids (the schema allows no other filter with it).
+        if (query.ids !== undefined) {
+          const ids = query.ids;
+          return paged(() => queries.lookup(actorOf(principal), ids));
+        }
         const { status, origin, offerType, listingType, customId, q, agencyId } = query;
         const filter = {
           ...(agencyId !== undefined && { agencyId }),

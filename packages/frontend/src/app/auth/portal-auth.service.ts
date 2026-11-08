@@ -9,23 +9,13 @@ import {
   isAuthCallback,
   rememberReturnUrl,
   takeReturnUrl,
-  type KeyValueStorage,
 } from './portal-auth-model';
 import { PortalConfigService } from './portal-config.service';
 import { PortalSession } from './portal-session.service';
+import { tabStorage } from './tab-storage';
 
 /** Notice routes outside the guarded portal shell (no redirect loops). */
 export const PORTAL_UNAVAILABLE_PATH = '/portal/unavailable';
-
-/** In-memory fallback if `sessionStorage` is blocked (privacy mode, sandboxed frames). */
-function memoryStorage(): KeyValueStorage {
-  const values = new Map<string, string>();
-  return {
-    getItem: (key) => values.get(key) ?? null,
-    setItem: (key, value) => void values.set(key, value),
-    removeItem: (key) => void values.delete(key),
-  };
-}
 
 /** Portal login and logout over OIDC (Req 5.1). */
 @Injectable({ providedIn: 'root' })
@@ -35,7 +25,7 @@ export class PortalAuth {
   private readonly session = inject(PortalSession);
   private readonly router = inject(Router);
   private readonly document = inject(DOCUMENT);
-  private readonly storage = this.resolveStorage();
+  private readonly storage = tabStorage(this.document);
 
   /**
    * Guard logic: completes a login callback and returns to the remembered route, lets
@@ -87,15 +77,5 @@ export class PortalAuth {
 
   private unavailable(reason: 'notConfigured' | 'loginFailed'): UrlTree {
     return this.router.createUrlTree([PORTAL_UNAVAILABLE_PATH], { queryParams: { reason } });
-  }
-
-  private resolveStorage(): KeyValueStorage {
-    try {
-      const storage = this.document.defaultView?.sessionStorage;
-      if (storage) return storage;
-    } catch {
-      // Access to sessionStorage can throw (blocked storage); fall through.
-    }
-    return memoryStorage();
   }
 }

@@ -177,6 +177,7 @@ function querySchemaHas(route: Route, name: string): boolean {
 
 const PARAMETER_DOCS: Record<string, string> = {
   agencyId: 'Agency; Plattform_Admins choose it, agency actors may only give their own.',
+  ids: 'Comma-separated listing ids (1–50): returns those the caller may read, without other filters or paging.',
   pageSize: 'Number of entries per page.',
   pageToken: 'nextPageToken of the previous page.',
   dryRun: 'true: report the affected listings/users without changing anything.',

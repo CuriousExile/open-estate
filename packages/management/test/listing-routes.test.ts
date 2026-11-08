@@ -200,6 +200,30 @@ describe('listing routes', () => {
     );
   });
 
+  it('looks up listings by ids; other filters cannot be combined with it', async () => {
+    const s = setup();
+    await create(s);
+    await create(s, { status: 'ACTIVE' });
+    const lookup = await s.call(member, 'GET', '/listings', { query: { ids: 'l2,l9,l1' } });
+    expect(lookup.status).toBe(200);
+    expect(lookup.body).toEqual({
+      items: [
+        expect.objectContaining({ id: 'l2', status: 'ACTIVE', version: 1 }),
+        expect.objectContaining({ id: 'l1', status: 'INACTIVE', version: 1 }),
+      ],
+    });
+    // Another agency: nothing, as if the listings did not exist.
+    expect(
+      (await s.call(otherMember, 'GET', '/listings', { query: { ids: 'l1,l2' } })).body,
+    ).toEqual({ items: [] });
+    expect(
+      await s.call(member, 'GET', '/listings', { query: { ids: 'l1', status: 'ACTIVE' } }),
+    ).toMatchObject({
+      status: 400,
+      body: { errors: [{ code: 'INVALID_PARAMETER', field: 'ids' }] },
+    });
+  });
+
   it('creates in the agency named by a Plattform_Admin, channel ADMIN', async () => {
     const s = setup();
     const res = await s.call(admin, 'POST', '/listings', {

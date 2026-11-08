@@ -10,6 +10,7 @@ import {
 import { DEMO_MEDIA_PREFIX, publishDemoMediaUrls, serveDemoMedia } from './media/demo-media';
 import { isLoopbackUrl } from './oidc/provider';
 import type { DevPlatform } from './platform';
+import { localRuntimeConfig, RUNTIME_CONFIG_PATH } from './runtime-config';
 
 // DEV ONLY: HTTP front of the local demo. Path prefixes stand in for the separate API Gateway
 // APIs of a deployment:
@@ -18,6 +19,7 @@ import type { DevPlatform } from './platform';
 //   /mcp, /api/mcp MCP_Server (Streamable HTTP, `POST`)
 //   /management/*  Management_API (paths without the `/v1` stage)
 //   /oidc/*        local OIDC provider (insecure, replaces Cognito)
+//   /runtime-config.json  the SPA's runtime config with this server's issuer (see runtime-config.ts)
 
 export const PREFIX = {
   api: '/api',
@@ -99,6 +101,14 @@ export function createRequestListener({
   log,
 }: RequestListenerOptions): RequestListener {
   const { search, mcp, management } = platform.handlers;
+  const runtimeConfig = jsonBody(
+    localRuntimeConfig({
+      issuer: platform.oidc.issuer,
+      clientId: platform.oidc.clientId,
+      apiBaseUrl: PREFIX.api,
+      managementApiUrl: PREFIX.management,
+    }),
+  );
 
   async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const method = (req.method ?? 'GET').toUpperCase();
@@ -117,6 +127,15 @@ export function createRequestListener({
         { 'Content-Type': 'application/json', ...cors },
         jsonBody(path === '/' ? info() : { status: 'ok' }),
       );
+      return;
+    }
+    if (path === RUNTIME_CONFIG_PATH) {
+      if (method !== 'GET' && method !== 'HEAD') {
+        send(res, 405, { Allow: 'GET, HEAD', ...cors }, '');
+        return;
+      }
+      const headers = { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache', ...cors };
+      send(res, 200, headers, method === 'HEAD' ? '' : runtimeConfig);
       return;
     }
     if (under(path, DEMO_MEDIA_PREFIX)) {

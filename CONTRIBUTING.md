@@ -70,6 +70,12 @@ docs: describe theme-config.json color formats
   docker stop dynamodb-local opensearch
   ```
 
+- Browser tests (`packages/browser-tests/tests/*.spec.ts`, Playwright) run the SPA in Chromium
+  against the local demo, which they start on their own ports: `npm run test:browser:install`
+  once, then `npm run test:browser`. Use role-based locators, write expected demo data out, and
+  do not work around product bugs in a test (pin them with `test.fail` and a reason). Tests that
+  change seeded or public state go into `*.serial.spec.ts` and start with `resetDemo()`; see
+  [packages/browser-tests/README.md](packages/browser-tests/README.md#projects-and-state).
 - End-to-end tests (`*.e2e.test.ts`) run against a deployed environment and are skipped unless `OPEN_ESTATE_E2E_ENV` is set; see [docs/installation.md](docs/installation.md#end-to-end-tests).
 
 ## Connectors

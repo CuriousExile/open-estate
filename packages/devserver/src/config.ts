@@ -63,15 +63,45 @@ export interface NetworkConfig {
   /** Interface the server binds to; loopback only. */
   host: string;
   port: number;
+  /** Port of the SPA's dev server (`ng serve`). */
+  frontendPort: number;
   /** Origin of the SPA (`ng serve`), used for public detail URLs and allowed redirects. */
   frontendOrigin: string;
   /** Public base URL of this server as the browser reaches it. */
   publicUrl: string;
 }
 
+/** Default ports of the local demo: dev server (APIs) and SPA (`ng serve`). */
+export const DEFAULT_PORTS = { api: 4310, frontend: 4200 } as const;
+
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '::1']);
 
-/** `DEV_HOST`, `DEV_PORT`, `DEV_FRONTEND_ORIGIN`; refuses non-loopback hosts. */
+function readPort(
+  env: Readonly<Record<string, string | undefined>>,
+  name: string,
+  fallback: number,
+): number {
+  const raw = env[name]?.trim() || String(fallback);
+  const port = /^\d+$/.test(raw) ? Number(raw) : Number.NaN;
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error(`${name}=${env[name] ?? ''}: expected a TCP port (1-65535)`);
+  }
+  return port;
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    return /^https?:$/.test(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `DEV_HOST`, `DEV_PORT`, `DEV_FRONTEND_PORT`, `DEV_FRONTEND_ORIGIN`; refuses non-loopback hosts.
+ * The SPA origin defaults to `http://127.0.0.1:<DEV_FRONTEND_PORT>`; set `DEV_FRONTEND_ORIGIN`
+ * only if the browser reaches the SPA under another origin.
+ */
 export function readNetworkConfig(
   env: Readonly<Record<string, string | undefined>>,
 ): NetworkConfig {
@@ -79,20 +109,16 @@ export function readNetworkConfig(
   if (!LOOPBACK.has(host)) {
     throw new Error(`DEV_HOST=${host}: the insecure dev server only binds to a loopback address`);
   }
-  const port = Number(env['DEV_PORT']?.trim() || '4310');
-  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
-    throw new Error(`DEV_PORT=${env['DEV_PORT'] ?? ''}: expected a TCP port`);
+  const port = readPort(env, 'DEV_PORT', DEFAULT_PORTS.api);
+  const frontendPort = readPort(env, 'DEV_FRONTEND_PORT', DEFAULT_PORTS.frontend);
+  const frontendOrigin = (
+    env['DEV_FRONTEND_ORIGIN']?.trim() || `http://127.0.0.1:${frontendPort}`
+  ).replace(/\/+$/, '');
+  if (!isHttpUrl(frontendOrigin)) {
+    throw new Error(`DEV_FRONTEND_ORIGIN=${frontendOrigin}: expected an http(s) origin`);
   }
   const urlHost = host === '::1' ? '[::1]' : host;
-  return {
-    host,
-    port,
-    frontendOrigin: (env['DEV_FRONTEND_ORIGIN']?.trim() || 'http://127.0.0.1:4200').replace(
-      /\/+$/,
-      '',
-    ),
-    publicUrl: `http://${urlHost}:${port}`,
-  };
+  return { host, port, frontendPort, frontendOrigin, publicUrl: `http://${urlHost}:${port}` };
 }
 
 /**

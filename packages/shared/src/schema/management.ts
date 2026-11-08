@@ -45,6 +45,8 @@ export const MANAGEMENT_BOUNDS = {
   action: { min: 1, max: 100 },
   metricCode: { min: 1, max: 100 },
   dimension: { min: 1, max: 256 },
+  /** Ids of one `GET /listings?ids=` lookup: a full result page of the Search_API (at most 50). */
+  listingIds: { min: 1, max: 50 },
 } as const;
 
 const M = MANAGEMENT_BOUNDS;
@@ -200,17 +202,47 @@ export const RestoreRequest = z.strictObject({
 });
 export type RestoreRequest = z.output<typeof RestoreRequest>;
 
-/** `GET /listings`: filters of Req 4.14; `agencyId` only for Plattform_Admins (Req 10.4). */
-export const ListListingsQuery = z.object({
-  status: ListingStatusSchema.optional(),
-  origin: OriginSchema.optional(),
-  offerType: z.enum(OFFER_TYPES).optional(),
-  listingType: boundedString(LISTING_BOUNDS.listingType).optional(),
-  customId: CustomId.optional(),
-  q: boundedString(M.titleQuery).optional(),
-  agencyId: EntityId.optional(),
-  ...pagination,
-});
+/** `ids=a,b,c`: comma-separated listing ids (documented as a string). */
+const ListingIdList = z
+  .string()
+  .min(1)
+  .max(M.listingIds.max * (LISTING_BOUNDS.id.max + 1))
+  .transform((value) => value.split(','))
+  .pipe(z.array(boundedString(LISTING_BOUNDS.id)).min(M.listingIds.min).max(M.listingIds.max));
+
+/** Filters of `GET /listings` that a lookup by `ids` cannot be combined with. */
+const LIST_FILTERS = ['status', 'origin', 'offerType', 'listingType', 'customId', 'q', 'agencyId'];
+
+/**
+ * `GET /listings`: filters of Req 4.14; `agencyId` only for Plattform_Admins (Req 10.4). Or a
+ * lookup by `ids` (e.g. one page of search results): the listings among them the caller may read,
+ * in one page — without other filters or paging.
+ */
+export const ListListingsQuery = z
+  .object({
+    status: ListingStatusSchema.optional(),
+    origin: OriginSchema.optional(),
+    offerType: z.enum(OFFER_TYPES).optional(),
+    listingType: boundedString(LISTING_BOUNDS.listingType).optional(),
+    customId: CustomId.optional(),
+    q: boundedString(M.titleQuery).optional(),
+    agencyId: EntityId.optional(),
+    ids: ListingIdList.optional(),
+    ...pagination,
+  })
+  .superRefine((query, ctx) => {
+    if (query.ids === undefined) return;
+    const combined = [...LIST_FILTERS, 'pageToken'].filter(
+      (name) => query[name as keyof typeof query] !== undefined,
+    );
+    if (combined.length > 0) {
+      ctx.addIssue({
+        code: 'custom',
+        message: `ids cannot be combined with ${combined.join(', ')}`,
+        path: ['ids'],
+      });
+    }
+  });
 export type ListListingsQuery = z.output<typeof ListListingsQuery>;
 
 /** `GET /listings/{id}/versions` (Req 7.5). */

@@ -10,8 +10,12 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
   the one-command deploy into an empty account (ROADMAP v1.0) is unverified, including the new
   stack order (Data → ManagementData → Api → Monitoring → Ingestion → Admin → Frontend → Identity →
   Management).
-- **No browser or Cognito test.** The portal's login (Code + PKCE), guards, bearer interceptor and
-  components have no runtime test, and nothing ran against a real Cognito user pool.
+- **No Cognito test.** The public search, the portal (login with Code + PKCE against the local
+  OIDC provider, guards, bearer interceptor, every area) and admin mode have Playwright tests
+  (`packages/browser-tests`); nothing ran against a real Cognito user pool.
+- **Access mode is write-only.** It can be set but not read back (no `GET`), so the operations
+  page always shows "Open" after a reload. More findings of the browser tests:
+  [packages/browser-tests/README.md](../packages/browser-tests/README.md#known-issues-found-by-these-tests).
 - **No integration tests** (task 16.1): role changes, suspensions and revocations within 60 s,
   visibility in DynamoDB and OpenSearch search, deletion of versions and S3 snapshots, usage lines
   reaching the counters within 15 min.
@@ -33,9 +37,11 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
 - **Native dropdowns left in the portal.** The property type selects of the listing form and the
   listing table group types by property group (`<optgroup>`); `oe-select` has no option groups
   yet, so they stay native `<select>`. All other dropdowns use `oe-select`.
-- **No browser test of `oe-select`, rooms chips or "More filters".** Their framework-free models
-  are unit-tested (`select-model`, `rooms-chips`, `filter-registry`, `search-url`); keyboard,
-  focus and screen reader behaviour were checked manually in headless Chromium only.
+- **Browser tests of `oe-select`, rooms chips and "More filters" cover mouse, keyboard and focus**
+  (`packages/browser-tests`); screen reader output itself is still only checked manually. Issues
+  these tests found and that are still open (a listing without `[DEMO]` marker, no favicon, …)
+  are listed in
+  [packages/browser-tests/README.md](../packages/browser-tests/README.md#known-issues-found-by-these-tests).
 - **Hero image cache.** `hero-background.png` kept its file name; browsers that cached the old PNG
   under the one-year `immutable` header and do not support AVIF/WebP keep the old image.
 - **More filters:** only filters the Search_API supports today (area, max. rooms, postal code, 3D
@@ -52,9 +58,8 @@ specification lives in [`.kiro/specs/listing-management/`](../.kiro/specs/listin
   agency setting that chooses the visible fields is still to be designed: where it is stored
   (agency record, Management API, portal page), and whether the Search_API and MCP_Server should
   omit hidden fields too. Today they are only hidden in the SPA and still in the API response.
-- **No browser test of `oe-image-carousel`.** Its model (index wrapping, swipe threshold, which
-  images load, placeholder fallback) is unit-tested; swipe, keyboard and screen reader behaviour
-  were checked in headless Chromium only.
+- **`oe-image-carousel`:** buttons, arrow keys, mouse drag, touch swipe and the placeholders
+  (no image, broken image) have browser tests; screen reader behaviour is checked manually only.
 - **Opened listing in the URL.** A listing opened from the results is `&listing=<id>` on the search
   URL; on a reload it is fetched from the Search_API. If that fails (unknown, no longer public,
   network), the parameter is dropped and the results show, without a notice.

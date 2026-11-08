@@ -1,0 +1,13 @@
+{
+  // Type-check only (`npm run typecheck:tests`); Playwright transpiles the tests itself.
+  // DOM lib for callbacks that run in the page (`page.evaluate`, `waitForFunction`).
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["node"]
+  },
+  "include": ["playwright.config.ts", "tests/**/*.ts", "support/**/*.ts"]
+}

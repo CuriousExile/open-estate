@@ -7,6 +7,7 @@ import {
   retryAfterSeconds,
   systemClock,
   TtlCache,
+  type AuthenticationResult,
   type Authenticator,
   type Clock,
   type RateLimit,
@@ -110,9 +111,10 @@ export interface ManagementAccessGuard {
   admitIp(sourceIp: string): Promise<Result<null, ApiError>>;
   /**
    * Per-IP limit → authentication → per-actor limit. Errors: `RATE_LIMITED` (429, with
-   * `details.retryAfterSeconds`), the Authenticator's 401/403 codes.
+   * `details.retryAfterSeconds`), the Authenticator's 401/403 codes — with the identified caller
+   * for `AGENCY_SUSPENDED` (audit only, see {@link AuthenticationResult}).
    */
-  admit(request: AccessRequest): Promise<Result<Principal, ApiError>>;
+  admit(request: AccessRequest): Promise<AuthenticationResult>;
 }
 
 export interface ManagementAccessGuardOptions {

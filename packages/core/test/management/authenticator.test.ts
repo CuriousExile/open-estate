@@ -152,6 +152,18 @@ describe('CachingAuthenticator', () => {
       );
     });
 
+    it('names the identified member of a suspended agency for the audit (Req 2.8)', async () => {
+      const { authenticator } = setup();
+      const result = await authenticator.authenticate('Bearer valid-u-suspended');
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'AGENCY_SUSPENDED' },
+        principal: { kind: 'user', userId: 'u-suspended', role: 'AGENCY_MEMBER', agencyId: 'a2' },
+      });
+      // Unidentified refusals stay anonymous.
+      expect(await authenticator.authenticate('Bearer forged')).not.toHaveProperty('principal');
+    });
+
     it('applies a role change after the 60 s cache, not before (Req 1.6)', async () => {
       const { authenticator, memberships, advance } = setup();
       const before = await authenticator.authenticate('Bearer valid-u-member');
@@ -242,6 +254,20 @@ describe('CachingAuthenticator', () => {
       expect(errorCode(await authenticator.authenticate(`Bearer oem_k-suspended_${SECRET}`))).toBe(
         'AGENCY_SUSPENDED',
       );
+    });
+
+    it('names the identified key of a suspended agency for the audit (Req 2.8)', async () => {
+      const { authenticator } = setup();
+      const result = await authenticator.authenticate(`Bearer oem_k-suspended_${SECRET}`);
+      expect(result).toMatchObject({
+        ok: false,
+        error: { code: 'AGENCY_SUSPENDED' },
+        principal: { kind: 'machine', keyId: 'k-suspended', agencyId: 'a2' },
+      });
+      // A wrong secret does not identify anybody.
+      expect(
+        await authenticator.authenticate(`Bearer oem_k-suspended_${'x'.repeat(SECRET.length)}`),
+      ).not.toHaveProperty('principal');
     });
 
     it('applies a revocation within 60 s (Req 3.5)', async () => {

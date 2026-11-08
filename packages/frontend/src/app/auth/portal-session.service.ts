@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import { computed, inject, Injectable, signal } from '@angular/core';
 import type { Permission } from '@open-estate/shared';
 import { ManagementApiClient } from '../management/management-api-client.service';
@@ -10,6 +11,8 @@ import {
   type AccessRequirement,
   type Me,
 } from './portal-access';
+import { clearSignedIn, markSignedIn } from './portal-auth-model';
+import { tabStorage } from './tab-storage';
 
 /**
  * `GET /me` of the signed-in user, loaded once per login. `can()` decides which controls the portal
@@ -18,6 +21,7 @@ import {
 @Injectable({ providedIn: 'root' })
 export class PortalSession {
   private readonly api = inject(ManagementApiClient);
+  private readonly storage = tabStorage(inject(DOCUMENT));
   private readonly current = signal<Me | undefined>(undefined);
   private pending: Promise<ManagementResult<Me>> | undefined;
 
@@ -30,8 +34,11 @@ export class PortalSession {
     const me = this.current();
     if (me) return Promise.resolve({ ok: true, value: me });
     this.pending ??= this.api.getMe().then((result) => {
-      if (result.ok) this.current.set(result.value);
-      else this.pending = undefined;
+      if (result.ok) {
+        this.current.set(result.value);
+        // Public pages show this user's manage controls (PortalPresence).
+        markSignedIn(this.storage);
+      } else this.pending = undefined;
       return result;
     });
     return this.pending;
@@ -48,5 +55,6 @@ export class PortalSession {
   reset(): void {
     this.current.set(undefined);
     this.pending = undefined;
+    clearSignedIn(this.storage);
   }
 }
