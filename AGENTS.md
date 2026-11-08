@@ -46,6 +46,12 @@ Run the smallest set that covers your change. Don't run the full suite after eve
 2. After a change spanning areas: `npm test` (quick tier, about 15 s on 8 cores).
 3. Once at the end: `./run-everything.sh`.
 
+Changed the SPA (`packages/frontend`) or the dev server → also run the Playwright browser tests:
+`npm run test:browser:install` once, then `npm run test:browser` (all), or one project
+(`-- --project search`), file (`-- search/filters`) or title (`-- -g "More filters"`). Without
+internet, point `PLAYWRIGHT_CHROMIUM_EXECUTABLE` at an installed Chromium. See
+`packages/browser-tests/README.md`.
+
 Change `packages/infra` → also run `npm run test:infra`. Changes to `packages/shared` affect every
 area, so run `npm test` for them.
 
