@@ -112,7 +112,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // eslint-disable-next-line no-control-regex
 const ANSI = /\x1b\[[0-9;]*m/g;
 const KEY_LINE =
-  /^(FAIL |\s+✘ |\s+● |\s+\{ seed: |\s+Counterexample: |.*error TS\d+|.*\[ERROR\]|\s+\S+\.(ts|html|scss):\d+:\d+:|\s+\d+:\d+\s+error\s|\/\S+\.(ts|js|mjs)$|\[warn\] |.*Error: |npm (ERR!|error) |BAD )/;
+  /^(FAIL |\s+✘ |\s+● |\s+\{ seed: |\s+Counterexample: |.*error TS\d+|.*\[ERROR\]|\s+\S+\.(ts|html|scss):\d+:\d+:|\s+\d+:\d+\s+error\s|\/\S+\.(ts|js|mjs)$|\[warn\] |.*Error: |npm (ERR!|error) |BAD |\s+\d+\) \[[\w-]+\] › |\s+\[[\w-]+\] › |\s+\d+ (failed|flaky)$)/;
 
 /**
  * The lines that matter in a failed step's log: failing suites and tests, fast-check seeds with a

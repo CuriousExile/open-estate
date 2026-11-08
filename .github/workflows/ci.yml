@@ -73,3 +73,12 @@ jobs:
       - name: Summary
         if: always()
         run: cat logs/run-everything/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      # Step logs, Playwright screenshots and traces, to debug a failure that only CI shows.
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: run-everything-logs
+          path: logs/
+          retention-days: 14
